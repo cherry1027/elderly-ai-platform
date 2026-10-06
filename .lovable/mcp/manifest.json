@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "sdk_version": "0.26.2",
+  "path": "/functions/v1/mcp",
+  "auth": {
+    "type": "oauth",
+    "issuer": "https://pxejznayegywcctnssxb.supabase.co/auth/v1",
+    "accepted_audiences": [
+      "authenticated"
+    ]
+  },
+  "mcp": {
+    "server": {
+      "name": "ny-minaminnen-se",
+      "version": "0.1.0",
+      "title": "NY Minaminnen.se"
+    },
+    "tools": [
+      {
+        "name": "list_books",
+        "title": "Lista böcker",
+        "description": "Lista den inloggade användarens minnesböcker med titel, status och sidantal.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {}
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "get_book",
+        "title": "Hämta bok med sidor",
+        "description": "Hämta en bok och dess sidor (kapitel, rubriker och text) för den inloggade användaren.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "book_id": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Bokens id."
+            }
+          },
+          "required": [
+            "book_id"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "list_stories",
+        "title": "Lista berättelser",
+        "description": "Lista den inloggade användarens sparade berättelser, valfritt fritextsökta på titel.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "search": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Sökord som matchas mot titeln."
+            }
+          },
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "create_story",
+        "title": "Skapa berättelse",
+        "description": "Spara en ny berättelse (titel och text) åt den inloggade användaren.",
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Berättelsens titel."
+            },
+            "content": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Berättelsens text på svenska."
+            }
+          },
+          "required": [
+            "title",
+            "content"
+          ],
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        },
+        "outputSchema": null
+      }
+    ]
+  }
+}

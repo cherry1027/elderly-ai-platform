@@ -1,0 +1,106 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 38 38% 93%;
+    --foreground: 20 10% 15%;
+
+    --card: 38 30% 96%;
+    --card-foreground: 20 10% 15%;
+
+    --popover: 38 30% 96%;
+    --popover-foreground: 20 10% 15%;
+
+    --primary: 16 50% 63%;
+    --primary-foreground: 38 38% 97%;
+
+    --secondary: 160 36% 28%;
+    --secondary-foreground: 38 38% 95%;
+
+    --muted: 35 25% 88%;
+    --muted-foreground: 20 8% 45%;
+
+    --accent: 38 38% 93%;
+    --accent-foreground: 20 10% 15%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 30 20% 82%;
+    --input: 30 20% 82%;
+    --ring: 16 50% 63%;
+
+    --radius: 0.75rem;
+
+    --sidebar-background: 38 30% 96%;
+    --sidebar-foreground: 20 10% 15%;
+    --sidebar-primary: 160 36% 28%;
+    --sidebar-primary-foreground: 38 38% 95%;
+    --sidebar-accent: 35 25% 88%;
+    --sidebar-accent-foreground: 20 10% 15%;
+    --sidebar-border: 30 20% 82%;
+    --sidebar-ring: 16 50% 63%;
+
+    /* Custom tokens */
+    --terracotta: 16 50% 63%;
+    --terracotta-dark: 16 45% 50%;
+    --forest: 160 36% 28%;
+    --forest-light: 160 30% 35%;
+    --cream: 38 38% 93%;
+    --cream-light: 38 38% 97%;
+    --warm-brown: 20 25% 30%;
+    --gold: 38 60% 55%;
+  }
+
+  .dark {
+    --background: 20 15% 10%;
+    --foreground: 38 30% 92%;
+    --card: 20 15% 13%;
+    --card-foreground: 38 30% 92%;
+    --popover: 20 15% 13%;
+    --popover-foreground: 38 30% 92%;
+    --primary: 16 50% 63%;
+    --primary-foreground: 38 38% 97%;
+    --secondary: 160 36% 28%;
+    --secondary-foreground: 38 38% 95%;
+    --muted: 20 12% 20%;
+    --muted-foreground: 30 15% 60%;
+    --accent: 20 12% 20%;
+    --accent-foreground: 38 30% 92%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 20 12% 22%;
+    --input: 20 12% 22%;
+    --ring: 16 50% 63%;
+    --sidebar-background: 20 15% 10%;
+    --sidebar-foreground: 38 30% 92%;
+    --sidebar-primary: 160 36% 35%;
+    --sidebar-primary-foreground: 38 38% 95%;
+    --sidebar-accent: 20 12% 20%;
+    --sidebar-accent-foreground: 38 30% 92%;
+    --sidebar-border: 20 12% 22%;
+    --sidebar-ring: 16 50% 63%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Playfair Display', serif;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}

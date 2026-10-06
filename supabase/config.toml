@@ -1,0 +1,28 @@
+project_id = "pxejznayegywcctnssxb"
+
+[functions.deletion-reminders]
+verify_jwt = false
+
+[functions.elevenlabs-transcribe]
+verify_jwt = false
+
+[functions.transcribe-long-audio]
+verify_jwt = false
+
+[functions.minna-interview]
+verify_jwt = false
+
+[functions.openai-realtime-token]
+verify_jwt = false
+
+[functions.openai-tts]
+verify_jwt = false
+
+[functions.admin-api]
+verify_jwt = false
+
+[functions.create-payment]
+verify_jwt = false
+
+[functions.verify-payment]
+verify_jwt = false

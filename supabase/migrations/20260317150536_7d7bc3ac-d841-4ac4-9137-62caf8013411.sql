@@ -1,0 +1,1 @@
+ALTER TABLE public.books ADD COLUMN book_template text NOT NULL DEFAULT 'classic';

@@ -64,8 +64,23 @@ database: compare migration history and the actual schema first.
    sessions and messages. Attempt cross-user writes and source-text rewrites;
    verify rejection. Verify anonymous access is denied.
 
-The local test suite replays the existing migrations and tests ten PostgreSQL
+The local test suite replays the existing migrations and tests eleven PostgreSQL
 scenarios. See `supabase/tests/README.md` for its exact coverage and limits.
+
+## Verified development deployment — 16 October 2026
+
+The original project was reachable through its public Data API but the signed-in
+account had no management access. A separate Free-plan project, `memy-ai-dev`
+(`edbkuunyeyxnyenmmqud`, Ireland), was created with the user's authorization.
+All 20 repository migration versions were applied to its empty schema through
+the signed-in Supabase SQL Editor. Original-project data was not copied or changed.
+
+The hosted `cloud-ownership.sql` check passed: user ownership restrictions,
+cross-user insert/read denial, append-only source preservation, and anonymous
+restrictions. Its synthetic users and rows were rolled back. This validates the
+actual PostgreSQL policies; email login and end-user token issuance are later
+integration work. The backend's live `/ready` probe also passed against this new
+project. Its local configuration is in ignored `backend/.env`.
 
 Primary references: [Supabase RLS](https://supabase.com/docs/guides/database/postgres/row-level-security),
 [PostgreSQL invoker views](https://www.postgresql.org/docs/current/sql-createview.html),

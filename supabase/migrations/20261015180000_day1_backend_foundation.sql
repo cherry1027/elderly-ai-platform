@@ -10,6 +10,14 @@ ALTER TABLE public.books
   ADD COLUMN language text NOT NULL DEFAULT 'sv'
   CHECK (language IN ('en', 'sv'));
 
+-- Explicit access also works when automatic Data API grants are disabled.
+-- Anonymous profile reads return no rows under the existing ownership RLS;
+-- this SELECT grant permits the backend's zero-row HEAD readiness probe.
+GRANT USAGE ON SCHEMA public TO anon, authenticated;
+GRANT SELECT ON public.profiles TO anon;
+GRANT SELECT, INSERT, UPDATE ON public.profiles TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.books TO authenticated;
+
 -- One source of truth: a story project is the existing book, not a duplicate row.
 -- Invoker privileges preserve the caller's existing books RLS policies.
 CREATE VIEW public.story_projects WITH (security_invoker = true) AS

@@ -20,3 +20,13 @@ role. They do not validate hosted Auth, PostgREST configuration, Storage, schedu
 extensions or the deployment state of any cloud project. Repeat the ownership
 checks with two real test accounts after deployment to the intended development
 project. No production user data is used in these tests.
+
+`cloud-ownership.sql` checks ownership against the actual hosted development
+database using synthetic users and the authenticated/anonymous PostgreSQL roles.
+It runs inside a transaction and rolls back all synthetic rows. It does not
+exercise an actual email login or token issuance. Never run it in production.
+
+For a confirmed empty development database only,
+`node supabase/scripts/build-bootstrap.mjs` emits a transactional SQL Editor
+bootstrap from the repository migrations, including their version history. It
+rejects nonempty public schemas. Existing databases should use normal migrations.

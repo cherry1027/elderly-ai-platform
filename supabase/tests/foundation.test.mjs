@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import { after, before, test } from "node:test";
 import { PGlite } from "@electric-sql/pglite";
+import { buildBootstrap } from "../scripts/build-bootstrap.mjs";
 
 // Isolated PostgreSQL engine. Never connects to a developer's Supabase project.
 // auth/storage below emulate only the Supabase primitives used by migrations.
@@ -174,4 +175,14 @@ test("deleting an owned project cascades its sessions and original messages", as
   assert.equal((await db.query("SELECT * FROM conversation_sessions WHERE id = $1", [session])).rows.length, 0);
   assert.equal((await db.query("SELECT * FROM conversation_messages WHERE session_id = $1", [session])).rows.length, 0);
   assert.equal((await db.query("SELECT * FROM books WHERE id = $1", [bobProject])).rows.length, 1);
+});
+
+test("empty-project bootstrap preserves every original migration version", async () => {
+  const sql = await buildBootstrap();
+  const files = (await readdir(new URL("../migrations/", import.meta.url))).filter((file) => file.endsWith(".sql"));
+  for (const file of files) {
+    assert.ok(sql.includes(`VALUES ('${file.slice(0, 14)}'`));
+  }
+  assert.equal((sql.match(/INSERT INTO supabase_migrations.schema_migrations/g) || []).length, files.length);
+  assert.ok(sql.includes("Bootstrap requires an empty public schema"));
 });

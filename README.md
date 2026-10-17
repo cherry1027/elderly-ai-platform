@@ -14,11 +14,17 @@ python -m pytest -q -m 'not integration'
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-API: http://127.0.0.1:8000 · Swagger: http://127.0.0.1:8000/docs
+API: http://127.0.0.1:8000 · Swagger: http://127.0.0.1:8000/docs · Version: 0.2.0
 
 - GET /health: public process liveness.
 - GET /ready: public Supabase Data API connectivity, without fetching records.
-- Business endpoints and server-side user authentication are later features.
+- /api/v1/story-projects: authenticated create, list, read and metadata update.
+- /api/v1/story-projects/{project_id}/sessions: authenticated create and list.
+
+Protected routes validate the supplied Supabase user access token through Auth
+`getUser`, then forward that exact user token plus the publishable key to the Data
+API. PostgreSQL grants and Row Level Security remain the authorization boundary;
+ordinary user requests never use a secret or service-role key.
 
 ## Development environments
 
@@ -50,17 +56,20 @@ npm --prefix supabase/tests test
 ```
 
 Frontend test, build and TypeScript checks pass. Existing `npm run lint` findings
-(61 errors and 19 warnings) remain in legacy frontend/Edge Function code.
-The schema suite has 11 passing checks; the backend has 29 offline checks and an
-opt-in live integration check.
+remain in legacy frontend/Edge Function code. Backend and schema verification is
+documented in [the Day 2 status](docs/day-2-status.md); live authenticated checks
+are opt-in and require two real development-project user tokens.
 
 ## Handoff
 
 - [Backend setup and live verification](backend/README.md)
 - [Tarun's frontend integration contract](docs/frontend-integration.md)
+- [Day 2 status](docs/day-2-status.md)
 - [Day 1 status](docs/day-1-status.md)
 - [Database design](docs/database-foundation.md)
 - [Initial audit](docs/day-1-audit.md)
 
-Tarun's review and a shared hosted backend URL remain team follow-ups. No public
-FastAPI deployment, AI, transcription, payment or subscription work was added.
+Tarun's review and a shared hosted backend URL remain team follow-ups. The legacy
+web UI's single-draft assumptions have not yet been adapted to the new multi-project
+API. No public FastAPI deployment, AI, speech-to-text, audio, extracted-facts,
+payment or subscription work was added.

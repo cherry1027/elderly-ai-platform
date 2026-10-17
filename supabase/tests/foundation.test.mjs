@@ -177,6 +177,97 @@ test("deleting an owned project cascades its sessions and original messages", as
   assert.equal((await db.query("SELECT * FROM books WHERE id = $1", [bobProject])).rows.length, 1);
 });
 
+test("one owner can create multiple active story projects", async () => {
+  const firstProject = "a1000000-0000-4000-8000-000000000001";
+  const secondProject = "a2000000-0000-4000-8000-000000000002";
+
+  await asUser(alice, async () => {
+    await db.query(`
+      INSERT INTO story_projects (id, user_id, title, language)
+      VALUES ($1, $2, 'Family memories', 'sv'), ($3, $2, 'My travels', 'en')
+    `, [firstProject, alice, secondProject]);
+
+    const projects = await db.query(`
+      SELECT id, status FROM story_projects
+      WHERE id IN ($1, $2)
+      ORDER BY id
+    `, [firstProject, secondProject]);
+    assert.deepEqual(projects.rows, [
+      { id: firstProject, status: "draft" },
+      { id: secondProject, status: "draft" },
+    ]);
+
+    await db.query("DELETE FROM story_projects WHERE id IN ($1, $2)", [firstProject, secondProject]);
+  });
+});
+
+test("generated edits stay separate from session-scoped original transcripts", async () => {
+  const sourceProject = "a3000000-0000-4000-8000-000000000003";
+  const otherProject = "a4000000-0000-4000-8000-000000000004";
+  const sourceSession = "c3000000-0000-4000-8000-000000000003";
+  const otherSession = "c4000000-0000-4000-8000-000000000004";
+  const sourceMessage = "d3000000-0000-4000-8000-000000000003";
+  const otherMessage = "d4000000-0000-4000-8000-000000000004";
+
+  await asUser(alice, async () => {
+    await db.query(`
+      INSERT INTO story_projects (id, user_id, title, language)
+      VALUES ($1, $2, 'Childhood source', 'sv'), ($3, $2, 'Travel source', 'en')
+    `, [sourceProject, alice, otherProject]);
+    await db.query(`
+      INSERT INTO conversation_sessions (id, project_id, language)
+      VALUES ($1, $2, 'sv'), ($3, $4, 'en')
+    `, [sourceSession, sourceProject, otherSession, otherProject]);
+    await db.query(`
+      INSERT INTO conversation_messages (id, session_id, role, original_text)
+      VALUES ($1, $2, 'user', 'Original childhood account.'),
+             ($3, $4, 'user', 'Original travel account.')
+    `, [sourceMessage, sourceSession, otherMessage, otherSession]);
+    await db.query(`
+      INSERT INTO conversation_messages (session_id, role, original_text)
+      VALUES ($1, 'user', 'Correction to the childhood account.')
+    `, [sourceSession]);
+
+    await db.query(`
+      INSERT INTO pages (book_id, page_number, content)
+      VALUES ($1, 1, 'First generated draft')
+    `, [sourceProject]);
+    const story = await db.query(`
+      INSERT INTO stories (user_id, title, content)
+      VALUES ($1, 'Generated story', 'First generated story')
+      RETURNING id
+    `, [alice]);
+    await db.query("UPDATE pages SET content = 'Edited generated page' WHERE book_id = $1", [sourceProject]);
+    await db.query("UPDATE stories SET content = 'Edited generated story' WHERE id = $1", [story.rows[0].id]);
+
+    assert.equal(
+      (await db.query("SELECT content FROM pages WHERE book_id = $1", [sourceProject])).rows[0].content,
+      "Edited generated page",
+    );
+    assert.equal(
+      (await db.query("SELECT content FROM stories WHERE id = $1", [story.rows[0].id])).rows[0].content,
+      "Edited generated story",
+    );
+    assert.deepEqual(
+      (await db.query(`
+        SELECT original_text FROM conversation_messages
+        WHERE session_id = $1 ORDER BY sequence
+      `, [sourceSession])).rows,
+      [
+        { original_text: "Original childhood account." },
+        { original_text: "Correction to the childhood account." },
+      ],
+    );
+    assert.deepEqual(
+      (await db.query("SELECT id, original_text FROM conversation_messages WHERE session_id = $1", [otherSession])).rows,
+      [{ id: otherMessage, original_text: "Original travel account." }],
+    );
+
+    await db.query("DELETE FROM stories WHERE id = $1", [story.rows[0].id]);
+    await db.query("DELETE FROM story_projects WHERE id IN ($1, $2)", [sourceProject, otherProject]);
+  });
+});
+
 test("empty-project bootstrap preserves every original migration version", async () => {
   const sql = await buildBootstrap();
   const files = (await readdir(new URL("../migrations/", import.meta.url))).filter((file) => file.endsWith(".sql"));

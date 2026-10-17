@@ -2,11 +2,14 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
 from app.api.readiness import router as readiness_router
+from app.api.story_projects import router as story_projects_router
 from app.core.config import Settings
+from app.core.errors import APIError, api_error_handler, validation_error_handler
 
 
 def create_app(
@@ -27,9 +30,19 @@ def create_app(
             yield
 
     application = FastAPI(
-        title="Memy AI Backend", version="0.1.0", lifespan=lifespan
+        title="Memy AI Backend", version="0.2.0", lifespan=lifespan
     )
     application.state.settings = config
+    application.add_exception_handler(APIError, api_error_handler)
+    application.add_exception_handler(RequestValidationError, validation_error_handler)
+
+    @application.middleware("http")
+    async def protect_user_responses(request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/api/v1/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
     application.add_middleware(
         CORSMiddleware,
         allow_origins=config.cors_origins,
@@ -39,6 +52,7 @@ def create_app(
     )
     application.include_router(health_router)
     application.include_router(readiness_router)
+    application.include_router(story_projects_router)
     return application
 
 

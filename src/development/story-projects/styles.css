@@ -1,0 +1,20 @@
+/* Isolated preview: existing Memy colours and UI classes, with local system fonts. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 38 38% 93%; --foreground: 20 10% 15%;
+    --card: 38 30% 96%; --card-foreground: 20 10% 15%;
+    --primary: 16 50% 35%; --primary-foreground: 38 38% 97%;
+    --secondary: 160 36% 28%; --secondary-foreground: 38 38% 97%;
+    --muted: 35 25% 88%; --muted-foreground: 20 8% 35%;
+    --accent: 38 38% 93%; --accent-foreground: 20 10% 15%;
+    --destructive: 0 70% 40%; --destructive-foreground: 0 0% 100%;
+    --border: 30 15% 50%; --input: 30 15% 50%; --ring: 16 50% 43%;
+    --radius: 0.75rem;
+  }
+  * { @apply border-border; }
+  body { @apply bg-background text-foreground; font-family: system-ui, sans-serif; }
+}

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import io
+import os
 import tempfile
+import threading
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
@@ -499,6 +501,166 @@ def test_decoder_timeout_kills_and_reaps_subprocess(monkeypatch, tmp_path):
     assert caught.value.code == "AUDIO_PROCESSING_LIMIT"
     assert process.killed
     assert process.waited
+
+
+def test_decoder_launch_uses_venv_executable_safe_paths_and_scrubbed_environment(
+    monkeypatch, tmp_path
+):
+    captured = {}
+
+    class CompletedProcess:
+        returncode = 0
+
+        async def communicate(self):
+            return b'{"duration_seconds": 1.25}', b""
+
+    async def create_process(*command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return CompletedProcess()
+
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "must-not-reach-decoder")
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-reach-decoder")
+    monkeypatch.setenv("SYSTEMROOT", r"C:\Windows")
+    monkeypatch.setenv("WINDIR", r"C:\Windows")
+    monkeypatch.setattr(audio_upload, "windows_threaded_probe_required", lambda: False)
+    monkeypatch.setattr(
+        audio_upload.asyncio, "create_subprocess_exec", create_process
+    )
+    path = tmp_path / "recording.wav"
+    path.write_bytes(b"placeholder")
+
+    duration = asyncio.run(audio_upload.probe_duration(path, ".wav"))
+
+    assert duration == 1.25
+    command = captured["command"]
+    assert command[0] == os.path.abspath(audio_upload.sys.executable)
+    assert command[0] == audio_upload.sys.executable
+    assert Path(command[1]).is_absolute()
+    assert Path(command[1]).name == "audio_probe.py"
+    assert command[2] == str(path.resolve())
+    assert command[3] == ".wav"
+    assert captured["kwargs"]["cwd"] == str(tmp_path.resolve())
+    assert captured["kwargs"]["env"] == {
+        "SYSTEMROOT": r"C:\Windows",
+        "WINDIR": r"C:\Windows",
+        "PATH": os.defpath,
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    assert captured["kwargs"]["stdin"] == asyncio.subprocess.DEVNULL
+
+
+def test_windows_decoder_timeout_kills_and_reaps_subprocess(monkeypatch, tmp_path):
+    captured = {}
+
+    class HungProcess:
+        returncode = None
+
+        def __init__(self, command, **kwargs):
+            captured["command"] = command
+            captured["kwargs"] = kwargs
+            captured["process"] = self
+            self.killed = False
+            self.reaped = False
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            self.killed = True
+
+        def communicate(self, timeout=None):
+            assert timeout is None
+            self.reaped = True
+            self.returncode = -9
+            return b"", b""
+
+    monkeypatch.setattr(audio_upload.subprocess, "Popen", HungProcess)
+    monkeypatch.setattr(audio_upload, "PROBE_TIMEOUT_SECONDS", 0)
+    path = tmp_path / "recording.wav"
+    path.write_bytes(b"placeholder")
+    stop_requested = threading.Event()
+
+    result = audio_upload.run_windows_probe(
+        audio_upload.probe_command(path, ".wav"),
+        cwd=str(tmp_path),
+        env=audio_upload.decoder_environment(),
+        stop_requested=stop_requested,
+    )
+
+    assert result.timed_out
+    assert captured["command"][2] == str(path.resolve())
+    assert captured["kwargs"]["cwd"] == str(tmp_path)
+    assert captured["kwargs"]["close_fds"] is True
+    assert captured["process"].killed
+    assert captured["process"].reaped
+
+
+def test_windows_decoder_success_uses_threaded_runner(monkeypatch, tmp_path):
+    captured = {}
+
+    def completed(command, *, cwd, env, stop_requested):
+        captured.update(command=command, cwd=cwd, env=env)
+        assert not stop_requested.is_set()
+        return audio_upload.ProbeProcessResult(
+            0, b'{"duration_seconds": 1.5}'
+        )
+
+    monkeypatch.setattr(audio_upload, "windows_threaded_probe_required", lambda: True)
+    monkeypatch.setattr(audio_upload, "run_windows_probe", completed)
+    path = tmp_path / "recording.wav"
+    path.write_bytes(b"placeholder")
+
+    duration = asyncio.run(audio_upload.probe_duration(path, ".wav"))
+
+    assert duration == 1.5
+    assert captured["command"][2] == str(path.resolve())
+    assert captured["cwd"] == str(tmp_path.resolve())
+    assert "SUPABASE_PUBLISHABLE_KEY" not in captured["env"]
+
+
+def test_windows_decoder_cancellation_waits_for_worker_cleanup(monkeypatch, tmp_path):
+    started = threading.Event()
+    stopped = threading.Event()
+
+    def controlled_probe(command, *, cwd, env, stop_requested):
+        started.set()
+        assert stop_requested.wait(timeout=2)
+        stopped.set()
+        return audio_upload.ProbeProcessResult(-9, b"")
+
+    monkeypatch.setattr(audio_upload, "windows_threaded_probe_required", lambda: True)
+    monkeypatch.setattr(audio_upload, "run_windows_probe", controlled_probe)
+    path = tmp_path / "recording.wav"
+    path.write_bytes(b"placeholder")
+
+    async def cancel_probe():
+        task = asyncio.create_task(audio_upload.probe_duration(path, ".wav"))
+        assert await asyncio.to_thread(started.wait, 1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(cancel_probe())
+    assert stopped.is_set()
+
+
+def test_windows_decoder_launch_failure_is_stable_503(monkeypatch, tmp_path):
+    def unavailable(*args, **kwargs):
+        raise OSError("private process detail")
+
+    monkeypatch.setattr(audio_upload, "windows_threaded_probe_required", lambda: True)
+    monkeypatch.setattr(audio_upload, "run_windows_probe", unavailable)
+    path = tmp_path / "recording.wav"
+    path.write_bytes(b"placeholder")
+
+    with pytest.raises(APIError) as caught:
+        asyncio.run(audio_upload.probe_duration(path, ".wav"))
+
+    assert caught.value.status_code == 503
+    assert caught.value.code == "AUDIO_PROCESSING_UNAVAILABLE"
+    assert "private process detail" not in caught.value.message
 
 
 def test_busy_limit_rejects_before_body_decode(monkeypatch):

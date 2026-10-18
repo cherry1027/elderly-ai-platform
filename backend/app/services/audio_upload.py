@@ -5,7 +5,10 @@ import hashlib
 import json
 import math
 import os
+import subprocess
 import sys
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,6 +22,8 @@ from app.core.errors import APIError
 
 MAX_AUDIO_BYTES = 25_000_000
 MAX_REQUEST_BYTES = MAX_AUDIO_BYTES + 16_384
+PROBE_TIMEOUT_SECONDS = 12
+WINDOWS_PROBE_POLL_SECONDS = 0.05
 MIME_TYPES = {
     ".wav": {"audio/wav", "audio/x-wav", "audio/wave"},
     ".mp3": {"audio/mpeg", "audio/mp3"},
@@ -78,32 +83,159 @@ class Recording:
     duration_seconds: float
 
 
-async def probe_duration(path: Path, suffix: str) -> float:
+@dataclass(frozen=True)
+class ProbeProcessResult:
+    returncode: int
+    output: bytes
+    timed_out: bool = False
+
+
+def decoder_environment() -> dict[str, str]:
+    """Return the decoder's intentionally minimal, credential-free environment."""
+    environment = {
+        key: os.environ[key] for key in ("SYSTEMROOT", "WINDIR") if key in os.environ
+    }
+    environment.update({
+        "PATH": os.defpath,
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    })
+    return environment
+
+
+def probe_command(path: Path, suffix: str) -> tuple[str, str, str, str]:
+    # Keep a virtualenv's interpreter symlink intact; resolving it can bypass
+    # that environment and lose the PyAV dependency installed beside the app.
+    executable = os.path.abspath(sys.executable)
+    script = str(Path(__file__).with_name("audio_probe.py").resolve())
+    return executable, script, str(path.resolve()), suffix
+
+
+def windows_threaded_probe_required() -> bool:
+    """Windows selector loops used by reload/workers cannot spawn asyncio children."""
+    return sys.platform == "win32"
+
+
+def _kill_and_reap(process: subprocess.Popen[bytes]) -> bytes:
+    if process.poll() is None:
+        process.kill()
+    output, _ = process.communicate()
+    return output
+
+
+def run_windows_probe(
+    command: tuple[str, str, str, str],
+    *,
+    cwd: str,
+    env: dict[str, str],
+    stop_requested: threading.Event,
+) -> ProbeProcessResult:
+    """Run one decoder without relying on the event loop's subprocess support."""
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        cwd=cwd,
+        env=env,
+        close_fds=True,
+    )
+    deadline = time.monotonic() + PROBE_TIMEOUT_SECONDS
     try:
-        decoder_env = {
-            key: os.environ[key] for key in ("SYSTEMROOT", "WINDIR") if key in os.environ
-        }
-        decoder_env.update({
-            "PATH": os.defpath, "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
-        })
-        process = await asyncio.create_subprocess_exec(
-            sys.executable, str(Path(__file__).with_name("audio_probe.py")), str(path), suffix,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-            cwd=str(path.parent), env=decoder_env,
-        )
+        while True:
+            if stop_requested.is_set():
+                output = _kill_and_reap(process)
+                return ProbeProcessResult(process.returncode or -1, output)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                output = _kill_and_reap(process)
+                return ProbeProcessResult(
+                    process.returncode or -1, output, timed_out=True
+                )
+            try:
+                output, _ = process.communicate(
+                    timeout=min(WINDOWS_PROBE_POLL_SECONDS, remaining)
+                )
+                return ProbeProcessResult(process.returncode or 0, output)
+            except subprocess.TimeoutExpired:
+                continue
+    finally:
+        if process.poll() is None:
+            _kill_and_reap(process)
+
+
+async def run_windows_probe_async(
+    command: tuple[str, str, str, str], *, cwd: str, env: dict[str, str]
+) -> ProbeProcessResult:
+    stop_requested = threading.Event()
+    worker = asyncio.create_task(asyncio.to_thread(
+        run_windows_probe,
+        command,
+        cwd=cwd,
+        env=env,
+        stop_requested=stop_requested,
+    ))
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        stop_requested.set()
+        # Keep the temporary recording alive until the child is reaped. Repeated
+        # cancellation must not strand the worker or a locked file on Windows.
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        try:
+            worker.result()
+        except Exception:
+            pass
+        raise
+
+
+async def probe_duration(path: Path, suffix: str) -> float:
+    command = probe_command(path, suffix)
+    cwd = str(path.parent.resolve())
+    env = decoder_environment()
+    try:
+        if windows_threaded_probe_required():
+            result = await run_windows_probe_async(command, cwd=cwd, env=env)
+            if result.timed_out:
+                raise APIError(
+                    422,
+                    "AUDIO_PROCESSING_LIMIT",
+                    "Recording could not be processed within safe limits.",
+                )
+            returncode, output = result.returncode, result.output
+            process = None
+        else:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+                cwd=cwd,
+                env=env,
+            )
     except (OSError, NotImplementedError):
         raise APIError(503, "AUDIO_PROCESSING_UNAVAILABLE", "Audio processing is temporarily unavailable.") from None
-    try:
-        output, _ = await asyncio.wait_for(process.communicate(), timeout=12)
-    except TimeoutError:
-        raise APIError(422, "AUDIO_PROCESSING_LIMIT", "Recording could not be processed within safe limits.") from None
-    finally:
-        if process.returncode is None:
-            process.kill()
-            await process.wait()
-    if process.returncode == 3:
+    if process is not None:
+        try:
+            output, _ = await asyncio.wait_for(
+                process.communicate(), timeout=PROBE_TIMEOUT_SECONDS
+            )
+        except TimeoutError:
+            raise APIError(422, "AUDIO_PROCESSING_LIMIT", "Recording could not be processed within safe limits.") from None
+        finally:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
+        returncode = process.returncode
+    if returncode == 3:
         raise APIError(422, "RECORDING_TOO_LONG", "Recordings must not exceed 90 seconds.")
-    if process.returncode != 0:
+    if returncode != 0:
         raise invalid_upload()
     try:
         duration = float(json.loads(output)["duration_seconds"])

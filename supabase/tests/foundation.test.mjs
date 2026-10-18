@@ -379,6 +379,33 @@ test("transcription claim binds owner, session, hash, language, and lease", asyn
   assert.ok(lease >= 119 && lease <= 121);
 });
 
+test("completion and failure RPCs reject cross-user and anonymous callers", async () => {
+  await asUser(bob, async () => {
+    await expectSqlError(
+      "SELECT * FROM complete_audio_transcription($1, $2, 'Forged transcript')",
+      [day3Request, day3Claim], "P0002",
+    );
+    await expectSqlError(
+      "SELECT * FROM fail_audio_transcription($1, $2, 'PROVIDER_UNAVAILABLE')",
+      [day3Request, day3Claim], "P0002",
+    );
+  });
+
+  await db.exec("SET ROLE anon");
+  try {
+    await expectSqlError(
+      "SELECT * FROM complete_audio_transcription($1, $2, 'Anonymous transcript')",
+      [day3Request, day3Claim], "42501",
+    );
+    await expectSqlError(
+      "SELECT * FROM fail_audio_transcription($1, $2, 'PROVIDER_UNAVAILABLE')",
+      [day3Request, day3Claim], "42501",
+    );
+  } finally {
+    await db.exec("RESET ROLE");
+  }
+});
+
 test("completion appends exactly one immutable audio transcript", async () => {
   const transcriptText = "Jag föddes i Malmö.";
 

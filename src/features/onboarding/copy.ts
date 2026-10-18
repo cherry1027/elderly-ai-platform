@@ -1,0 +1,53 @@
+export type Language = "en" | "sv";
+export type Scene = 0 | 1 | 2;
+
+export const copy = {
+  en: {
+    preview: "Development preview",
+    language: "Language",
+    motionOff: "Turn animations off",
+    motionOn: "Turn animations on",
+    reducedMotion: "Animations are off for reduced motion.",
+    scenes: [
+      { eyebrow: "Your memories", title: "Every life has a story.", description: "Start with the memories you want to tell.", caption: "A little moment. A familiar place. Begin wherever you like." },
+      { eyebrow: "Your voice, your words", title: "Speak at your own pace.", description: "Talk or type. Memy helps you tell your story.", caption: "There is no rush. Your words are always the starting point." },
+      { eyebrow: "A book that is yours", title: "Your memories. Your autobiography.", description: "Choose Create My Story when you're ready. Review and edit your draft.", caption: "You choose when to create. You decide what belongs in your story." },
+    ],
+    next: "Next", back: "Back", skip: "Skip", enter: "Enter Memy", replay: "Replay Introduction",
+    of: "of", progress: "Introduction progress",
+    illustration: "Illustration only · No recording or story generation",
+    welcomeTitle: "Welcome to Memy.",
+    welcomeDescription: "A place for your memories, in your own words.",
+    welcomeEyebrow: "Your story starts with you",
+    login: "Log in", register: "Create Account", guest: "Continue as Guest",
+    previewNote: "Graphical preview only. Sign-in, account creation and guest access are unavailable here.",
+    storageNote: "Your browser could not save completion. The introduction may appear again next time.",
+    callbackTitle: "Continue your sign-in safely.",
+    callbackNote: "This preview does not handle authentication links. Use the original sign-in or recovery flow. Your link has been left unchanged.",
+    footer: "Your memories. Your words. Your story.",
+  },
+  sv: {
+    preview: "Utvecklingsförhandsvisning",
+    language: "Språk",
+    motionOff: "Stäng av animationer",
+    motionOn: "Slå på animationer",
+    reducedMotion: "Animationer är avstängda för minskad rörelse.",
+    scenes: [
+      { eyebrow: "Dina minnen", title: "Varje liv har en berättelse.", description: "Börja med de minnen du vill berätta om.", caption: "Ett litet ögonblick. En välbekant plats. Börja där du vill." },
+      { eyebrow: "Din röst, dina ord", title: "Prata i din egen takt.", description: "Prata eller skriv. Memy hjälper dig att berätta din historia.", caption: "Det är ingen brådska. Dina ord är alltid utgångspunkten." },
+      { eyebrow: "En bok som är din", title: "Dina minnen. Din självbiografi.", description: "Välj Skapa min berättelse när du är redo. Granska och redigera ditt utkast.", caption: "Du väljer när du vill skapa. Du bestämmer vad som hör till din berättelse." },
+    ],
+    next: "Nästa", back: "Tillbaka", skip: "Hoppa över", enter: "Öppna Memy", replay: "Visa introduktionen igen",
+    of: "av", progress: "Introduktionens steg",
+    illustration: "Endast illustration · Ingen inspelning eller berättelse skapas",
+    welcomeTitle: "Välkommen till Memy.",
+    welcomeDescription: "En plats för dina minnen, med dina egna ord.",
+    welcomeEyebrow: "Din berättelse börjar med dig",
+    login: "Logga in", register: "Skapa konto", guest: "Fortsätt som gäst",
+    previewNote: "Endast en grafisk förhandsvisning. Inloggning, nya konton och gäståtkomst är inte tillgängliga här.",
+    storageNote: "Webbläsaren kunde inte spara att du är klar. Introduktionen kan visas igen nästa gång.",
+    callbackTitle: "Fortsätt din inloggning säkert.",
+    callbackNote: "Den här förhandsvisningen hanterar inte autentiseringslänkar. Använd det ursprungliga flödet för inloggning eller återställning. Din länk är oförändrad.",
+    footer: "Dina minnen. Dina ord. Din berättelse.",
+  },
+} as const;

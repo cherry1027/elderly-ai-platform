@@ -1,13 +1,14 @@
 import { createDevelopmentAuth, readDevelopmentConfig, type DevelopmentAuth } from "../../development/story-projects/development";
 import { createStoryProjectsClient, type StoryProject } from "../../lib/api/story-projects";
 import { isAuthenticationCallback } from "../onboarding/onboarding-state";
+import type { RegistrationAuth } from "./registration-auth";
 
 export interface LoginRuntime {
-  auth: DevelopmentAuth;
+  auth: DevelopmentAuth & RegistrationAuth;
   loadProjects: (signal: AbortSignal) => Promise<StoryProject[]>;
 }
 
-// No configuration is read and no SDK client is created until Login or an
+// No configuration is read and no SDK client is created until Login, Create Account or an
 // authentication callback is opened. The preview supplies only dedicated env.
 export function createLoginRuntime(): LoginRuntime {
   const settings = readDevelopmentConfig(import.meta.env);

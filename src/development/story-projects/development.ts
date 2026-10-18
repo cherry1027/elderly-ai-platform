@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { StoryProjectsError, storyProjectsUrl } from "@/lib/api/story-projects";
 import { clearRecoveryRedirect, PasswordRecoveryError, privateAuthFetch, readRecoveryRedirect, type RecoveryState } from "./recovery";
+import { CONFIRMATION_REDIRECT_URL, isConfirmationRedirect, RegistrationError, type ConfirmationState, type RegistrationAuth } from "../../features/login/registration-auth";
 
 export const DEVELOPMENT_SUPABASE_URL = "https://edbkuunyeyxnyenmmqud.supabase.co";
 export const AUTH_TIMEOUT_MS = 10_000;
@@ -60,10 +61,18 @@ function isDevelopmentUserToken(token: string): boolean {
   } catch { return false; }
 }
 
-export function createDevelopmentAuth(settings: DevelopmentConfig, request: typeof fetch = (input, init) => fetch(input, init)): DevelopmentAuth {
+export function createDevelopmentAuth(settings: DevelopmentConfig, request: typeof fetch = (input, init) => fetch(input, init)): DevelopmentAuth & RegistrationAuth {
   const config = validate(settings);
   const redirect = readRecoveryRedirect();
-  let recoveryState: RecoveryState = redirect.attempted ? "checking" : "none";
+  const confirmationRedirect = typeof window !== "undefined" && isConfirmationRedirect();
+  let recoveryState: RecoveryState = redirect.attempted && !confirmationRedirect ? "checking" : "none";
+  let confirmationState: ConfirmationState = confirmationRedirect ? "checking" : "none";
+  let confirmationValidated = false;
+  let confirmationSessionSeen = false;
+  let resolveConfirmationEvent!: () => void;
+  const confirmationEvent = new Promise<void>(resolve => { resolveConfirmationEvent = resolve; });
+  const confirmationListeners = new Set<(state: ConfirmationState) => void>();
+  let signingUp = false;
   let updatingPassword = false;
   let generation = 0;
   let sessionAllowed = true;
@@ -84,6 +93,11 @@ export function createDevelopmentAuth(settings: DevelopmentConfig, request: type
     if (state !== "checking") clearTimeout(recoveryTimer);
     recoveryListeners.forEach(listener => listener(state));
   }
+  function setConfirmationState(state: ConfirmationState) {
+    confirmationState = state;
+    if (state !== "checking") clearTimeout(recoveryTimer);
+    confirmationListeners.forEach(listener => listener(state));
+  }
   function blockSession() {
     generation++;
     sessionAllowed = false;
@@ -99,6 +113,7 @@ export function createDevelopmentAuth(settings: DevelopmentConfig, request: type
     initializationAbandoned = true;
     redirectCleanupPending = false;
     clearTimeout(recoveryTimer);
+    resolveConfirmationEvent();
     blockSession();
     // Public invalidation runs outside SDK auth callbacks/locks.
     stopAutomaticRefresh();
@@ -117,14 +132,15 @@ export function createDevelopmentAuth(settings: DevelopmentConfig, request: type
             reloadRequired = true;
             invalidateSession();
             if (["checking", "ready"].includes(recoveryState)) setRecoveryState("invalid");
+            if (confirmationState === "checking") setConfirmationState("invalid");
             reject(new Error("Authentication took too long. Reload this development preview and try again."));
           }, AUTH_TIMEOUT_MS);
         }),
       ]);
     } finally { clearTimeout(timer); }
   }
-  function canProcessRecovery(params: Record<string, string>) {
-    return params.type === "recovery" && !params.error && !params.error_code && !params.error_description &&
+  function canProcessCallback(params: Record<string, string>, type: "recovery" | "signup") {
+    return params.type === type && !params.error && !params.error_code && !params.error_description &&
       isDevelopmentUserToken(params.access_token || "") && Boolean(params.refresh_token) &&
       params.token_type === "bearer" && Number.isFinite(Number(params.expires_in)) && Number(params.expires_in) > 0 &&
       (!params.expires_at || (Number.isFinite(Number(params.expires_at)) && Number(params.expires_at) > Date.now() / 1000));
@@ -133,18 +149,27 @@ export function createDevelopmentAuth(settings: DevelopmentConfig, request: type
     auth: {
       persistSession: false, autoRefreshToken: true, flowType: "implicit", debug: false,
       // This only selects a callback for SDK validation. URL claims NEVER enable the form.
-      detectSessionInUrl: (_url, params) => canProcessRecovery(params),
+      detectSessionInUrl: (_url, params) => canProcessCallback(params, confirmationRedirect ? "signup" : "recovery"),
       storageKey: "memy-story-projects-development-only",
     },
     global: { fetch: privateAuthFetch(request, {
       authOrigin: DEVELOPMENT_SUPABASE_URL, timeoutMs: AUTH_TIMEOUT_MS, allowRequest: () => !reloadRequired,
       sessionGeneration: () => generation,
+      allowSignUp: () => signingUp,
     }) },
   });
   // Synchronous only: SDK callbacks run under its auth lock. Subscribe immediately,
   // before initialization completes, and retain the state for later UI subscribers.
   client.auth.onAuthStateChange((event, session) => {
-    if (event === "PASSWORD_RECOVERY" && !initializationAbandoned && !reloadRequired && !["finishing", "complete", "cleanup-failed"].includes(recoveryState)) {
+    if (event === "SIGNED_IN" && confirmationState === "checking" && !initializationAbandoned && !reloadRequired) {
+      // The SDK has fetched this user from Auth. A URL claim alone cannot reach
+      // this branch. Cleanup runs after initialization, outside the auth lock.
+      confirmationValidated = Boolean(session && isDevelopmentUserToken(session.access_token) &&
+        session.user?.id && session.user.is_anonymous === false && session.user.email_confirmed_at &&
+        session.expires_at && session.expires_at > Date.now() / 1000);
+      confirmationSessionSeen = Boolean(session);
+      resolveConfirmationEvent();
+    } else if (event === "PASSWORD_RECOVERY" && !confirmationRedirect && !initializationAbandoned && !reloadRequired && !["finishing", "complete", "cleanup-failed"].includes(recoveryState)) {
       blockSession();
       const valid = session && isDevelopmentUserToken(session.access_token) &&
         session.user?.id && !session.user.is_anonymous && session.expires_at && session.expires_at > Date.now() / 1000;
@@ -154,11 +179,13 @@ export function createDevelopmentAuth(settings: DevelopmentConfig, request: type
       if (recoveryState === "ready") setRecoveryState("invalid");
     }
   });
-  if (redirect.attempted) recoveryTimer = setTimeout(() => {
+  if (confirmationRedirect) sessionAllowed = false;
+  if (redirect.attempted || confirmationRedirect) recoveryTimer = setTimeout(() => {
     clearOwnRecoveryRedirect();
     reloadRequired = true;
     invalidateSession();
-    setRecoveryState("invalid");
+    if (confirmationRedirect) setConfirmationState("invalid");
+    else setRecoveryState("invalid");
   }, AUTH_TIMEOUT_MS);
   const sdkInitialization = client.auth.initialize();
   const stopAbandonedInitialization = () => {
@@ -167,19 +194,93 @@ export function createDevelopmentAuth(settings: DevelopmentConfig, request: type
     if (initializationAbandoned) stopAutomaticRefresh();
   };
   void sdkInitialization.then(stopAbandonedInitialization, stopAbandonedInitialization);
-  const initialization = bounded(() => sdkInitialization).then(({ error }) => {
+  const initialization = bounded(() => sdkInitialization).then(async ({ error }) => {
     clearOwnRecoveryRedirect();
+    if (initializationAbandoned || reloadRequired) {
+      if (recoveryState === "checking") setRecoveryState("invalid");
+      if (confirmationState === "checking") setConfirmationState("invalid");
+      return;
+    }
     if (error) sessionAllowed = false;
-    if (redirect.attempted && (error || !canProcessRecovery(redirect.params))) setRecoveryState("invalid");
+    if (confirmationRedirect) {
+      sessionAllowed = false;
+      // Even an invalid/unconfirmed SDK session must never be reused for projects.
+      if (error || !canProcessCallback(redirect.params, "signup")) {
+        setConfirmationState("invalid");
+        return;
+      }
+      try {
+        // auth-js emits its URL SIGNED_IN event on a later task. Wait for that
+        // validated event without calling asynchronous SDK methods in it.
+        await bounded(() => confirmationEvent);
+        if (initializationAbandoned || reloadRequired) throw new Error();
+        if (confirmationSessionSeen) {
+          const result = await bounded(() => client.auth.signOut({ scope: "local" }));
+          if (result.error || initializationAbandoned || reloadRequired) throw new Error();
+        }
+        setConfirmationState(confirmationValidated ? "complete" : "invalid");
+      } catch {
+        reloadRequired = true;
+        invalidateSession();
+        setConfirmationState("cleanup-failed");
+      }
+    } else if (redirect.attempted && (error || !canProcessCallback(redirect.params, "recovery"))) setRecoveryState("invalid");
   }).catch(() => {
     sessionAllowed = false;
     clearOwnRecoveryRedirect();
-    if (redirect.attempted) setRecoveryState("invalid");
+    if (confirmationRedirect) setConfirmationState("invalid");
+    else if (redirect.attempted) setRecoveryState("invalid");
   });
   return {
+    getConfirmationState: () => confirmationState,
+    onConfirmationChange(listener) {
+      confirmationListeners.add(listener);
+      listener(confirmationState);
+      return () => { confirmationListeners.delete(listener); };
+    },
+    async signUp(email, password) {
+      if (typeof window === "undefined" || !["http://127.0.0.1:5173", "http://localhost:5173"].includes(window.location.origin)) throw new RegistrationError("configuration");
+      if (signingUp || signingIn || reloadRequired || recoveryState !== "none" || confirmationState !== "none") throw new RegistrationError("failed");
+      signingUp = true;
+      sessionAllowed = false;
+      const attempt = ++generation;
+      try {
+        const { data, error } = await bounded(async () => {
+          await initialization;
+          if (reloadRequired || initializationAbandoned || attempt !== generation) throw new Error();
+          return client.auth.signUp({ email: email.trim(), password, options: { emailRedirectTo: CONFIRMATION_REDIRECT_URL } });
+        });
+        if (reloadRequired || initializationAbandoned || attempt !== generation) throw new Error();
+        if (data.session) {
+          // Confirmation may be disabled in the project. Never accept this
+          // session as an ordinary login, regardless of what the SDK emitted.
+          try {
+            const cleanup = await bounded(() => client.auth.signOut({ scope: "local" }));
+            if (cleanup.error) throw new Error();
+          } catch {
+            reloadRequired = true;
+            invalidateSession();
+            setConfirmationState("cleanup-failed");
+            throw new RegistrationError("cleanup");
+          }
+          throw new RegistrationError("configuration");
+        }
+        if (error) {
+          // Auth may obfuscate existing accounts as success or return a code.
+          // Both outcomes get the identical Check Your Email screen.
+          if (["user_already_exists", "email_exists"].includes(error.code || "")) return;
+          if (error.code === "weak_password") throw new RegistrationError("weak");
+          if (error.code === "email_address_invalid") throw new RegistrationError("invalid-email");
+          if (error.status === 429 || ["over_request_rate_limit", "over_email_send_rate_limit"].includes(error.code || "")) throw new RegistrationError("rate-limit");
+          throw new RegistrationError("failed");
+        }
+      } catch (error) {
+        throw error instanceof RegistrationError ? error : new RegistrationError(reloadRequired ? "timeout" : "failed");
+      } finally { signingUp = false; }
+    },
     async signIn(email, password) {
       const initialState = recoveryState;
-      if (signingIn || !["none", "invalid", "complete"].includes(initialState)) throw new Error("Finish password recovery before signing in.");
+      if (signingIn || signingUp || ["checking", "cleanup-failed"].includes(confirmationState) || !["none", "invalid", "complete"].includes(initialState)) throw new Error("Finish password recovery before signing in.");
       signingIn = true;
       sessionAllowed = false;
       const attempt = ++generation;
@@ -191,6 +292,7 @@ export function createDevelopmentAuth(settings: DevelopmentConfig, request: type
         });
         if (error || !data.session || !isDevelopmentUserToken(data.session.access_token) || recoveryState !== initialState || attempt !== generation || reloadRequired) throw new Error();
         setRecoveryState("none");
+        setConfirmationState("none");
         sessionAllowed = true;
         if (typeof client.auth.startAutoRefresh === "function") void client.auth.startAutoRefresh().catch(() => {});
       } catch {
@@ -199,7 +301,7 @@ export function createDevelopmentAuth(settings: DevelopmentConfig, request: type
     },
     async signOut() {
       invalidateSession();
-      if (signingIn) reloadRequired = true;
+      if (signingIn || signingUp) reloadRequired = true;
       try {
         const { error } = await bounded(() => client.auth.signOut({ scope: "local" }));
         if (error) throw new Error();
@@ -209,7 +311,7 @@ export function createDevelopmentAuth(settings: DevelopmentConfig, request: type
       }
     },
     async getAccessToken() {
-      if (recoveryState !== "none" || !sessionAllowed || reloadRequired) return null;
+      if (confirmationState !== "none" || signingUp || recoveryState !== "none" || !sessionAllowed || reloadRequired) return null;
       const attempt = generation;
       try {
         const session = await bounded(async () => {

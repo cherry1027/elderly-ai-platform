@@ -269,6 +269,32 @@ describe("application entrance presentation", () => {
     expect(screen.getByText("Inloggning, nya konton och gäståtkomst kommer snart.")).toBeVisible();
     expect(screen.getByRole("button", { name: "Fortsätt som gäst" })).toBeDisabled();
   });
+
+  it("enables registration only when explicitly supplied by the development entrance", () => {
+    window.history.replaceState(null, "", "/");
+    window.localStorage.setItem(COMPLETION_KEY, "complete");
+    const onRegister = vi.fn();
+    render(<OnboardingExperience variant="application" onRegister={onRegister} />);
+    expect(screen.getByRole("button", { name: "Log in" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Continue as Guest" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Create Account" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create Account" }));
+    expect(onRegister).toHaveBeenCalledTimes(2);
+    expect(screen.getByText(/after development settings are approved/)).toBeVisible();
+  });
+
+  it("preserves Swedish language focus while exposing only the approved registration action", () => {
+    window.history.replaceState(null, "", "/");
+    window.localStorage.setItem(COMPLETION_KEY, "complete");
+    const onRegister = vi.fn();
+    render(<OnboardingExperience variant="application" onRegister={onRegister} />);
+    const select = screen.getByRole("combobox"); select.focus();
+    fireEvent.change(select, { target: { value: "sv" } });
+    expect(select).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "Skapa konto" }));
+    expect(onRegister).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Fortsätt som gäst" })).toBeDisabled();
+  });
 });
 
 describe("motion preferences", () => {

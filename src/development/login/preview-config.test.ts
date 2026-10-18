@@ -123,6 +123,7 @@ describe("isolated development login preview", () => {
 
   it.each([
     "../../features/login/LoginApplication", "/src/entry/Entrance.tsx", "@/lib/api/story-projects",
+    "/src/features/login/Registration.tsx", "/src/features/login/registration-auth.ts",
     "@/components/ui/button", "../features/onboarding/OnboardingExperience", "@supabase/supabase-js", "react",
   ])("permits only the selected runtime's necessary imports: %s", id => {
     const importer = id.startsWith("../features") ? path.resolve("src/entry/Entrance.tsx") : path.resolve("src/development/login/main.tsx");
@@ -161,6 +162,7 @@ describe("isolated development login preview", () => {
 
   it.each([
     "/src/development/login/main.tsx", "/src/features/login/LoginApplication.tsx", "/src/features/login/login-runtime.ts", "/src/features/login/login.css?inline",
+    "/src/features/login/Registration.tsx", "/src/features/login/registration-auth.ts",
     "/src/entry/Entrance.tsx", "/src/features/onboarding/MemoryBookScene.tsx", "/src/lib/api/story-projects.ts",
     "/src/development/story-projects/development.ts", "/src/components/ui/input.tsx",
     "/@vite/env", "/.login-cache.local/deps/@supabase_supabase-js.js?v=synthetic",

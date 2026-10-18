@@ -1,11 +1,26 @@
-# Memy Web Task 3B — development login integration
+# Memy Web Task 3C — development registration and login integration
 
-Branch: `feat/web-login-integration`.
-Base: `770d927dba45d80b05b591bb2277a93d399ff9d0` (approved Task 3A).
+Current branch: `feat/web-registration`.
+Current base: `b35fe3ddb84c0d6d091aa5c1a6685438592c0ac5` (approved Task 3B).
+
+Task 3C extends the existing isolated development entrance with Swedish/English
+email/password registration. Create Account is enabled only when the development
+entry supplies its handler. Continue as Guest remains disabled; standalone
+onboarding/entrance previews still have inert account actions. The legacy
+registration, invite, premium, AuthContext and application routes are not used.
+
+**Do not submit a real registration until Charan confirms all development Auth
+settings below.** No real signup, email, confirmation link, Supabase setting or
+backend operation is performed by the automated checks. This guide contains no
+credentials. The Task 3B details and dated verification record below are retained
+as history; their counts are not Task 3C test results.
+
+Task 3B branch: `feat/web-login-integration`.
+Task 3B base: `770d927dba45d80b05b591bb2277a93d399ff9d0` (approved Task 3A).
 Reviewed Story Projects/recovery source: `b2830f2f49e3a6bbfd51cbf83bdb86e9e4dc6f6c`.
 
 This development entry uses the real shared Memy Entrance/Welcome component,
-enables only its Login action, and reuses the reviewed My Story Projects,
+originally enabled only its Login action, and reuses the reviewed My Story Projects,
 password-recovery, development Auth and typed API implementation. Ten necessary
 source/test files were copied from the reviewed commit into this worktree;
 there was no branch merge/cherry-pick and no other worktree was changed.
@@ -24,11 +39,11 @@ connection is performed automatically.
 1. Open Windows PowerShell and select the new worktree:
 
    ```powershell
-   Set-Location "C:\Users\Grkta\Documents\Codex\2026-10-15\files-mentioned-by-the-user-elderly\work\memy-web-login-integration"
+   Set-Location "C:\Users\Grkta\Documents\Codex\2026-10-15\files-mentioned-by-the-user-elderly\work\memy-web-registration"
    git branch --show-current
    ```
 
-   Expected: `feat/web-login-integration`. Existing installed dependencies have
+   Expected: `feat/web-registration`. Existing installed dependencies have
    been copied into this worktree's ignored node_modules; nothing was installed
    and package/lock files were not changed.
 
@@ -101,13 +116,89 @@ exact frontend origin; no backend code or configuration was changed here.
 Wrong CORS, an offline backend and a blocked request can all appear as the
 sanitized network error. Browser authentication alone does not prove CORS/RLS.
 
-## Manual verification — pending for Task 3B
+## Registration approval checklist — Charan
+
+Before a real Create Account submission, confirm privately that:
+
+- The development project is **edbkuunyeyxnyenmmqud**, signup is enabled, and
+  email confirmation is required. Actual backend/environment settings are not
+  established by source inspection.
+- The exact password length and any required character types are known. The
+  form checks required fields, email format and password equality; Supabase
+  enforces its actual policy. No unknown minimum is invented.
+- The exact redirect **http://127.0.0.1:5173/auth/callback** is allowlisted,
+  the Site URL/email template produces the supported implicit signup callback,
+  and it does not point to the legacy application or production.
+- Email delivery, permitted test recipients, rate limits and CAPTCHA/anti-abuse
+  requirements are approved. This narrow form has no CAPTCHA integration; do
+  not disable project protection merely to make a test pass.
+- Existing account/profile/settings triggers are healthy in development. This
+  frontend adds no profile writes, schema changes, backend registration route
+  or project/session creation.
+
+No project configuration is changed by this feature. Real email delivery,
+password policy, redirect compatibility and database triggers remain pending
+until separately verified. The UI language remains an interface preference,
+not a promise of a persisted profile language.
+
+## Task 3C manual verification — only after approval above
+
+1. Start the isolated frontend using the Windows steps above, then open
+   **http://127.0.0.1:5173/** in a fresh Chrome Incognito session. At Welcome,
+   Login and Create Account are enabled; Continue as Guest is disabled. Check
+   keyboard navigation and both Swedish/English. Back to Welcome preserves the
+   interface language and motion choice.
+2. Open Create Account. Check required fields, malformed email and mismatched
+   passwords without submitting valid credentials. Errors should be announced,
+   translated and contain no upstream detail. Switch languages while focused
+   on the language selector; focus should stay there.
+3. Only after Charan approves, use a disposable development email and a password
+   meeting the confirmed policy. Submit once. Expect the generic check-email
+   notice, not automatic sign-in or story projects. Do not retry rapidly or
+   infer whether an account exists from this message. Never share passwords,
+   request payloads, confirmation URLs, access tokens or refresh tokens.
+4. Open the fresh development confirmation email once. It must land at the exact
+   approved callback above, bypass onboarding and show confirmation checking.
+   Confirmation success requires Supabase validation and safe temporary-session
+   cleanup; URL parameters alone cannot show success. It must not display the
+   new-password form or load project data. After success, choose Go to sign in
+   and sign in normally using the confirmed disposable account.
+5. A newly registered account can legitimately have no story projects. Project
+   loading occurs only after fresh password sign-in and requires the separately
+   approved local FastAPI backend described below. No backend is started here.
+6. Test an expired/used/invalid development confirmation link privately. Expect
+   helpful generic guidance, no URL/token display and no project requests. A
+   plain `?type=signup` is not proof of confirmation. Unsupported code-only
+   PKCE links fail safely; this in-memory flow has no persisted PKCE verifier.
+7. Test Offline mode before a disposable signup request. Errors must be safe.
+   A timeout may mean Supabase received the request, so check email before any
+   retry and reload when instructed. Failed temporary-session cleanup permits
+   reload only. Back/exit during a pending request must not leave usable auth.
+8. Retest ordinary login, sign-out and the existing approved development recovery
+   callback. Recovery must still require validated PASSWORD_RECOVERY, show the
+   new-password form only for recovery, and block project loading until normal
+   sign-in. Perform the real two-user authorization test separately with Charan;
+   one account does not establish cross-user isolation.
+
+Inspect methods/hosts only, never request credentials. Registration adds only
+POST `/auth/v1/signup` to the approved development Auth transport. The existing
+local backend GET list remains the only business API operation. No AI,
+microphone, uploads, guest signup, invite or premium operation is introduced.
+Unexpected immediate signup sessions are not accepted as ordinary sign-in;
+they are invalidated and cleaned up before returning to password sign-in.
+
+Automated checks use mocked services and fake data with network guards. They
+are not evidence of live email delivery, deployed Auth settings, real callback
+compatibility, production readiness or full end-to-end operation. Self-review
+does not replace your manual verification and independent review.
+
+## Existing login and recovery manual regression checks
 
 1. Start in a fresh Chrome Incognito session. Check the three scenes, Next/Back,
    Skip, Enter, Replay and Animations/reduced motion. Completion remains local
    to profile/origin; ports 5173 and 5176 have separate flags. No Auth client is
-   created until Login or a supported callback is opened.
-2. At Welcome, Login is enabled. Create Account and Continue as Guest remain
+   created until Login, Create Account or a supported callback is opened.
+2. At Welcome, Login and Create Account are enabled. Continue as Guest remains
    disabled. Choose Swedish or English; Login inherits it. Back to Welcome
    preserves language and the mounted introduction's motion choice.
 3. Select Login and use the approved development account privately. Expect
@@ -165,8 +256,8 @@ Reload to sign in. This code sends no recovery emails automatically.
   and authenticated role are guarded. Issuer parsing is routing protection,
   not signature verification. FastAPI/Supabase still perform actual validation.
 - No permanent sessions, credentials in source, project/session writes,
-  registration, guest, microphone, transcription, AI, payment or subscription
-  feature is introduced. Auth login/refresh/logout/password update are expected
+  guest, microphone, transcription, AI, payment or subscription feature is
+  introduced. Auth signup/confirmation/login/refresh/logout/password update are
   development Auth operations; GET projects is the only business API call.
 - The preview allowlist blocks the legacy graph and MCP generation. CSP permits
   the approved Auth namespace and loopback API only, forbids forms/frames/remote
@@ -201,8 +292,34 @@ browser and Node network/device APIs; SDK protocol cases use synthetic accounts
 and fake HTTP with the actual installed SDK. No test starts services or uses a
 real account. See the final task report for actual totals and any failures.
 
-Suggested commit message after manual and independent approval:
-`feat: integrate development login and story projects at the Memy entrance`
+Suggested Task 3C commit message after manual and independent approval:
+`feat: add development account registration and email confirmation`
+
+## Task 3C automated verification — 18 October 2026
+
+After the final application/test changes, the full isolated login suite passed
+**586 tests in 16 files, zero failures** (including the existing regression
+cases). The final run used `--pool=threads --maxWorkers=1 --no-file-parallelism`.
+Both `tsconfig.login.json` (strict) and `tsconfig.app.json` passed TypeScript
+checks with `--noEmit --incremental false`. Scoped ESLint with `--max-warnings 0`
+and `git diff --check` passed. No packages were installed or dependency files
+changed: preinstalled node_modules were copied from the reviewed login worktree
+only after confirming identical package-lock hashes.
+
+All Auth/confirmation protocol checks used the actual installed Supabase SDK
+with injected synthetic HTTP responses and blocked real network access. No real
+signup, email, backend, database or production verification was executed.
+Accessibility checks cover labels, error announcements/focus, language-selector
+focus and keyboard-operable native controls; graphical and assistive-technology
+browser verification remains manual. Code review here was self-review, not
+independent review.
+
+Self-review corrected the Windows component/helper filename collision, the SDK's
+deferred confirmation event, temporary-session cleanup, timeout/reload guidance
+and callback navigation. The helper is named `registration-auth.ts` so Windows
+does not resolve it instead of the `Registration.tsx` component. No blocking
+finding remains for the mocked development scope; all Charan configuration gates
+and real end-to-end checks above remain pending.
 
 ## Final verification record — 18 October 2026
 

@@ -11,6 +11,7 @@ const developmentAuthOrigin = "https://edbkuunyeyxnyenmmqud.supabase.co";
 const sourcePaths = new Set([
   "/src/development/login/main.tsx",
   "/src/features/login/LoginApplication.tsx", "/src/features/login/login-runtime.ts", "/src/features/login/login.css",
+  "/src/features/login/Registration.tsx", "/src/features/login/registration-auth.ts",
   "/src/entry/Entrance.tsx",
   "/src/features/onboarding/MemoryBookScene.tsx", "/src/features/onboarding/OnboardingExperience.tsx",
   "/src/features/onboarding/copy.ts", "/src/features/onboarding/onboarding-state.ts",

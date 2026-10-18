@@ -18,9 +18,10 @@ export interface OnboardingOptions {
   language?: Language;
   onLanguageChange?: (language: Language) => void;
   onLogin?: () => void;
+  onRegister?: () => void;
 }
 
-export function OnboardingExperience({ variant = "preview", language: chosenLanguage, onLanguageChange, onLogin }: OnboardingOptions) {
+export function OnboardingExperience({ variant = "preview", language: chosenLanguage, onLanguageChange, onLogin, onRegister }: OnboardingOptions) {
   const [view, setView] = useState<View>(() => isAuthenticationCallback(window.location)
     ? "callback" : hasCompletedIntroduction() ? "welcome" : "introduction");
   const [scene, setScene] = useState<Scene>(0);
@@ -171,7 +172,7 @@ export function OnboardingExperience({ variant = "preview", language: chosenLang
             <p className="onboarding-eyebrow">{text.welcomeEyebrow}</p>
             <h1 id="onboarding-heading" className="onboarding-heading" tabIndex={-1} ref={heading}>{text.welcomeTitle}</h1>
             <p className="onboarding-description">{text.welcomeDescription}</p>
-            <p id="onboarding-welcome-note" className="onboarding-preview-note">{onLogin ? text.loginNote : variant === "application" ? text.applicationNote : text.previewNote}</p>
+            <p id="onboarding-welcome-note" className="onboarding-preview-note">{onRegister ? text.registrationNote : onLogin ? text.loginNote : variant === "application" ? text.applicationNote : text.previewNote}</p>
             <div className="onboarding-welcome-actions" aria-describedby="onboarding-welcome-note">
               <button className="onboarding-button primary" type="button" disabled={!onLogin}
                 onClick={event => navigate(event, () => {
@@ -180,7 +181,11 @@ export function OnboardingExperience({ variant = "preview", language: chosenLang
                   navigating.current = false;
                   onLogin?.();
                 })}>{text.login}</button>
-              <button className="onboarding-button secondary" type="button" disabled>{text.register}</button>
+              <button className="onboarding-button secondary" type="button" disabled={!onRegister}
+                onClick={event => navigate(event, () => {
+                  navigating.current = false;
+                  onRegister?.();
+                })}>{text.register}</button>
               <button className="onboarding-button secondary" type="button" disabled>{text.guest}</button>
             </div>
             <button className="onboarding-button quiet" type="button"

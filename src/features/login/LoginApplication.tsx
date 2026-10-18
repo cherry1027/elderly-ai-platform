@@ -3,11 +3,15 @@ import Entrance from "../../entry/Entrance";
 import { type Language } from "../onboarding/copy";
 import MyStoryProjects from "../../development/story-projects/MyStoryProjects";
 import { createLoginRuntime, loginLocation, type LoginRuntime } from "./login-runtime";
+import Registration from "./Registration";
+import { isConfirmationRedirect } from "./registration-auth";
 import styles from "./login.css?inline";
 
-function Authentication({ language, createRuntime, onBack }: {
-  language: Language; createRuntime: () => LoginRuntime; onBack: () => void;
+function Authentication({ language, createRuntime, onBack, initialMode, onRegistrationSignIn }: {
+  language: Language; createRuntime: () => LoginRuntime; onBack: () => void; initialMode: "login" | "registration";
+  onRegistrationSignIn: () => void;
 }) {
+  const [mode, setMode] = useState(initialMode);
   const [runtime, setRuntime] = useState<LoginRuntime | null>(null);
   const [failed, setFailed] = useState(false);
   const failureHeading = useRef<HTMLHeadingElement>(null);
@@ -25,12 +29,17 @@ function Authentication({ language, createRuntime, onBack }: {
     <button type="button" onClick={onBack}>{language === "sv" ? "Tillbaka till Memy" : "Back to Memy"}</button>
   </main>;
   if (!runtime) return <main><p role="status">{language === "sv" ? "Öppnar säker inloggning…" : "Opening safe sign-in…"}</p></main>;
+  if (mode === "registration") return <Registration auth={runtime.auth} language={language}
+    onSignIn={() => { onRegistrationSignIn(); setMode("login"); }} onBack={onBack} />;
   return <MyStoryProjects auth={runtime.auth} loadProjects={runtime.loadProjects}
     language={language} onBack={onBack} recoveryReturnPath="/" />;
 }
 
 export default function LoginApplication({ createRuntime = createLoginRuntime }: { createRuntime?: () => LoginRuntime }) {
-  const [view, setView] = useState(() => loginLocation(window.location));
+  const [view, setView] = useState<"entrance" | "auth" | "registration" | "unsupported">(() => {
+    const target = loginLocation(window.location);
+    return target === "auth" && isConfirmationRedirect(window.location) ? "registration" : target;
+  });
   const [entranceMounted, setEntranceMounted] = useState(() => loginLocation(window.location) === "entrance");
   const [language, setLanguage] = useState<Language>("en");
   const [callbackGeneration, setCallbackGeneration] = useState(0);
@@ -52,7 +61,7 @@ export default function LoginApplication({ createRuntime = createLoginRuntime }:
       // existing ordinary session, old list or intro intercept its credentials.
       setEntranceMounted(false);
       setCallbackGeneration(value => value + 1);
-      setView("auth");
+      setView(isConfirmationRedirect(window.location) ? "registration" : "auth");
     };
     window.addEventListener("hashchange", onLocation);
     window.addEventListener("popstate", onLocation);
@@ -66,13 +75,23 @@ export default function LoginApplication({ createRuntime = createLoginRuntime }:
     <h1>Memy</h1><p>This page is outside the development login preview. Legacy authentication is not opened here.</p>
   </main>;
 
-  const back = () => { setEntranceMounted(true); setView("entrance"); };
+  const leaveCallback = () => {
+    // Explicitly leaving a callback must remove its route/credentials and allow
+    // a subsequent callback to initialize a fresh SDK in this same window.
+    if (loginLocation(window.location) === "auth") window.history.replaceState(null, "", "/");
+    callbackPending.current = false;
+  };
+  const back = () => {
+    leaveCallback();
+    setEntranceMounted(true); setView("entrance");
+  };
   return <>
     <style>{styles}</style>
     {entranceMounted && <div ref={entranceRegion} hidden={view !== "entrance"}>
-      <Entrance language={language} onLanguageChange={setLanguage} onLogin={() => setView("auth")} />
+      <Entrance language={language} onLanguageChange={setLanguage} onLogin={() => setView("auth")}
+        onRegister={() => setView("registration")} />
     </div>}
-    {view === "auth" && <div className="memy-login" lang={language}>
+    {(view === "auth" || view === "registration") && <div className="memy-login" lang={language}>
       <header className="login-toolbar">
         <span className="login-brand">Memy</span>
         <label>{language === "sv" ? "Språk" : "Language"}
@@ -81,7 +100,8 @@ export default function LoginApplication({ createRuntime = createLoginRuntime }:
           </select>
         </label>
       </header>
-      <Authentication key={callbackGeneration} language={language} createRuntime={createRuntime} onBack={back} />
+      <Authentication key={`${callbackGeneration}-${view}`} language={language} createRuntime={createRuntime} onBack={back}
+        initialMode={view === "registration" ? "registration" : "login"} onRegistrationSignIn={leaveCallback} />
     </div>}
   </>;
 }

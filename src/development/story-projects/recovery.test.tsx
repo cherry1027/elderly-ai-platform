@@ -84,7 +84,17 @@ describe("actual installed SDK recovery with fake HTTP only (not live Supabase)"
     await expect(auth.updatePassword("Synthetic-New-Password-2048!")).rejects.toThrow("invalid");
     expect(await auth.getAccessToken()).toBeNull();
   });
-  it.each(["signup", "magiclink", "recovery-wrong-project", "expired"])("rejects a %s callback without attempting Auth HTTP", async type => {
+  it("routes signup validation separately and never opens password recovery", async () => {
+    const params = recoveryParams(); params.type = "signup";
+    const confirmation = openRedirect(params) as ReturnType<typeof createDevelopmentAuth>;
+    await waitFor(() => expect(confirmation.getConfirmationState()).toBe("invalid"));
+    // This fake user has no confirmed email: even an SDK session is rejected
+    // and cleared, instead of becoming a password recovery/project session.
+    expect(confirmation.getRecoveryState()).toBe("none");
+    expect(await confirmation.getAccessToken()).toBeNull();
+    expect(transport).toHaveBeenCalledTimes(2);
+  });
+  it.each(["magiclink", "recovery-wrong-project", "expired"])("rejects a %s callback without attempting Auth HTTP", async type => {
     const params = recoveryParams();
     if (type === "recovery-wrong-project") params.access_token = accessToken("https://legacy.example.invalid");
     else if (type === "expired") Object.assign(params, { expires_at: "1" });

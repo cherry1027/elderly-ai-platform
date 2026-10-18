@@ -43,6 +43,7 @@ export function privateAuthFetch(request: typeof fetch, options: {
   timeoutMs?: number;
   allowRequest?: () => boolean;
   sessionGeneration?: () => number;
+  allowSignUp?: () => boolean;
 } = {}): typeof fetch {
   return async (input, init) => {
     const failure = (status: number) => new Response(JSON.stringify({
@@ -59,7 +60,8 @@ export function privateAuthFetch(request: typeof fetch, options: {
       if (options.authOrigin) {
         const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
         const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
-        const approved = (url.pathname === "/auth/v1/token" && method === "POST") ||
+        const approved = (url.pathname === "/auth/v1/signup" && method === "POST" && options.allowSignUp?.() === true) ||
+          (url.pathname === "/auth/v1/token" && method === "POST") ||
           (url.pathname === "/auth/v1/user" && ["GET", "PUT"].includes(method)) ||
           (url.pathname === "/auth/v1/logout" && method === "POST" && url.searchParams.get("scope") === "local");
         if (url.origin !== options.authOrigin || url.username || url.password || url.hash || !approved) return failure(400);
@@ -85,7 +87,8 @@ export function privateAuthFetch(request: typeof fetch, options: {
         const body = await response.json().catch(() => null);
         const code = body?.error_code ?? body?.code;
         const allowed = ["weak_password", "same_password", "session_not_found", "refresh_token_not_found",
-          "refresh_token_already_used", "bad_jwt", "user_not_found"];
+          "refresh_token_already_used", "bad_jwt", "user_not_found", "email_address_invalid",
+          "over_request_rate_limit", "over_email_send_rate_limit", "user_already_exists", "email_exists"];
         return new Response(JSON.stringify({
           error_code: allowed.includes(code) ? code : "unexpected_failure",
           msg: "Development authentication request failed.",

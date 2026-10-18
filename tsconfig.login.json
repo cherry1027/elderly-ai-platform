@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "types": ["vitest/globals", "node", "vite/client"]
+  },
+  "include": [
+    "src/features/login",
+    "src/features/onboarding",
+    "src/development/login",
+    "src/development/story-projects",
+    "src/entry/Entrance.tsx",
+    "src/lib/api/story-projects.ts",
+    "src/lib/api/story-projects.test.ts",
+    "src/vite-env.d.ts",
+    "vite.login.config.ts",
+    "vitest.login.config.ts"
+  ]
+}

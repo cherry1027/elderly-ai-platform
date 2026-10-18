@@ -45,7 +45,8 @@ export function isAuthenticationCallback(
 ): boolean {
   // Preserve every existing deep link. At the entrance, ordinary marketing
   // parameters and section anchors must not suppress a first introduction.
-  if (!isEntrancePath(location.pathname) && location.pathname !== "/onboarding-review.html") return true;
+  if (!isEntrancePath(location.pathname) &&
+      !["/onboarding-review.html", "/login-review.html"].includes(location.pathname)) return true;
   // Inspect marker names and the non-secret auth type only. Never consume,
   // rewrite, log, or display credential values from the original URL.
   return hasAuthenticationMarkers(new URLSearchParams(location.search)) ||

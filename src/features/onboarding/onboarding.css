@@ -103,7 +103,7 @@
   max-width: 100%;
 }
 
-.memy-onboarding .onboarding-motion[aria-pressed="true"] {
+.memy-onboarding .onboarding-motion[aria-checked="false"] {
   background: #e5e9dc;
   border-color: #9aa98d;
 }

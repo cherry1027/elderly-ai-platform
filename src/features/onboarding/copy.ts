@@ -5,8 +5,9 @@ export const copy = {
   en: {
     preview: "Development preview",
     language: "Language",
-    motionOff: "Turn animations off",
-    motionOn: "Turn animations on",
+    animations: "Animations",
+    motionOff: "Off",
+    motionOn: "On",
     reducedMotion: "Animations are off for reduced motion.",
     scenes: [
       { eyebrow: "Your memories", title: "Every life has a story.", description: "Start with the memories you want to tell.", caption: "A little moment. A familiar place. Begin wherever you like." },
@@ -21,6 +22,7 @@ export const copy = {
     welcomeEyebrow: "Your story starts with you",
     login: "Log in", register: "Create Account", guest: "Continue as Guest",
     previewNote: "Graphical preview only. Sign-in, account creation and guest access are unavailable here.",
+    applicationNote: "Sign-in, account creation and guest access are coming soon.",
     storageNote: "Your browser could not save completion. The introduction may appear again next time.",
     callbackTitle: "Continue your sign-in safely.",
     callbackNote: "This preview does not handle authentication links. Use the original sign-in or recovery flow. Your link has been left unchanged.",
@@ -29,8 +31,9 @@ export const copy = {
   sv: {
     preview: "Utvecklingsförhandsvisning",
     language: "Språk",
-    motionOff: "Stäng av animationer",
-    motionOn: "Slå på animationer",
+    animations: "Animationer",
+    motionOff: "Av",
+    motionOn: "På",
     reducedMotion: "Animationer är avstängda för minskad rörelse.",
     scenes: [
       { eyebrow: "Dina minnen", title: "Varje liv har en berättelse.", description: "Börja med de minnen du vill berätta om.", caption: "Ett litet ögonblick. En välbekant plats. Börja där du vill." },
@@ -45,6 +48,7 @@ export const copy = {
     welcomeEyebrow: "Din berättelse börjar med dig",
     login: "Logga in", register: "Skapa konto", guest: "Fortsätt som gäst",
     previewNote: "Endast en grafisk förhandsvisning. Inloggning, nya konton och gäståtkomst är inte tillgängliga här.",
+    applicationNote: "Inloggning, nya konton och gäståtkomst kommer snart.",
     storageNote: "Webbläsaren kunde inte spara att du är klar. Introduktionen kan visas igen nästa gång.",
     callbackTitle: "Fortsätt din inloggning säkert.",
     callbackNote: "Den här förhandsvisningen hanterar inte autentiseringslänkar. Använd det ursprungliga flödet för inloggning eller återställning. Din länk är oförändrad.",

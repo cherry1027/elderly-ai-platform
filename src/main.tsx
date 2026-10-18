@@ -1,5 +1,4 @@
-import { createRoot } from "react-dom/client";
-import App from "./App.tsx";
-import "./index.css";
+import { startApplication } from "./entry/bootstrap";
 
-createRoot(document.getElementById("root")!).render(<App />);
+// Select the public entrance before importing the legacy authentication graph.
+void startApplication();

@@ -1,5 +1,10 @@
 # Beautiful Memory Book — isolated development preview
 
+This is the historical Task 2 guide. For the main-application entrance in this
+integration branch, use [web-entry-integration.md](web-entry-integration.md),
+its port 5176 command, and its current verification record. The Task 2 worktree
+is unchanged. The shared component improvements below apply in this branch.
+
 This preview lives on `feat/web-animated-onboarding`, based on the approved
 `5b5bc88a2b11de72aad2fa0815a7ea050aea1304` foundation. It does not include or
 modify the separately committed Story Projects/password-recovery feature.
@@ -57,9 +62,10 @@ local to the browser profile **and origin** (scheme/host/port), not an account
 or device-wide synchronized setting. Clearing site data resets it. Concurrent
 open tabs are not synchronized until reload.
 
-Only the exact bare `/onboarding-review.html` path runs the introduction. Any
-query string or fragment, including benign ones, takes the conservative callback
-exemption. Other routes also cannot run this component's introduction. Callback
+The review path and application entrance paths `/` and `/index.html` can run the
+introduction. Ordinary marketing queries and section anchors no longer trigger
+the callback exemption. Authentication marker names, recognized authentication
+`type` values and other paths remain exempt. Callback
 views do not read/write completion or process, display, remove, redirect, or log
 credentials. They explain that the original authentication flow must be used.
 History/fragment changes also exempt the mounted preview. This is an isolated
@@ -87,11 +93,12 @@ window. Incognito storage usually lasts only for that Incognito session.
    remain unavailable. Reload: the same origin should return to welcome.
 7. Select Replay Introduction. Replay works even with completion saved. Select
    Skip from the first or second scene; reload again to confirm welcome.
-8. Select Turn animations off. All three illustrations must remain complete and
-   readable. Turn motion back on. In Chrome DevTools Rendering, emulate
+8. Switch Animations off. All three illustrations must remain complete and
+   readable. Switch motion back on. In Chrome DevTools Rendering, emulate
    `prefers-reduced-motion: reduce`: all decoration should be still, and the OS
    preference cannot be overridden by this preview's button.
-9. Use Tab/Shift+Tab, Enter, and Space. Controls must have visible focus. Scene
+9. Use Tab/Shift+Tab, Enter, and Space. Controls must have visible focus. Language
+   selection retains focus; the animation switch exposes its checked state. Scene
    changes move focus to their heading. With a screen reader, check the polite
    progress announcement and localized text. SVG decoration should not be read.
 10. Test desktop, tablet, 375px, and 320px widths, plus browser zoom. No horizontal

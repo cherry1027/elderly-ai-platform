@@ -182,10 +182,11 @@ describe("English and Swedish presentation", () => {
     const language = screen.getByRole("combobox", { name: "Language" });
     expect(within(language).getByRole("option", { name: "English" })).toHaveValue("en");
     expect(within(language).getByRole("option", { name: "Svenska" })).toHaveValue("sv");
+    language.focus();
     fireEvent.change(language, { target: { value: "sv" } });
     expect(screen.getByRole("heading", { level: 1 }).closest("[lang]")).toHaveAttribute("lang", "sv");
     expect(screen.queryByRole("heading", { name: firstTitle })).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
+    expect(screen.getByRole("combobox", { name: "Språk" })).toHaveFocus();
     expect(screen.getByRole("button", { name: "Nästa" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Tillbaka" })).toBeDisabled();
   });
@@ -193,11 +194,14 @@ describe("English and Swedish presentation", () => {
   it("preserves scene position while switching languages", () => {
     render(<OnboardingExperience />);
     next();
-    fireEvent.change(screen.getByRole("combobox", { name: "Language" }), { target: { value: "sv" } });
+    const language = screen.getByRole("combobox", { name: "Language" });
+    language.focus();
+    fireEvent.change(language, { target: { value: "sv" } });
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "en" } });
     expect(heading(secondTitle)).toBeVisible();
     expect(screen.getByRole("status")).toHaveTextContent("2 of 3");
     expect(heading(secondTitle).closest("[lang]")).toHaveAttribute("lang", "en");
+    expect(language).toHaveFocus();
   });
 
   it("uses Swedish on all three scenes and the welcome destination", () => {
@@ -214,18 +218,74 @@ describe("English and Swedish presentation", () => {
     expect(screen.getByRole("heading", { level: 1 })).toBeVisible();
     expect(screen.getByRole("heading", { level: 1 }).closest("[lang]")).toHaveAttribute("lang", "sv");
   });
+
+  it("localizes the animation switch without changing its state", () => {
+    render(<OnboardingExperience />);
+    fireEvent.click(screen.getByRole("switch", { name: "Animations" }));
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "sv" } });
+    const toggle = screen.getByRole("switch", { name: "Animationer" });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(toggle).toHaveTextContent("Animationer: Av");
+  });
+});
+
+describe("application entrance presentation", () => {
+  it.each(["/", "/index.html", "/?utm_source=invitation&language=sv#chapter-three"])(
+    "shows first-visit onboarding for an ordinary entrance URL: %s", (url) => {
+      window.history.replaceState(null, "", url);
+      const before = window.location.href;
+      render(<OnboardingExperience variant="application" />);
+      expect(heading(firstTitle)).toBeVisible();
+      expect(screen.queryByText("Development preview")).not.toBeInTheDocument();
+      expect(window.location.href).toBe(before);
+    },
+  );
+
+  it("shows returning visitors the planned welcome with unavailable destinations disabled", () => {
+    window.history.replaceState(null, "", "/");
+    window.localStorage.setItem(COMPLETION_KEY, "complete");
+    render(<OnboardingExperience variant="application" />);
+    expect(heading(welcomeTitle)).toBeVisible();
+    expect(screen.getByText("Sign-in, account creation and guest access are coming soon.")).toBeVisible();
+    expect(screen.queryByText("Development preview")).not.toBeInTheDocument();
+    for (const name of ["Log in", "Create Account", "Continue as Guest"]) {
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Replay Introduction" }));
+    expect(heading(firstTitle)).toBeVisible();
+    expect(window.localStorage.getItem(COMPLETION_KEY)).toBe("complete");
+    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    expect(heading(welcomeTitle)).toBeVisible();
+  });
+
+  it("keeps language focus on the welcome screen and localizes its availability note", () => {
+    window.history.replaceState(null, "", "/index.html");
+    window.localStorage.setItem(COMPLETION_KEY, "complete");
+    render(<OnboardingExperience variant="application" />);
+    const language = screen.getByRole("combobox", { name: "Language" });
+    language.focus();
+    fireEvent.change(language, { target: { value: "sv" } });
+    expect(screen.getByRole("combobox", { name: "Språk" })).toHaveFocus();
+    expect(screen.getByText("Inloggning, nya konton och gäståtkomst kommer snart.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Fortsätt som gäst" })).toBeDisabled();
+  });
 });
 
 describe("motion preferences", () => {
   it("lets visitors pause and resume the decorative animations", () => {
     const { container } = render(<OnboardingExperience />);
-    fireEvent.click(screen.getByRole("button", { name: "Turn animations off" }));
-    expect(screen.getByRole("button", { name: "Turn animations on" })).toHaveAttribute("aria-pressed", "true");
+    const toggle = screen.getByRole("switch", { name: "Animations" });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(toggle).not.toHaveAttribute("aria-pressed");
+    fireEvent.click(toggle);
+    expect(screen.getByRole("switch", { name: "Animations" })).toHaveAttribute("aria-checked", "false");
+    expect(toggle).toHaveTextContent("Animations: Off");
     expect(container.querySelector('[data-motion="off"]')).toBeInTheDocument();
     next();
     expect(heading(secondTitle)).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Turn animations on" }));
-    expect(screen.getByRole("button", { name: "Turn animations off" })).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(toggle);
+    expect(screen.getByRole("switch", { name: "Animations" })).toHaveAttribute("aria-checked", "true");
+    expect(toggle).toHaveTextContent("Animations: On");
   });
 
   it("starts with animations disabled for reduced-motion users", () => {
@@ -236,8 +296,10 @@ describe("motion preferences", () => {
     }));
     const { container } = render(<OnboardingExperience />);
     expect(container.querySelector('[data-motion="off"]')).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Turn animations on" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "Turn animations on" })).toBeDisabled();
+    const toggle = screen.getByRole("switch", { name: "Animations" });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(toggle).toBeDisabled();
+    expect(toggle).toHaveAccessibleDescription("Animations are off for reduced motion.");
   });
 
   it("responds to a changed system preference while the preview is open", () => {
@@ -259,12 +321,26 @@ describe("motion preferences", () => {
       else preferenceChanged?.handleEvent(event);
     });
     expect(container.querySelector('[data-motion="off"]')).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Animations" })).toHaveAttribute("aria-checked", "false");
     unmount();
     expect(remove).toHaveBeenCalled();
   });
 });
 
 describe("callback exemption is passive and does not consume authentication", () => {
+  it("does not interrupt an introduction when an ordinary section anchor arrives", () => {
+    window.history.replaceState(null, "", "/?utm_source=invitation");
+    render(<OnboardingExperience variant="application" />);
+    next();
+    act(() => {
+      window.history.replaceState(null, "", "/?utm_source=invitation#chapter-three");
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    expect(heading(secondTitle)).toBeVisible();
+    expect(screen.getByRole("button", { name: /^Next$/i })).toBeEnabled();
+    expect(window.localStorage.getItem(COMPLETION_KEY)).toBeNull();
+  });
+
   it("locks the introduction when a callback fragment arrives later", () => {
     render(<OnboardingExperience />);
     expect(heading(firstTitle)).toBeVisible();
@@ -290,6 +366,9 @@ describe("callback exemption is passive and does not consume authentication", ()
   });
 
   it.each([
+    "/?code=synthetic-code",
+    "/index.html#access_token=synthetic-access&type=recovery",
+    "/?error=expired&error_description=synthetic-message",
     "/onboarding-review.html?code=synthetic-code",
     "/onboarding-review.html#access_token=synthetic-access&type=recovery",
     "/onboarding-review.html?error_code=otp_expired&error_description=synthetic-message",

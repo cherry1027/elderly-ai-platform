@@ -18,12 +18,36 @@ export function completeIntroduction(): boolean {
   }
 }
 
+export function isEntrancePath(pathname: string): boolean {
+  return pathname === "/" || pathname === "/index.html";
+}
+
+const authenticationKeys = new Set([
+  "access_token", "refresh_token", "provider_token", "provider_refresh_token",
+  "code", "token", "token_hash", "error", "error_code", "error_description",
+  "expires_in", "expires_at", "token_type",
+]);
+const authenticationTypes = new Set([
+  "recovery", "signup", "invite", "magiclink", "email_change", "email",
+]);
+
+function hasAuthenticationMarkers(parameters: URLSearchParams): boolean {
+  for (const key of parameters.keys()) {
+    const name = key.toLowerCase();
+    if (authenticationKeys.has(name)) return true;
+    if (name === "type" && parameters.getAll(key).some(value => authenticationTypes.has(value.toLowerCase()))) return true;
+  }
+  return false;
+}
+
 export function isAuthenticationCallback(
   location: Pick<Location, "pathname" | "search" | "hash">,
 ): boolean {
-  // Only the bare review URL may run onboarding. Conservatively exempt ALL
-  // query strings/fragments and other routes without parsing credential values.
-  // This preview must never process, redirect, scrub, or log an auth callback.
-  return location.pathname !== "/onboarding-review.html" ||
-    location.search !== "" || location.hash !== "";
+  // Preserve every existing deep link. At the entrance, ordinary marketing
+  // parameters and section anchors must not suppress a first introduction.
+  if (!isEntrancePath(location.pathname) && location.pathname !== "/onboarding-review.html") return true;
+  // Inspect marker names and the non-secret auth type only. Never consume,
+  // rewrite, log, or display credential values from the original URL.
+  return hasAuthenticationMarkers(new URLSearchParams(location.search)) ||
+    hasAuthenticationMarkers(new URLSearchParams(location.hash.replace(/^#/, "")));
 }

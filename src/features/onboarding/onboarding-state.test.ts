@@ -4,6 +4,7 @@ import {
   completeIntroduction,
   hasCompletedIntroduction,
   isAuthenticationCallback,
+  isEntrancePath,
 } from "./onboarding-state";
 
 const locationFor = (path: string) => {
@@ -54,8 +55,23 @@ describe("isolated onboarding completion", () => {
 });
 
 describe("conservative authentication callback exemption", () => {
-  it("allows only the dedicated preview with no query or fragment", () => {
-    expect(isAuthenticationCallback(locationFor("/onboarding-review.html"))).toBe(false);
+  it.each(["/", "/index.html"])("recognizes the application entrance: %s", (path) => {
+    expect(isEntrancePath(path)).toBe(true);
+  });
+
+  it.each(["/auth", "/dashboard", "/story-projects.html", "/onboarding-review.html"])(
+    "does not mistake another document or deep link for the application entrance: %s", (path) => {
+      expect(isEntrancePath(path)).toBe(false);
+    },
+  );
+
+  it.each([
+    "/", "/index.html", "/onboarding-review.html",
+    "/?utm_source=invitation&language=sv", "/index.html?language=sv#chapter-three",
+    "/?type=book", "/?type=book&type=portrait", "/#chapter-three",
+    "/onboarding-review.html?language=sv", "/onboarding-review.html#chapter-three",
+  ])("allows ordinary entrance and preview URLs: %s", (path) => {
+    expect(isAuthenticationCallback(locationFor(path))).toBe(false);
   });
 
   it.each([
@@ -68,9 +84,16 @@ describe("conservative authentication callback exemption", () => {
     "/recovery",
     "/callback",
     "/confirm",
+    "/dashboard?utm_source=invitation",
+    "/story/synthetic-project#chapter-three",
     "/story-projects.html",
-    "/onboarding-review.html?language=sv",
-    "/onboarding-review.html#chapter-three",
+    "/?code=synthetic-code&utm_source=invitation",
+    "/index.html#access_token=synthetic-access",
+    "/?provider_token=synthetic-provider",
+    "/#provider_refresh_token=synthetic-provider-refresh",
+    "/?expires_in=3600", "/?expires_at=123456", "/?token_type=bearer",
+    "/?ACCESS_TOKEN=synthetic-access", "/?code=", "/?%63ode=synthetic-code",
+    "/?type=email", "/?type=RECOVERY", "/?type=book&type=recovery",
     "/onboarding-review.html?code=synthetic-code",
     "/onboarding-review.html#access_token=synthetic-access",
     "/onboarding-review.html?refresh_token=synthetic-refresh",
@@ -95,5 +118,13 @@ describe("conservative authentication callback exemption", () => {
     const read = vi.spyOn(Storage.prototype, "getItem");
     expect(isAuthenticationCallback(locationFor("/onboarding-review.html?type=recovery"))).toBe(true);
     expect(read).not.toHaveBeenCalled();
+  });
+
+  it("never reads token values while classifying authentication markers", () => {
+    const get = vi.spyOn(URLSearchParams.prototype, "get");
+    const getAll = vi.spyOn(URLSearchParams.prototype, "getAll");
+    expect(isAuthenticationCallback(locationFor("/?access_token=synthetic-access"))).toBe(true);
+    expect(get).not.toHaveBeenCalled();
+    expect(getAll).not.toHaveBeenCalled();
   });
 });

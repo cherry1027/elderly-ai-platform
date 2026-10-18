@@ -13,7 +13,7 @@ function prefersReducedMotion(): boolean {
   }
 }
 
-export function OnboardingExperience() {
+export function OnboardingExperience({ variant = "preview" }: { variant?: "preview" | "application" }) {
   const [view, setView] = useState<View>(() => isAuthenticationCallback(window.location)
     ? "callback" : hasCompletedIntroduction() ? "welcome" : "introduction");
   const [scene, setScene] = useState<Scene>(0);
@@ -30,7 +30,7 @@ export function OnboardingExperience() {
   useLayoutEffect(() => {
     navigating.current = false;
     if (view !== "callback") heading.current?.focus({ preventScroll: true });
-  }, [scene, view, language]);
+  }, [scene, view]);
 
   useEffect(() => {
     // A callback arriving through history/hash changes also takes precedence.
@@ -108,16 +108,16 @@ export function OnboardingExperience() {
               <option value="sv" lang="sv">Svenska</option>
             </select>
           </label>
-          <button className="onboarding-motion" type="button" aria-pressed={!motion}
+          <button className="onboarding-motion" type="button" role="switch" aria-checked={motion}
             aria-describedby={reducedMotion ? "onboarding-reduced-motion" : undefined}
             disabled={reducedMotion} onClick={() => setMotionOff(value => !value)}>
-            {motion ? text.motionOff : text.motionOn}
+            {text.animations}<span aria-hidden="true">: {motion ? text.motionOn : text.motionOff}</span>
           </button>
         </div>
       </header>
       {reducedMotion && <p id="onboarding-reduced-motion" className="onboarding-preview-note">{text.reducedMotion}</p>}
       <main className="onboarding-main">
-        <span className="onboarding-preview-badge">{text.preview}</span>
+        {variant === "preview" && <span className="onboarding-preview-badge">{text.preview}</span>}
         {view === "introduction" ? <>
           <section className="onboarding-card" aria-labelledby="onboarding-heading">
             <div className="onboarding-copy">
@@ -159,7 +159,7 @@ export function OnboardingExperience() {
             <p className="onboarding-eyebrow">{text.welcomeEyebrow}</p>
             <h1 id="onboarding-heading" className="onboarding-heading" tabIndex={-1} ref={heading}>{text.welcomeTitle}</h1>
             <p className="onboarding-description">{text.welcomeDescription}</p>
-            <p id="onboarding-welcome-note" className="onboarding-preview-note">{text.previewNote}</p>
+            <p id="onboarding-welcome-note" className="onboarding-preview-note">{variant === "application" ? text.applicationNote : text.previewNote}</p>
             <div className="onboarding-welcome-actions" aria-describedby="onboarding-welcome-note">
               <button className="onboarding-button primary" type="button" disabled>{text.login}</button>
               <button className="onboarding-button secondary" type="button" disabled>{text.register}</button>

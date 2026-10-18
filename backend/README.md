@@ -6,7 +6,7 @@ Python 3.13 is the verified runtime. From the repository root:
 cd backend
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements-dev.txt
+python -m pip install --only-binary=av -r requirements-dev.txt
 # New checkout only: copy .env.example to .env and fill its project URL/key.
 python -m pytest -q -m 'not integration'
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
@@ -203,3 +203,47 @@ Use `http://<developer-machine-LAN-IP>:8000`; phone loopback points to the phone
 A shared remotely accessible API URL has not been deployed.
 
 See [the frontend handoff](../docs/frontend-integration.md).
+
+## Day 3 audio foundation
+
+Backend version 0.3.0 adds bounded, authenticated audio upload and immutable
+transcript retrieval. Live transcription remains disabled; the real app never
+returns a simulated transcript. [Audio API](../docs/audio-api.md) describes the
+multipart contract, errors, privacy and retry rules.
+
+The decoder uses PyAV's bundled FFmpeg libraries; a system `ffmpeg`/`ffprobe`
+installation is not required. Python 3.13 and macOS are verified locally. Windows
+and Linux need compatible PyAV wheels and should run the full suite before use.
+The decoder subprocess has a 12-second wall limit on every platform, Unix CPU
+limits, and an additional Linux heap limit. It receives no backend credentials.
+Windows uses a threaded child-process controller so Uvicorn's selector loop under
+`--reload` does not prevent audio probing. This branch is regression-tested here;
+a native Windows acceptance run is still required before deployment.
+
+Run the credential-safe hosted acceptance helper from a real local terminal:
+
+```sh
+cd backend  # omit this line if already in backend/
+.venv/bin/python scripts/verify_two_users.py --day3
+```
+
+On Windows use `.venv\Scripts\python.exe scripts\verify_two_users.py --day3`.
+Enter credentials only into its hidden terminal prompts, using two existing
+dedicated-development users. It refuses piped/password-echoing input and keeps
+tokens out of files and normal output. It creates only synthetic projects and
+normally deletes their exact IDs afterward. A forced process/host termination
+can interrupt cleanup; remove only its clearly labeled synthetic projects then.
+Day 3's hosted HTTP test uses an explicit fictional provider, so it tests Auth,
+RLS, persistence and retries without any paid calls, not speech recognition.
+
+On 18 October, these three hosted HTTP cases passed using two disposable anonymous
+Supabase Auth users. `scripts/verify_anonymous_users.py` supports that alternative
+only with `RUN_MEMY_ANONYMOUS_ACCEPTANCE=1` and the exact development project.
+It requires an operator to approve and temporarily enable anonymous sign-in,
+restore the setting afterward, and delete the reported exact Auth user IDs.
+Do not enable anonymous sign-in on a shared/production project just to run tests.
+
+For database-only hosted checks, run `supabase/tests/cloud-audio.sql` in the
+dedicated development SQL Editor. It rolls back all synthetic Auth/database rows;
+it does not create login credentials. See [Day 3 status](../docs/day-3-status.md)
+for the exact distinction between completed checks and remaining acceptance.

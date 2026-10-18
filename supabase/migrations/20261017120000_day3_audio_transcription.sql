@@ -511,4 +511,3 @@ COMMENT ON VIEW public.audio_transcripts IS
   'RLS-preserving completed audio transcripts; excludes typed messages and corrections.';
 
 COMMIT;
-

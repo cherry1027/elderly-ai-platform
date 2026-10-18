@@ -1,7 +1,7 @@
 # Frontend integration handoff for Tarun
 
-Updated for backend 0.2.0 on 17 October 2026. Tarun's review/sign-off has not
-been obtained.
+Updated for backend 0.3.0 on 18 October 2026. Tarun's complete backend integration
+sign-off has not been obtained.
 
 ## Environment and URLs
 
@@ -58,6 +58,8 @@ const response = await fetch(`${API_BASE_URL}/api/v1/story-projects`, {
 | PATCH /api/v1/story-projects/:id | Bearer | 200 project |
 | POST /api/v1/story-projects/:id/sessions | Bearer | 201 session |
 | GET /api/v1/story-projects/:id/sessions | Bearer | 200 session array |
+| POST /api/v1/story-sessions/:id/transcribe | Bearer + Idempotency-Key | Audio upload; currently disabled-provider 503 |
+| GET /api/v1/story-sessions/:id/transcripts | Bearer | 200 audio transcript array |
 
 ```json
 {"status":"ok","service":"memy-ai-backend"}
@@ -84,7 +86,7 @@ inherits project language. List responses are plain arrays with `limit=50` and
 `offset=0` defaults (`limit` maximum 100, `offset` maximum 100000).
 
 Browser CORS defaults cover localhost/127.0.0.1 ports 8080 and 5173 and allow
-Authorization and Accept-Language. Native mobile requests do not depend on
+Authorization, Accept-Language and Idempotency-Key. Native mobile requests do not depend on
 browser CORS. Add real web deployment origins explicitly.
 
 ## Language contract
@@ -95,8 +97,9 @@ Existing records default to Swedish. New project clients should choose
 language explicitly; future localized requests can send Accept-Language: sv/en.
 
 Detected speech must never silently change UI, project/session or output
-language. Prompt for an explicit switch when needed. Full English UI,
-transcription, AI, audio retention and extracted-facts features remain later work.
+language. Audio upload's declared language must equal the session language;
+the API does not translate or silently change it. Full English UI, live speech
+recognition, AI, retained audio and extracted-facts features remain later work.
 
 ## Project schema and original source material
 
@@ -110,9 +113,12 @@ text, with sequence ordering. Corrections append new messages. Original text is
 separate from generated/edited pages.content and stories.content; it is not
 automatically a confirmed memory. Project/session erasure cascades source rows.
 
-Raw audio is optional. Retention/consent and transcript visibility remain product
-decisions. Do not promise permanent audio storage or enable default uploads
-before the team agrees on retention and deletion behavior.
+Day 3 uses temporary audio only, with explicit per-upload processing consent.
+There is no retained-audio bucket or permanent recording URL. The running app
+returns `TRANSCRIPTION_DISABLED` until a real provider is explicitly enabled;
+it never returns a fake transcript. See [the audio API](audio-api.md) before
+implementing a recording screen. Additional retention/provider policy approval
+is needed before real pilot-user recordings.
 
 ## Review items for Tarun
 

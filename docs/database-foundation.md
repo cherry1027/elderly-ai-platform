@@ -142,3 +142,16 @@ Primary references: [Supabase RLS](https://supabase.com/docs/guides/database/pos
 The required two-real-user token test for the Day 2 APIs is still pending because
 no test-user access tokens were provided. The in-memory suite uses two isolated
 JWT subjects, but it does not replace hosted Auth and PostgREST verification.
+
+## Day 3 hosted verification on 18 October 2026
+
+Migration `20261017120000_day3_audio_transcription` was applied transactionally to
+`memy-ai-dev` and recorded in its migration history. The dedicated development
+project now has 21 repository migrations. The rollback-only `cloud-audio.sql`
+passed there: audio RPC claims/completion/replay/failure retry, source immutability,
+language locking, cross-user isolation, anonymous denial and private-token grants.
+All synthetic rows were rolled back; no login credentials were created and no
+real user rows were changed. A separate hosted HTTP run also passed using two
+genuine anonymous Auth tokens: project/session ownership plus Swedish/English
+audio persistence, retries and cross-user denial. Transcription output was an
+explicit fictional test double, not a real speech-recognition provider.

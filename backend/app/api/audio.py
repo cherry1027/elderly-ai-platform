@@ -4,8 +4,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Annotated
 from uuid import UUID
+import asyncio
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
 
 from app.api.dependencies import get_current_user
 from app.core.errors import APIError
@@ -16,7 +17,7 @@ from app.services.audio_upload import read_recording
 from app.services.auth import AuthenticatedUser
 
 router = APIRouter(prefix="/api/v1/story-sessions", tags=["Audio transcripts"], responses={
-    code: {"model": ErrorResponse} for code in (401, 403, 404, 408, 409, 413, 415, 422, 429, 503)
+    code: {"model": ErrorResponse} for code in (401, 403, 404, 408, 409, 413, 415, 422, 429, 503, 504)
 })
 
 
@@ -53,6 +54,50 @@ async def transcribe_recording(
             provider = request.app.state.transcription_provider
             if not provider.enabled:
                 raise APIError(503, "TRANSCRIPTION_DISABLED", "Live speech transcription is not enabled.")
-            raise APIError(503, "TRANSCRIPTION_DISABLED", "Live speech transcription is not enabled.")
+            claim = await gateway.claim_transcription(
+                session, idempotency_key, recording.content_sha256, recording.language,
+            )
+            if claim.outcome == "completed":
+                return gateway.completed_transcript(claim)
+            if claim.outcome == "in_progress":
+                raise APIError(409, "TRANSCRIPTION_IN_PROGRESS", "This recording is already being processed.")
+            failure_code = "TRANSCRIPTION_UNAVAILABLE"
+            try:
+                try:
+                    text = await asyncio.wait_for(
+                        provider.transcribe(recording.path, recording.language), timeout=60,
+                    )
+                except TimeoutError:
+                    failure_code = "TRANSCRIPTION_TIMEOUT"
+                    raise APIError(504, failure_code, "Speech transcription timed out.") from None
+                except Exception:
+                    raise APIError(503, failure_code, "Speech transcription is temporarily unavailable.") from None
+                if not isinstance(text, str) or not text.strip() or len(text) > 32_000 or "\0" in text:
+                    failure_code = "TRANSCRIPTION_INVALID_RESPONSE"
+                    raise APIError(503, failure_code, "Speech transcription returned an unusable result.")
+                try:
+                    text.encode("utf-8")
+                except UnicodeError:
+                    failure_code = "TRANSCRIPTION_INVALID_RESPONSE"
+                    raise APIError(503, failure_code, "Speech transcription returned an unusable result.") from None
+                return await gateway.complete_transcription(claim, text)
+            except APIError:
+                # A completion can have committed despite an interrupted HTTP
+                # response. The failure RPC never changes a completed result.
+                try:
+                    await gateway.fail_transcription(claim, failure_code)
+                except APIError:
+                    pass  # A lease lets the same key recover after DB outages.
+                raise
     finally:
         slots.release()
+
+
+@router.get("/{session_id}/transcripts", response_model=list[TranscriptResponse])
+async def list_session_transcripts(
+    session_id: UUID, gateway: Gateway,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0, le=100_000)] = 0,
+) -> list[dict]:
+    """Read only immutable audio originals from an owned session."""
+    return await gateway.list_transcripts(session_id, limit, offset)

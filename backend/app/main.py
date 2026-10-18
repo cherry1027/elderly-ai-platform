@@ -35,7 +35,7 @@ def create_app(
             yield
 
     application = FastAPI(
-        title="Memy AI Backend", version="0.2.0", lifespan=lifespan
+        title="Memy AI Backend", version="0.3.0", lifespan=lifespan
     )
     application.state.settings = config
     application.state.transcription_provider = transcription_provider or DisabledTranscriptionProvider()

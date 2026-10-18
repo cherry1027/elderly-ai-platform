@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import math
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -79,10 +80,16 @@ class Recording:
 
 async def probe_duration(path: Path, suffix: str) -> float:
     try:
+        decoder_env = {
+            key: os.environ[key] for key in ("SYSTEMROOT", "WINDIR") if key in os.environ
+        }
+        decoder_env.update({
+            "PATH": os.defpath, "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
+        })
         process = await asyncio.create_subprocess_exec(
-            sys.executable, "-m", "app.services.audio_probe", str(path), suffix,
+            sys.executable, str(Path(__file__).with_name("audio_probe.py")), str(path), suffix,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-            cwd=str(Path(__file__).resolve().parents[2]),
+            cwd=str(path.parent), env=decoder_env,
         )
     except (OSError, NotImplementedError):
         raise APIError(503, "AUDIO_PROCESSING_UNAVAILABLE", "Audio processing is temporarily unavailable.") from None

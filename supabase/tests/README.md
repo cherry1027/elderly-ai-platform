@@ -56,6 +56,14 @@ protected identity/timestamp columns and preservation of existing orphan rows.
 database inside a rolled-back transaction. It sends no email and does not test
 an actual browser signup, email confirmation or issued access token.
 
+Day 5 adds confirmed-memory story context, English/Swedish canonical sentences,
+conflict and stale-context denial, versioned generation, content-bound retries,
+immutable source/original snapshots and append-only manual revisions. Direct RPC
+tests prove unsupported text cannot be saved as `passed`; cross-user and anonymous
+calls remain denied. `cloud-story-drafts.sql` is a rollback-only hosted development
+workflow with synthetic subjects and no login credentials or emails. It does not
+prove an end-to-end real-user browser flow or real-model factual accuracy.
+
 For a confirmed empty development database only,
 `node supabase/scripts/build-bootstrap.mjs` emits a transactional SQL Editor
 bootstrap from the repository migrations, including their version history. It

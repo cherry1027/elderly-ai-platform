@@ -14,7 +14,7 @@ python -m pytest -q -m 'not integration'
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-API: http://127.0.0.1:8000 · Swagger: http://127.0.0.1:8000/docs · Version: 0.4.0
+API: http://127.0.0.1:8000 · Swagger: http://127.0.0.1:8000/docs · Version: 0.5.0
 
 - GET /health: public process liveness.
 - GET /ready: public Supabase Data API connectivity, without fetching records.
@@ -26,6 +26,9 @@ API: http://127.0.0.1:8000 · Swagger: http://127.0.0.1:8000/docs · Version: 0.
 - /api/v1/story-sessions/{session_id}/messages: ordered history and opt-in mock turns.
 - /api/v1/story-sessions/{session_id}/memories and /clarifications: owned memory review.
 - /api/v1/memories/{fact_id}: confirm, reject or correct a sourced candidate.
+- /api/v1/story-projects/{project_id}/generate: explicit opt-in mock story generation.
+- /api/v1/story-projects/{project_id}/drafts and /verification: versioned drafts and reports.
+- /api/v1/story-drafts/{draft_id} and /history: owned read/edit and preserved edits.
 
 Live speech recognition is deliberately disabled: no paid provider is wired or
 called. Provider/persistence success paths are tested with explicit test doubles,
@@ -33,6 +36,10 @@ not fabricated results from the running application. See [the audio API](docs/au
 Day 4's explicitly labelled text-conversation simulation is separately available
 with `CONVERSATION_MODE=mock`; it does not enable speech recognition or a live AI
 provider. See [the conversation API](docs/conversation-api.md).
+Day 5 separately enables deterministic autobiography drafts with
+`STORY_GENERATION_MODE=mock`; only supported, confirmed memories are included,
+and manual edits never receive an automatic factual pass. See
+[Create My Story](docs/story-drafts-api.md).
 
 Protected routes validate the supplied Supabase user access token through Auth
 `getUser`, then forward that exact user token plus the publishable key to the Data
@@ -85,6 +92,8 @@ are opt-in and require two real development-project user tokens.
 - [Audio upload and transcript contract](docs/audio-api.md)
 - [Day 4 mock conversation and memory contract](docs/conversation-api.md)
 - [Day 4 status and verification](docs/day-4-status.md)
+- [Day 5 story generation, read/edit and verification contract](docs/story-drafts-api.md)
+- [Day 5 status](docs/day-5-status.md)
 - [Day 1 status](docs/day-1-status.md)
 - [Database design](docs/database-foundation.md)
 - [Initial audit](docs/day-1-audit.md)

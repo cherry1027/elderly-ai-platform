@@ -14,6 +14,13 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 Swagger: http://127.0.0.1:8000/docs
 
+Backend version 0.5.0 adds [Day 5 Create My Story](../docs/story-drafts-api.md):
+explicit generation, confirmed-memory evidence, immutable originals, versioned
+drafts, manual editing/history and conservative verification. For the free local
+simulation, set `CONVERSATION_MODE=mock STORY_GENERATION_MODE=mock` before the
+Uvicorn command (PowerShell examples are in that contract). Both defaults stay
+disabled. No model key or paid AI provider is involved.
+
 ```sh
 curl -i http://127.0.0.1:8000/health
 curl -i http://127.0.0.1:8000/ready

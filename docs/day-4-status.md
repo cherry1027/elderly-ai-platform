@@ -52,8 +52,8 @@ not issue a real Supabase login token or verify Tarun's browser/Expo integration
 The HTTP regression suite uses isolated Auth/PostgREST mocks. The remaining
 frontend acceptance below must use an authenticated development account.
 
-The work is committed on `backend/day-4-mock-conversation`; it has not been pushed
-or merged. The local server uses a process-level flag, so future starts must set
+The work is committed and pushed on `backend/day-4-mock-conversation` at `520d026`;
+it has not been merged into main. The local server uses a process-level flag, so future starts must set
 `CONVERSATION_MODE=mock` explicitly; the checked-in default stays disabled.
 
 ## Frontend acceptance

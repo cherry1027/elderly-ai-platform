@@ -1,7 +1,14 @@
 # Frontend integration handoff for Tarun
 
-Updated for backend 0.4.0 on 19 October 2026. Tarun's complete backend integration
+Updated for backend 0.5.0 on 19 October 2026. Tarun's complete backend integration
 sign-off has not been obtained.
+
+Day 5 adds explicit **Create My Story**, source-verified mock drafts, read/edit,
+version history and verification reports. Use the [Day 5 contract](story-drafts-api.md)
+for all six routes, request/response examples and the Create → Preview → Edit
+acceptance flow. Start the backend with both `CONVERSATION_MODE=mock` and
+`STORY_GENERATION_MODE=mock` for that simulation. Both defaults remain disabled;
+neither flag enables a paid provider or live transcription.
 
 ## Environment and URLs
 

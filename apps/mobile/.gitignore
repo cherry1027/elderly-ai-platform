@@ -1,0 +1,9 @@
+node_modules/
+.expo/
+.npm-cache/
+.verification/
+coverage/
+.env
+.env.*
+*.log
+expo-env.d.ts

@@ -1,0 +1,90 @@
+import { useState } from 'react';
+import { Pressable, StyleSheet, Text } from 'react-native';
+import { accessibilityLanguages, type Language } from '../i18n';
+import { colors, layout } from '../theme';
+
+interface LargeButtonProps {
+  label: string;
+  language: Language;
+  onPress: () => void;
+  variant?: 'primary' | 'secondary';
+}
+
+export function LargeButton({
+  label,
+  language,
+  onPress,
+  variant = 'primary',
+}: LargeButtonProps) {
+  const [focused, setFocused] = useState(false);
+  const primary = variant === 'primary';
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityLanguage={accessibilityLanguages[language]}
+      onPress={onPress}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      style={({ pressed }) => [
+        styles.button,
+        primary ? styles.primary : styles.secondary,
+        pressed && (primary ? styles.primaryPressed : styles.secondaryPressed),
+        focused && styles.focused,
+      ]}
+    >
+      <Text allowFontScaling style={[styles.label, primary && styles.primaryLabel]}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+export const buttonStyles = StyleSheet.create({
+  target: {
+    minHeight: layout.minimumTouchTarget,
+  },
+});
+
+const styles = StyleSheet.create({
+  button: {
+    ...buttonStyles.target,
+    width: '100%',
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    borderRadius: layout.controlRadius,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  primary: {
+    backgroundColor: colors.forest,
+    borderColor: colors.forest,
+  },
+  secondary: {
+    backgroundColor: colors.paper,
+    borderColor: colors.forest,
+  },
+  primaryPressed: {
+    backgroundColor: colors.forestPressed,
+    borderColor: colors.forestPressed,
+  },
+  secondaryPressed: {
+    backgroundColor: colors.selected,
+  },
+  focused: {
+    borderColor: colors.ink,
+  },
+  label: {
+    color: colors.forest,
+    fontSize: 22,
+    lineHeight: 32,
+    fontWeight: '600',
+    textAlign: 'center',
+    flexShrink: 1,
+  },
+  primaryLabel: {
+    color: colors.paper,
+  },
+});

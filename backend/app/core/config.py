@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     request_timeout_seconds: float = Field(default=5, gt=0, le=30)
     # Day 4 has no external AI implementation. Unknown/paid provider names fail.
     conversation_mode: Literal["disabled", "mock"] = "disabled"
+    story_generation_mode: Literal["disabled", "mock"] = "disabled"
 
     @classmethod
     def settings_customise_sources(

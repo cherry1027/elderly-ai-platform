@@ -11,12 +11,14 @@ from app.api.readiness import router as readiness_router
 from app.api.story_projects import router as story_projects_router
 from app.api.audio import router as audio_router
 from app.api.conversations import router as conversations_router
+from app.api.story_drafts import router as story_drafts_router
 from app.core.config import Settings
 from app.core.errors import APIError, api_error_handler, validation_error_handler
 from app.services.transcription import DisabledTranscriptionProvider, TranscriptionProvider
 from app.services.conversation_provider import (
     ConversationProvider, DisabledConversationProvider, MockConversationProvider,
 )
+from app.services.story_writer import DisabledStoryWriter, MockStoryWriter, StoryWriter
 
 
 def create_app(
@@ -25,6 +27,7 @@ def create_app(
     transport: httpx.AsyncBaseTransport | None = None,
     transcription_provider: TranscriptionProvider | None = None,
     conversation_provider: ConversationProvider | None = None,
+    story_writer: StoryWriter | None = None,
 ) -> FastAPI:
     config = settings if settings is not None else Settings()
 
@@ -40,12 +43,15 @@ def create_app(
             yield
 
     application = FastAPI(
-        title="Memy AI Backend", version="0.4.0", lifespan=lifespan
+        title="Memy AI Backend", version="0.5.0", lifespan=lifespan
     )
     application.state.settings = config
     application.state.transcription_provider = transcription_provider or DisabledTranscriptionProvider()
     application.state.conversation_provider = conversation_provider or (
         MockConversationProvider() if config.conversation_mode == "mock" else DisabledConversationProvider()
+    )
+    application.state.story_writer = story_writer or (
+        MockStoryWriter() if config.story_generation_mode == "mock" else DisabledStoryWriter()
     )
     application.add_exception_handler(APIError, api_error_handler)
     application.add_exception_handler(RequestValidationError, validation_error_handler)
@@ -69,6 +75,7 @@ def create_app(
     application.include_router(story_projects_router)
     application.include_router(audio_router)
     application.include_router(conversations_router)
+    application.include_router(story_drafts_router)
     return application
 
 

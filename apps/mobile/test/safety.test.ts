@@ -15,7 +15,7 @@ const config = JSON.parse(fs.readFileSync(path.join(appRoot, 'app.json'), 'utf8'
 
 describe('isolated offline foundation boundaries', () => {
   it('imports only local native UI, Router and platform modules', () => {
-    const allowed = new Set(['react', 'react-native', 'react-native-svg', 'react-native-safe-area-context', 'expo-router', 'expo-status-bar']);
+    const allowed = new Set(['react', 'react-native', 'react-native-svg', 'react-native-safe-area-context', 'expo-router', 'expo-status-bar', '@react-native-async-storage/async-storage']);
     const imports = [...source.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((match) => match[1]);
     expect(imports.length).toBeGreaterThan(0);
     for (const name of imports) expect(name.startsWith('.') || allowed.has(name)).toBe(true);

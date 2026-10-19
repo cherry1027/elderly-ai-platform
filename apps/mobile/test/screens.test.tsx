@@ -85,16 +85,19 @@ describe('Welcome', () => {
     expect(screen.getByText('Memy')).toBeOnTheScreen();
 
     const buttons = screen.getAllByRole('button');
-    expect(buttons).toHaveLength(1);
+    expect(buttons.filter((button) => !button.props.accessibilityState?.disabled)).toHaveLength(1);
     fireEvent.press(screen.getByRole('button', { name: copy[language].changeLanguage }));
     expect(onChangeLanguage).toHaveBeenCalledTimes(1);
   });
 
-  it('does not present unavailable authentication, guest or story-creation actions', () => {
+  it('does not enable unavailable authentication, guest or story-creation actions', () => {
     render(<WelcomeScreen language="en" onChangeLanguage={jest.fn()} />);
 
-    expect(screen.queryByText(/log in|register|create account|guest|create my story/i)).toBeNull();
-    expect(screen.getAllByRole('button')).toHaveLength(1);
+    for (const name of ['Log In', 'Create Account', 'Continue as Guest']) {
+      expect(screen.getByRole('button', { name })).toBeDisabled();
+    }
+    expect(screen.queryByText(/create my story/i)).toBeNull();
+    expect(screen.getAllByRole('button').filter((button) => !button.props.accessibilityState?.disabled)).toHaveLength(1);
   });
 });
 

@@ -1,147 +1,123 @@
-# Memy Mobile Task 1
+# Memy Mobile Task 2A — Animated introduction
 
-A native Android/iPhone Expo foundation containing only language selection and Welcome.
-No authentication, account creation, guest access, API, microphone, story generation or storage is implemented.
+A native Expo introduction using Memy's approved Beautiful Memory Book artwork.
+First use: Choose Language → three scenes → Welcome. Next, Back, Skip and Enter
+Memy are manual controls. Returning users reach Welcome; Replay Introduction is
+always available there. Login, Create Account and Guest are visibly disabled.
 
-## Location and tool isolation
+## Start on Windows, open on iPhone
 
-Run all commands from this directory, never from the repository root:
+Run only in this worktree's mobile folder:
 
 ```powershell
-Set-Location -LiteralPath 'C:\Users\Grkta\Documents\Codex\2026-10-15\files-mentioned-by-the-user-elderly\work\memy-mobile\apps\mobile'
-$env:EXPO_NO_DOTENV = '1'
-$env:EXPO_NO_CLIENT_ENV_VARS = '1'
-$env:EXPO_NO_TELEMETRY = '1'
-npm start
+Set-Location -LiteralPath 'C:\Users\Grkta\Documents\Codex\2026-10-15\files-mentioned-by-the-user-elderly\work\memy-mobile-onboarding\apps\mobile'
+npm start -- --port 8082
 ```
 
-Every npm script enforces these three variables in `scripts/run.cjs`. Interactive
-`npm start` and `npm run android` use LAN mode and remove inherited EXPO_OFFLINE;
-they do not pass --offline or start a tunnel. Verification commands retain
-EXPO_OFFLINE=1. Expo commands use only the local app installation. The repository's
-legacy root environment file is never needed, imported, copied or displayed.
-There are no environment files in this app and no configuration secrets.
-Do not run the root Vite/Lovable scripts for mobile development.
+1. Keep this PowerShell window open. Use the same trusted Wi-Fi on PC and iPhone.
+2. Scan the new terminal QR code with the iPhone camera and open it in the
+   compatible Expo Go. Use this worktree's QR, not a previously opened project.
+3. On first use select English or Svenska and Continue. If Welcome appears because
+   completion is already saved, select Replay Introduction to inspect all scenes.
+4. Stop only this Expo process with Ctrl+C when finished.
 
-The startup command serves the development bundle over your trusted local network
-for Expo Go. This is separate from an application/backend request. No public tunnel,
-firewall changes, Expo login, EAS project, cloud build or deployment is configured.
-LAN mode is not offline mode: Expo CLI may contact its own development/metadata
-services. This does not add Supabase, FastAPI, AI or other application requests.
+Port 8082 avoids the common 8081 port used by other previews. If it is occupied,
+choose a different free port; do not stop another application's process. If access
+is blocked, report the error. Do not change firewall rules or use a public tunnel.
+A Windows PC cannot run Apple's local iOS simulator.
 
-## Android verification: USER ACTION REQUIRED
+The launcher preserves Task 1's safeguards: EXPO_NO_DOTENV=1,
+EXPO_NO_CLIENT_ENV_VARS=1 and EXPO_NO_TELEMETRY=1 for every command. Interactive
+start/android use LAN and remove inherited EXPO_OFFLINE; verification runs offline.
+No root .env, Lovable/Vite/MCP scripts, auth SDK, backend or microphone is used.
+LAN hosting is development transport; Expo CLI may use its own metadata services.
+It does not introduce application connections to Supabase, FastAPI or AI.
+No tunnel, firewall change, Expo account, cloud build or deployment is configured.
 
-1. Install a compatible Android Expo Go from the Google Play listing or official
-   https://expo.dev/go download page. Select the SDK matching this app's Expo major
-   version (57). Avoid unofficial APK websites.
-2. Connect the Windows laptop and phone to the same trusted Wi-Fi. Avoid guest/public
-   networks that isolate devices. Keep the PowerShell window open.
-3. Run the startup commands above. Scan the terminal QR code using Expo Go's scanner.
-4. Select Svenska. Confirm the selected mark, Swedish instruction and Fortsätt.
-   Continue: confirm Välkommen till Memy, the existing book illustration and Swedish text.
-5. Use Byt språk; confirm Svenska is still selected. Select English, Continue, and
-   check Welcome to Memy. Use Change language and Android Back. Repeat without duplicate screens.
-6. Increase Android system font/display size. Check both screens on a narrow portrait
-   display and in landscape. Everything must remain readable, wrap, and scroll;
-   no labels should be cut off. Buttons must remain large.
-7. Enable TalkBack. Check heading/reading order, language choices and their checked
-   states, Continue, Welcome, and Change language. Decorative book/sprout details should
-   not produce repeated announcements. Verify the screen reader reaches controls after navigation.
-8. Reload the app: it starts at language selection with English selected. Selection
-   is intentionally in memory only for this foundation.
-9. Confirm no login, registration, guest, microphone or Create Story action appears.
+## iPhone manual checklist — still required for Task 2A
 
-Stop Expo with Ctrl+C.
+- English: see the opening book, voice-to-writing illustration, then story draft.
+  Confirm artwork really moves and is not clipped. Use Next, Back and Enter Memy.
+- Back from the first scene returns to language selection. Select Svenska and
+  repeat; every instruction/control must be translated. Scene 3 describes a
+  future draft from confirmed memories, not an already generated story.
+- Skip from an introduction scene: Welcome appears immediately. Close/reopen or
+  reload this preview: Welcome and the chosen language return without the intro.
+- Replay Introduction: all three scenes are available again. Completing/skipping
+  replay must preserve the saved completion. Changing language from Welcome must
+  return to Welcome after Continue without forcing replay.
+- Welcome keeps the sprout, Memy wordmark and existing book. Log In, Create Account
+  and Continue as Guest must remain disabled and visibly explained as unavailable.
+- Enable iOS Reduce Motion, then replay: complete static art replaces animation.
+  Disable it and replay: motion returns. Scenes never advance themselves.
+- Enable VoiceOver: verify reading order, headings, progress and labeled controls.
+  On each scene the new heading should receive focus; decorative art stays silent.
+- Increase system text size, test the smallest available phone width and landscape.
+  Content must wrap and scroll, with large controls and no cropped text/artwork.
+- No microphone permission, account login, voice recording or AI request should occur.
 
-### Safe troubleshooting
-
-- SDK incompatibility: obtain the matching Expo Go from the official page; do not
-  upgrade app dependencies or install globally to work around it.
-- Cannot reach the laptop: confirm same trusted Wi-Fi and the QR's LAN address.
-  Phone localhost is the phone, not the PC.
-- If Windows firewall or network isolation blocks access, stop and report the message.
-  Do not change firewall settings, expose a public tunnel or start backend services.
-- Port already in use: do not stop another application's process. After confirming
-  a free alternative, use `npm start -- --port 8082`.
-- Missing local dependencies, permission errors or Metro failures: record the error;
-  do not run root installs, delete Git locks or change permissions.
-- If the bundle cache alone appears stale, stop this Expo process and use
-  `npm start -- --clear`. This clears only this mobile development bundler cache.
-- Android Studio/emulator installation is not part of this task.
-- USER-REPORTED: the app launched on a real iPhone in Expo Go and both Language
-  Selection and Welcome rendered. Codex did not perform that device test.
-  iPhone navigation, VoiceOver, large text and landscape remain unverified.
-  A Windows PC cannot run Apple's local iOS simulator.
+Do not clear all Expo Go data or another project's storage to repeat first use.
+Automated tests exercise fresh and returning storage independently; Replay provides
+safe repeated visual inspection. Physical iPhone and Android behavior is not proved
+by Jest or a JavaScript export.
 
 ## Local checks
 
 ```powershell
+npm test -- --silent
 npm run typecheck
-npm test
 npm run lint
 npm run check:dependencies
 npm run check:config
 npm run check:bundle
+npm run check:bundle:ios
 ```
 
-The checks enforce disabled dotenv/client-env injection and offline Expo operation.
-Tests block fetch/XMLHttpRequest/WebSocket, exercise actual Expo Router navigation,
-and check source/configuration boundaries. SDK/native APIs use the Expo/Jest test
-environment; these checks do not contact Supabase or FastAPI.
-The Android JavaScript export is a local compilation check, not a native build,
-APK, deployment or proof of device behavior.
+All tools resolve inside apps/mobile. Bundles/caches remain local and Git-ignored.
+Dependencies were installed with lifecycle scripts disabled; never use the root
+web package scripts for this app. The only new runtime dependency is the Expo
+SDK 57-compatible AsyncStorage 2.2.0. Existing SVG and React Native Animated render
+and animate the original vectors; no new animation library or remote fonts.
+See VERIFICATION.md for actual results and limits.
 
-Generated caches, dependencies and Android verification export remain app-local and
-Git-ignored. Package lifecycle scripts were disabled during dependency installation.
-The repository root package files and existing web worktrees must remain unchanged.
+## Original web design reused
 
-SDK 57's Router brings optional peer packages into npm's dependency graph. The
-app's overrides pin React DOM, Gesture Handler, Reanimated and Worklets to the
-SDK-compatible versions instead of npm's newer automatic selections. They do not
-enable animation, browser, microphone or backend features in this application.
+Read-only references: memy-web-animated-onboarding and memy-web-registration,
+particularly MemoryBookScene.tsx, OnboardingExperience.tsx, copy.ts and onboarding.css.
+No web worktree was edited and no HTML, DOM component, CSS or WebView was imported.
 
-## Reused Memy work and provenance
+| Scene | Reuse and native adaptation |
+| --- | --- |
+| Beautiful Memory Book | Original 760×650 book/page/cover geometry, sage surround, leaves and memory symbols. Cover turns and fades as the book opens and memories appear. |
+| Your Voice Becomes Your Story | Original microphone, waveform, writing lines and keyboard alternative. Voice symbols yield to writing; this is decorative, with no microphone operation. |
+| Create Your Story | Original autobiography book, draft label, paragraph lines and pencil. Pages and lines appear in sequence. Copy explains confirmed memories and user editing. Faux Create My Story button/cursor omitted. |
 
-Read-only design reference: the committed registration worktree at
-87a96ef44f4bde821d1ec25bf76726672187428c.
+Memy's existing Welcome sprout/book and cream #f7f4eb, paper #fffdf7, forest #345b46,
+ink #342f27 and sage palette are retained. Native headings use Georgia on iOS and
+system serif on Android, with scalable system body text. EN/SV scene 1/2 copy is
+reused; scene 3 is adapted to avoid implying a generated autobiography.
 
-- `src/features/onboarding/OnboardingExperience.tsx`: exact sprout path and Memy
-  wordmark, calm centered Welcome composition.
-- `src/features/onboarding/MemoryBookScene.tsx`: static native adaptation of the
-  existing Welcome open book, cream pages, forest cover, sage surround, leaves,
-  bookmark and pencil. Decorative Create My Story control/cursor/DRAFT wording
-  were omitted so the artwork does not suggest a working story feature.
-- `src/features/onboarding/copy.ts`: existing English/Swedish Welcome title,
-  description, eyebrow and footer; language names preserved. Language-selection
-  instructions, Continue and Change Language are native foundation wording.
-- `src/features/onboarding/onboarding.css`: cream #f7f4eb, paper #fffdf7, forest
-  #345b46, ink #342f27, muted #686354 and border #d4d4c4; rounded controls and
-  serif-heading/system-body character.
+Each scene uses a finite 1.2-second native-driver Animated.timing with layered
+opacity/transforms. Leaving a scene stops the animation. Reduced motion defaults
+to static until the OS preference is known and responds to OS changes. Static
+art includes the completed illustration. There are no automatic slide transitions.
 
-Artwork uses native SVG primitives, not copied HTML/CSS components or a WebView.
-The heading font is Georgia on iOS and Android's system serif; exact typography
-will differ across devices. No remote fonts or older Mina Minnen-branded bitmaps
-are used. Decorative SVG is hidden from accessibility; user-facing text scales.
+## Storage, accessibility and boundaries
 
-The three animated Memory Book scenes, native auth/recovery/registration, Guest
-Voice visuals and its pure completed-turn reducer remain later features.
-Uncommitted guest web files were not imported, moved or modified. Browser storage,
-callback parsing, Vite configuration, Radix components and web auth adapters were
-not copied.
+AsyncStorage key: memy.onboarding.preferences.v1. The record contains only version,
+language (en/sv) and completed (boolean). It is unencrypted preference storage,
+never an identity/access-control mechanism. No passwords, tokens, personal memories
+or conversations are stored. Corrupt/unsupported data falls back to first use.
+Reads/writes have a 2.5-second UI timeout. Native writes are serialized so an old
+save cannot overwrite newer completion. Failed storage retains current-session
+progress and shows a localized warning on Welcome; completion may replay next launch.
 
-## Limitations and review boundary
+Primary and secondary controls have minimum 56-unit height; text scales, layouts
+scroll within safe areas, art keeps its aspect ratio at the available width, and
+SVG decoration is hidden from screen readers. Actual clipping, focus, pronunciation
+and animation quality still need device review. Platform fonts may differ.
 
-- Language is in-memory; reopening/reloading resets to English. No persistence policy
-  is introduced.
-- This is a two-screen foundation, not the full Memy product.
-- No animations are present, including route transitions.
-- Tests inspect scalable/flexible layout configuration; Jest does not run Android
-  Yoga layout or prove real clipping, TalkBack focus/pronunciation or touch behavior.
-- Android Expo Go/hardware Back and remaining iPhone navigation/accessibility
-  checks remain manual.
-- The user's iPhone launch/render report is limited to the two screens; other
-  device accessibility/layout checks remain pending.
-- No backend, production, Supabase, AI, voice, microphone or cross-user behavior is
-  exercised or claimed.
-- Self-review is not independent review. Android manual verification and independent
-  review must precede approval to commit.
+This is an onboarding-only foundation. Functional auth, recovery, guest voice,
+stories, backend integration and secure account storage remain later tasks.
+Task 1's USER-REPORTED iPhone launch covered Language/Welcome only; it is not a
+Task 2A graphical/device test. Self-review is not independent review.

@@ -9,6 +9,8 @@ export default function RootLayout() {
       <StatusBar style="dark" />
       <Stack screenOptions={{ headerShown: false, animation: 'none', gestureEnabled: false }}>
         <Stack.Screen name="index" />
+        <Stack.Screen name="language" />
+        <Stack.Screen name="introduction" />
         <Stack.Screen name="welcome" />
       </Stack>
     </LanguageProvider>

@@ -60,6 +60,9 @@ const commands: [string, string, string[]][] = [
   ['bundle', 'expo/bin/cli', [
     'export', '--platform', 'android', '--output-dir', '.verification/android', '--no-bytecode',
   ]],
+  ['bundle-ios', 'expo/bin/cli', [
+    'export', '--platform', 'ios', '--output-dir', '.verification/ios', '--no-bytecode',
+  ]],
 ];
 
 describe('mobile command launcher (mocked child processes)', () => {
@@ -89,7 +92,7 @@ describe('mobile command launcher (mocked child processes)', () => {
     expect(execution.environment.EXPO_OFFLINE).toBe('1');
   });
 
-  it.each(['typecheck', 'test', 'lint', 'dependencies', 'config', 'bundle'])(
+  it.each(['typecheck', 'test', 'lint', 'dependencies', 'config', 'bundle', 'bundle-ios'])(
     'keeps %s verification offline',
     (action) => {
       const execution = runLauncher(action, [], { EXPO_OFFLINE: '0' });

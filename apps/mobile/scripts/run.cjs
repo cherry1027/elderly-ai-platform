@@ -11,6 +11,7 @@ const actions = {
   dependencies: ['expo/bin/cli', ['install', '--check']],
   config: ['expo/bin/cli', ['config', '--type', 'public', '--json']],
   bundle: ['expo/bin/cli', ['export', '--platform', 'android', '--output-dir', '.verification/android', '--no-bytecode']],
+  'bundle-ios': ['expo/bin/cli', ['export', '--platform', 'ios', '--output-dir', '.verification/ios', '--no-bytecode']],
 };
 const actionName = process.argv[2];
 const action = Object.hasOwn(actions, actionName) ? actions[actionName] : undefined;

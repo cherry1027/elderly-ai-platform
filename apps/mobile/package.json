@@ -14,9 +14,11 @@
     "lint": "node scripts/run.cjs lint",
     "check:dependencies": "node scripts/run.cjs dependencies",
     "check:config": "node scripts/run.cjs config",
-    "check:bundle": "node scripts/run.cjs bundle"
+    "check:bundle": "node scripts/run.cjs bundle",
+    "check:bundle:ios": "node scripts/run.cjs bundle-ios"
   },
   "dependencies": {
+    "@react-native-async-storage/async-storage": "2.2.0",
     "expo": "~57.0.30",
     "expo-router": "~57.0.28",
     "react": "19.2.3",

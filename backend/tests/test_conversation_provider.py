@@ -474,4 +474,3 @@ def test_provider_rejects_unsupported_language_and_oversized_input() -> None:
     assert respond("x" * 32_000).facts == []
     with pytest.raises(ValueError, match="32000"):
         respond("x" * 32_001)
-

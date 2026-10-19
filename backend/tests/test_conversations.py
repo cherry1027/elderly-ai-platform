@@ -916,4 +916,3 @@ def test_memory_version_conflict_is_sanitized():
 
     assert_error(response, 409, "CONVERSATION_CHANGED")
     assert "private" not in response.text
-

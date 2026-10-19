@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, AnyHttpUrl, Field, SecretStr, field_validator
@@ -35,6 +36,8 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173",
     ]
     request_timeout_seconds: float = Field(default=5, gt=0, le=30)
+    # Day 4 has no external AI implementation. Unknown/paid provider names fail.
+    conversation_mode: Literal["disabled", "mock"] = "disabled"
 
     @classmethod
     def settings_customise_sources(

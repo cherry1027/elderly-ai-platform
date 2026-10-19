@@ -64,6 +64,15 @@ calls remain denied. `cloud-story-drafts.sql` is a rollback-only hosted developm
 workflow with synthetic subjects and no login credentials or emails. It does not
 prove an end-to-end real-user browser flow or real-model factual accuracy.
 
+Day 6 tests add metadata-only PDF audits and non-generating continuation. They
+verify owned saved revisions, historical content hashes after later edits/title
+changes, render-metadata deduplication, race checks, active-session reuse/new-session
+creation, explicit version two, contradiction blocking and cross-user/anonymous
+denial. `cloud-exports-continuation.sql` repeats the two-user English/Swedish SQL
+workflow and rolls back every synthetic row. It uses fictional byte/page counts:
+PDF structure, glyphs and the real rendering pipeline are tested separately in
+the backend. No public storage bucket or PDF blob is created.
+
 For a confirmed empty development database only,
 `node supabase/scripts/build-bootstrap.mjs` emits a transactional SQL Editor
 bootstrap from the repository migrations, including their version history. It

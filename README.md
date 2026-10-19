@@ -14,7 +14,7 @@ python -m pytest -q -m 'not integration'
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-API: http://127.0.0.1:8000 · Swagger: http://127.0.0.1:8000/docs · Version: 0.5.0
+API: http://127.0.0.1:8000 · Swagger: http://127.0.0.1:8000/docs · Version: 0.6.0
 
 - GET /health: public process liveness.
 - GET /ready: public Supabase Data API connectivity, without fetching records.
@@ -29,6 +29,9 @@ API: http://127.0.0.1:8000 · Swagger: http://127.0.0.1:8000/docs · Version: 0.
 - /api/v1/story-projects/{project_id}/generate: explicit opt-in mock story generation.
 - /api/v1/story-projects/{project_id}/drafts and /verification: versioned drafts and reports.
 - /api/v1/story-drafts/{draft_id} and /history: owned read/edit and preserved edits.
+- /api/v1/story-drafts/{draft_id}/export: private on-demand PDF generation.
+- /api/v1/story-projects/{project_id}/exports and /continue: export audit and safe resumption.
+- /api/v1/story-exports/{export_id}/download: authenticated historical PDF retrieval.
 
 Live speech recognition is deliberately disabled: no paid provider is wired or
 called. Provider/persistence success paths are tested with explicit test doubles,
@@ -40,6 +43,9 @@ Day 5 separately enables deterministic autobiography drafts with
 `STORY_GENERATION_MODE=mock`; only supported, confirmed memories are included,
 and manual edits never receive an automatic factual pass. See
 [Create My Story](docs/story-drafts-api.md).
+Day 6 adds readable English/Swedish PDFs, immutable export metadata and explicit
+story continuation without overwriting earlier edits. PDF bytes are generated in
+memory, never stored in a public bucket. See [the PDF and continuation contract](docs/pdf-export-api.md).
 
 Protected routes validate the supplied Supabase user access token through Auth
 `getUser`, then forward that exact user token plus the publishable key to the Data
@@ -94,6 +100,8 @@ are opt-in and require two real development-project user tokens.
 - [Day 4 status and verification](docs/day-4-status.md)
 - [Day 5 story generation, read/edit and verification contract](docs/story-drafts-api.md)
 - [Day 5 status](docs/day-5-status.md)
+- [Day 6 PDF export and story continuation](docs/pdf-export-api.md)
+- [Day 6 status and verification](docs/day-6-status.md)
 - [Day 1 status](docs/day-1-status.md)
 - [Database design](docs/database-foundation.md)
 - [Initial audit](docs/day-1-audit.md)

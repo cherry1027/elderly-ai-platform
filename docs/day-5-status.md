@@ -62,8 +62,8 @@ passed. That frontend acceptance remains a team integration step.
 
 ## Branch and operating boundaries
 
-The work is locally committed on `backend/day-5-story-drafts`, based on the pushed
-Days 1–4 backend branch. **Day 5 has not been pushed or merged into main.**
+The work is committed and pushed on `backend/day-5-story-drafts` at `7fab579`,
+based on the pushed Days 1–4 backend branch. **Day 5 is not merged into main.**
 GitHub publication is separate from development database migration deployment.
 
 Checked-in flags remain `CONVERSATION_MODE=disabled` and

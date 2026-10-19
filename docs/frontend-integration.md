@@ -1,6 +1,6 @@
 # Frontend integration handoff for Tarun
 
-Updated for backend 0.5.0 on 19 October 2026. Tarun's complete backend integration
+Updated for backend 0.6.0 on 19 October 2026. Tarun's complete backend integration
 sign-off has not been obtained.
 
 Day 5 adds explicit **Create My Story**, source-verified mock drafts, read/edit,
@@ -9,6 +9,12 @@ for all six routes, request/response examples and the Create → Preview → Edi
 acceptance flow. Start the backend with both `CONVERSATION_MODE=mock` and
 `STORY_GENERATION_MODE=mock` for that simulation. Both defaults remain disabled;
 neither flag enables a paid provider or live transcription.
+
+Day 6 adds [private PDF export and Continue My Story](pdf-export-api.md). POST export
+returns PDF bytes, not JSON. Export history retains the selected saved revision;
+continuation never regenerates or overwrites manual work. The handoff includes
+all four routes, headers, audit schema, loading/error states, fictional PDFs and
+web/Expo download guidance. Real frontend/device acceptance remains pending.
 
 ## Environment and URLs
 

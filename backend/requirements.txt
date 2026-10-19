@@ -5,3 +5,4 @@ pydantic-settings==2.16.0
 python-multipart==0.0.32
 # Last PyAV wheel line compatible with this project's macOS 13 runtime.
 av==15.1.0
+reportlab==5.0.1

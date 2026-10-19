@@ -12,6 +12,7 @@ from app.api.story_projects import router as story_projects_router
 from app.api.audio import router as audio_router
 from app.api.conversations import router as conversations_router
 from app.api.story_drafts import router as story_drafts_router
+from app.api.exports import router as exports_router
 from app.core.config import Settings
 from app.core.errors import APIError, api_error_handler, validation_error_handler
 from app.services.transcription import DisabledTranscriptionProvider, TranscriptionProvider
@@ -19,6 +20,7 @@ from app.services.conversation_provider import (
     ConversationProvider, DisabledConversationProvider, MockConversationProvider,
 )
 from app.services.story_writer import DisabledStoryWriter, MockStoryWriter, StoryWriter
+from app.services.pdf_export import PdfRenderer
 
 
 def create_app(
@@ -28,22 +30,29 @@ def create_app(
     transcription_provider: TranscriptionProvider | None = None,
     conversation_provider: ConversationProvider | None = None,
     story_writer: StoryWriter | None = None,
+    pdf_renderer: PdfRenderer | None = None,
 ) -> FastAPI:
     config = settings if settings is not None else Settings()
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
         application.state.audio_slots = asyncio.Semaphore(2)
+        application.state.pdf_slots = asyncio.Semaphore(2)
+        application.state.pdf_tasks = set()
         async with httpx.AsyncClient(
             timeout=config.request_timeout_seconds,
             follow_redirects=False,
             transport=transport,
         ) as client:
             application.state.http_client = client
-            yield
+            try:
+                yield
+            finally:
+                if application.state.pdf_tasks:
+                    await asyncio.gather(*tuple(application.state.pdf_tasks), return_exceptions=True)
 
     application = FastAPI(
-        title="Memy AI Backend", version="0.5.0", lifespan=lifespan
+        title="Memy AI Backend", version="0.6.0", lifespan=lifespan
     )
     application.state.settings = config
     application.state.transcription_provider = transcription_provider or DisabledTranscriptionProvider()
@@ -53,6 +62,7 @@ def create_app(
     application.state.story_writer = story_writer or (
         MockStoryWriter() if config.story_generation_mode == "mock" else DisabledStoryWriter()
     )
+    application.state.pdf_renderer = pdf_renderer or PdfRenderer()
     application.add_exception_handler(APIError, api_error_handler)
     application.add_exception_handler(RequestValidationError, validation_error_handler)
 
@@ -60,7 +70,8 @@ def create_app(
     async def protect_user_responses(request, call_next):
         response = await call_next(request)
         if request.url.path.startswith("/api/v1/"):
-            response.headers["Cache-Control"] = "no-store"
+            if response.headers.get("Cache-Control") != "private, no-store":
+                response.headers["Cache-Control"] = "no-store"
         return response
 
     application.add_middleware(
@@ -69,6 +80,8 @@ def create_app(
         allow_credentials=False,
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "Accept-Language", "Idempotency-Key"],
+        expose_headers=["Content-Disposition", "Content-Length", "X-Memy-Export-Id",
+                        "X-Memy-Draft-Version", "X-Memy-Draft-Revision", "X-Memy-Page-Count"],
     )
     application.include_router(health_router)
     application.include_router(readiness_router)
@@ -76,6 +89,7 @@ def create_app(
     application.include_router(audio_router)
     application.include_router(conversations_router)
     application.include_router(story_drafts_router)
+    application.include_router(exports_router)
     return application
 
 

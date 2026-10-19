@@ -1,6 +1,6 @@
 # Frontend integration handoff for Tarun
 
-Updated for backend 0.3.0 on 18 October 2026. Tarun's complete backend integration
+Updated for backend 0.3.0 on 19 October 2026. Tarun's complete backend integration
 sign-off has not been obtained.
 
 ## Environment and URLs
@@ -45,6 +45,52 @@ const response = await fetch(`${API_BASE_URL}/api/v1/story-projects`, {
   headers: { Authorization: `Bearer ${data.session.access_token}` },
 });
 ```
+
+## Web registration readiness (Task 3C)
+
+The dedicated development project's redirect allowlist now includes the exact
+`http://127.0.0.1:5173/auth/callback` URL. The existing
+`http://127.0.0.1:5173/story-projects.html` recovery redirect and Site URL are
+unchanged. Registration must explicitly supply the callback as `emailRedirectTo`.
+The default confirmation template uses `{{ .ConfirmationURL }}` and is compatible
+with the frontend's implicit flow; this change does not enable PKCE callbacks.
+
+Email/password signup and email confirmation are enabled. The inspected policy
+requires at least six password characters with no required character classes;
+CAPTCHA is off. These policies were not weakened or otherwise changed. Custom
+SMTP is not configured: the existing development sender has a project-wide
+two-emails/hour limit and recipient restrictions. Use one authorized test email,
+keep the local frontend running and open only the newest confirmation email.
+No confirmation or recovery email was sent for this permissions fix.
+
+Migration `20261019000000_registration_settings_access.sql` restores settings
+access without granting broad table privileges. Authenticated users can select
+the six current settings columns and update only `email_notifications`,
+`deletion_reminders`, `newsletter` and `inspiration_frequency`. RLS restricts both
+reads and updates to `auth.uid() = user_id`. Clients cannot insert/delete rows,
+change ownership or overwrite `created_at`; anonymous access remains denied.
+Column-scoped grants mean `has_table_privilege(..., 'SELECT')` remains false even
+though `SELECT *` on the six current columns works. Future columns are not
+automatically exposed. The existing SECURITY DEFINER signup trigger creates
+settings; clients should update that row, not upsert it.
+
+The missing grants affected account preference reads/saves, not normal Auth
+signup/login: trigger inserts use the function owner's privileges. Profile and
+settings trigger creation is tested separately from client permissions. The two
+historical orphan settings rows match the disposable Day 3 verification users
+and contain default preferences. They were inspected and left unchanged. There
+is no settings-to-auth-user foreign key; any narrow cleanup or cascade migration
+requires a separately reviewed and approved change.
+
+Verification on 19 October: migration applied to `edbkuunyeyxnyenmmqud`;
+hosted rollback-only two-user checks passed for trigger creation, owner reads and
+updates, cross-user denial and restricted mutations. The two original orphan
+rows remained; synthetic rows did not persist. Local regression checks passed:
+202 backend tests (four live checks skipped) and 21 embedded PostgreSQL tests.
+
+The remaining frontend acceptance step is Tarun's real signup, email confirmation
+and login with one authorized development account. Database role tests are not
+evidence that this complete browser/email flow has already passed.
 
 ## Implemented API and response handling
 

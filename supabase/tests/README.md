@@ -39,6 +39,14 @@ cross-user/anonymous denial. It creates synthetic `auth.users` rows without logi
 credentials and makes no provider or network call of its own. Review the target
 project and migration state before running it; never run it in production.
 
+Registration settings coverage runs in two fresh databases: one without inherited
+table grants and one with legacy broad table/column grants. It checks signup
+triggers, owner-only reads and preference updates, missing-JWT/anonymous denial,
+protected identity/timestamp columns and preservation of existing orphan rows.
+`cloud-settings.sql` repeats the role/trigger checks in the dedicated development
+database inside a rolled-back transaction. It sends no email and does not test
+an actual browser signup, email confirmation or issued access token.
+
 For a confirmed empty development database only,
 `node supabase/scripts/build-bootstrap.mjs` emits a transactional SQL Editor
 bootstrap from the repository migrations, including their version history. It

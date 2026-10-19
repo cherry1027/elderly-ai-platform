@@ -14,7 +14,7 @@ python -m pytest -q -m 'not integration'
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-API: http://127.0.0.1:8000 · Swagger: http://127.0.0.1:8000/docs · Version: 0.3.0
+API: http://127.0.0.1:8000 · Swagger: http://127.0.0.1:8000/docs · Version: 0.4.0
 
 - GET /health: public process liveness.
 - GET /ready: public Supabase Data API connectivity, without fetching records.
@@ -23,10 +23,16 @@ API: http://127.0.0.1:8000 · Swagger: http://127.0.0.1:8000/docs · Version: 0.
 - /api/v1/story-sessions/{session_id}/transcribe: authenticated bounded upload;
   currently returns `503 TRANSCRIPTION_DISABLED` after validation.
 - /api/v1/story-sessions/{session_id}/transcripts: immutable audio originals.
+- /api/v1/story-sessions/{session_id}/messages: ordered history and opt-in mock turns.
+- /api/v1/story-sessions/{session_id}/memories and /clarifications: owned memory review.
+- /api/v1/memories/{fact_id}: confirm, reject or correct a sourced candidate.
 
 Live speech recognition is deliberately disabled: no paid provider is wired or
 called. Provider/persistence success paths are tested with explicit test doubles,
 not fabricated results from the running application. See [the audio API](docs/audio-api.md).
+Day 4's explicitly labelled text-conversation simulation is separately available
+with `CONVERSATION_MODE=mock`; it does not enable speech recognition or a live AI
+provider. See [the conversation API](docs/conversation-api.md).
 
 Protected routes validate the supplied Supabase user access token through Auth
 `getUser`, then forward that exact user token plus the publishable key to the Data
@@ -37,8 +43,9 @@ ordinary user requests never use a secret or service-role key.
 
 New backend/mobile development uses **memy-ai-dev**, project reference
 `edbkuunyeyxnyenmmqud`, at https://edbkuunyeyxnyenmmqud.supabase.co (Ireland, Free).
-Its 21 migration versions are deployed. Hosted SQL and two-user HTTP checks passed
-for ownership, immutability and retries. HTTP acceptance used two disposable
+Hosted Day 3 SQL and two-user HTTP checks passed for ownership, immutability and
+retries. Current Day 4 deployment is tracked in [Day 4 status](docs/day-4-status.md).
+Day 3 HTTP acceptance used two disposable
 anonymous Auth users and an explicit fictional transcription provider.
 
 The existing web client's local root `VITE_SUPABASE_*` configuration still points
@@ -76,12 +83,15 @@ are opt-in and require two real development-project user tokens.
 - [Day 2 status](docs/day-2-status.md)
 - [Day 3 status and remaining acceptance](docs/day-3-status.md)
 - [Audio upload and transcript contract](docs/audio-api.md)
+- [Day 4 mock conversation and memory contract](docs/conversation-api.md)
+- [Day 4 status and verification](docs/day-4-status.md)
 - [Day 1 status](docs/day-1-status.md)
 - [Database design](docs/database-foundation.md)
 - [Initial audit](docs/day-1-audit.md)
 
 Tarun's review and a shared hosted backend URL remain team follow-ups. The legacy
 web UI's single-draft assumptions have not yet been adapted to the new multi-project
-API. No public FastAPI hosting, paid speech recognition, AI conversation,
-extracted-facts, payment or subscription features are enabled. Database migration
+API. No public FastAPI hosting, paid speech recognition, live AI conversation,
+payment or subscription features are enabled. Mock text conversation and memory
+review are available only through the explicit development feature flag. Database migration
 deployment is separate from publishing or hosting the FastAPI application.

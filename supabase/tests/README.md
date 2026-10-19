@@ -39,6 +39,15 @@ cross-user/anonymous denial. It creates synthetic `auth.users` rows without logi
 credentials and makes no provider or network call of its own. Review the target
 project and migration state before running it; never run it in production.
 
+Day 4 tests cover atomic user/assistant turns, immutable message references,
+owner-only memory/clarification reads, private idempotency/audit ledgers, original
+evidence grounding, unique source processing, versioned review and project-wide
+fact-context concurrency checks. Completed sessions permit replay/read/review but
+not a new turn. Parent/source erasure preserves unrelated users' rows.
+`cloud-conversation.sql` repeats a fictional English/Swedish workflow with two
+transaction-scoped subjects and rolls it all back. It does not send an email,
+create a password, issue a real user token or call an AI provider.
+
 Registration settings coverage runs in two fresh databases: one without inherited
 table grants and one with legacy broad table/column grants. It checks signup
 triggers, owner-only reads and preference updates, missing-JWT/anonymous denial,

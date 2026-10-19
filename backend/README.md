@@ -204,6 +204,24 @@ A shared remotely accessible API URL has not been deployed.
 
 See [the frontend handoff](../docs/frontend-integration.md).
 
+## Day 4 simulated conversations
+
+Backend 0.4.0 adds authenticated text turns, ordered message history, extracted
+memory candidates, clarification questions and versioned confirmation/correction.
+Existing Day 3 source messages can be processed without rewriting or duplicating
+them. PostgreSQL owns atomic writes, retry replay and cross-user isolation.
+
+`CONVERSATION_MODE` accepts only `disabled` (default) or `mock`. For the free
+development demonstration, set `CONVERSATION_MODE=mock` when starting Uvicorn.
+There is no live AI adapter, API key requirement or paid provider call. Mock
+extraction recognizes limited explicit en/sv patterns; unsupported wording can
+produce no facts. It does not establish real-model accuracy.
+
+The [Day 4 conversation contract](../docs/conversation-api.md) includes all five
+routes, source/text requests, example response, Yes/No/correction formats,
+idempotency keys, errors and Windows/macOS launch commands. Deployment and
+verification are recorded in [Day 4 status](../docs/day-4-status.md).
+
 ## Day 3 audio foundation
 
 Backend version 0.3.0 adds bounded, authenticated audio upload and immutable

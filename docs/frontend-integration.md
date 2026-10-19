@@ -1,6 +1,6 @@
 # Frontend integration handoff for Tarun
 
-Updated for backend 0.3.0 on 19 October 2026. Tarun's complete backend integration
+Updated for backend 0.4.0 on 19 October 2026. Tarun's complete backend integration
 sign-off has not been obtained.
 
 ## Environment and URLs
@@ -167,6 +167,13 @@ implementing a recording screen. Additional retention/provider policy approval
 is needed before real pilot-user recordings.
 
 ## Review items for Tarun
+
+Day 4 adds five authenticated text/history/memory-review routes under the existing
+`/api/v1/story-sessions` and `/api/v1/memories` conventions. Use the
+[conversation API guide](conversation-api.md) for the exact paths, full sample
+response, UUID retry headers, pending/confirmed/rejected states and correction
+versioning. Set backend `CONVERSATION_MODE=mock` for the free demo and visibly label
+the assistant as simulated. Voice transcription and real AI remain disabled.
 
 - Sign two test accounts into the new project and verify SDK token refresh.
 - Test one configurable API base URL from Expo and a physical phone.

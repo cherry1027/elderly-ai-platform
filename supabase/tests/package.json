@@ -2,6 +2,6 @@
   "name": "memy-schema-tests",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node --test foundation.test.mjs settings.test.mjs" },
+  "scripts": { "test": "node --test foundation.test.mjs settings.test.mjs conversation.test.mjs" },
   "devDependencies": { "@electric-sql/pglite": "0.5.10" }
 }

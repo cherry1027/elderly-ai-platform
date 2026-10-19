@@ -72,6 +72,61 @@ BEGIN
   END IF;
 END $trigger_tests$;
 
+DO $grant_tests$
+DECLARE
+  v_column text;
+BEGIN
+  FOREACH v_column IN ARRAY ARRAY[
+    'user_id',
+    'email_notifications',
+    'deletion_reminders',
+    'newsletter',
+    'inspiration_frequency',
+    'created_at'
+  ] LOOP
+    IF NOT has_column_privilege(
+      'authenticated', 'public.user_settings', v_column, 'SELECT'
+    ) THEN
+      RAISE EXCEPTION 'Authenticated SELECT grant missing for %', v_column;
+    END IF;
+  END LOOP;
+
+  FOREACH v_column IN ARRAY ARRAY[
+    'email_notifications',
+    'deletion_reminders',
+    'newsletter',
+    'inspiration_frequency'
+  ] LOOP
+    IF NOT has_column_privilege(
+      'authenticated', 'public.user_settings', v_column, 'UPDATE'
+    ) THEN
+      RAISE EXCEPTION 'Authenticated UPDATE grant missing for %', v_column;
+    END IF;
+  END LOOP;
+
+  IF has_column_privilege(
+    'authenticated', 'public.user_settings', 'user_id', 'UPDATE'
+  ) OR has_column_privilege(
+    'authenticated', 'public.user_settings', 'created_at', 'UPDATE'
+  ) OR has_table_privilege(
+    'authenticated', 'public.user_settings', 'INSERT'
+  ) OR has_table_privilege(
+    'authenticated', 'public.user_settings', 'DELETE'
+  ) OR has_table_privilege(
+    'authenticated', 'public.user_settings', 'TRUNCATE'
+  ) THEN
+    RAISE EXCEPTION 'Authenticated settings privileges exceed the approved scope';
+  END IF;
+
+  IF has_any_column_privilege('anon', 'public.user_settings', 'SELECT')
+     OR has_any_column_privilege('anon', 'public.user_settings', 'UPDATE')
+     OR has_table_privilege('anon', 'public.user_settings', 'INSERT')
+     OR has_table_privilege('anon', 'public.user_settings', 'DELETE')
+     OR has_table_privilege('anon', 'public.user_settings', 'TRUNCATE') THEN
+    RAISE EXCEPTION 'Anonymous settings privileges unexpectedly remain';
+  END IF;
+END $grant_tests$;
+
 SET LOCAL ROLE authenticated;
 SELECT set_config(
   'request.jwt.claims',

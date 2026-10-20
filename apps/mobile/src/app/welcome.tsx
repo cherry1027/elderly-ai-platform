@@ -11,8 +11,8 @@ export default function WelcomeRoute() {
   const router = useRouter();
   const { language, ready, completed, storageUnavailable } = useLanguage();
   const auth = useAuth();
-  const { requestLogin, cancelLogin, welcomeAvailable } = useLoginNavigation();
-  useFocusEffect(useCallback(() => { cancelLogin(); }, [cancelLogin]));
+  const { requestLogin, cancelLogin, requestRegistration, cancelRegistration, welcomeAvailable } = useLoginNavigation();
+  useFocusEffect(useCallback(() => { cancelLogin(); cancelRegistration(); }, [cancelLogin, cancelRegistration]));
   if (!ready || !auth.appActive || auth.status === 'checking' || auth.status === 'busy') return <PreferenceLoading language={language} />;
   if (auth.status === 'signed-in' && auth.user) return <Redirect href="/authenticated" />;
   if (!completed && !welcomeAvailable) return <Redirect href="/language" />;
@@ -22,6 +22,11 @@ export default function WelcomeRoute() {
       if (auth.status !== 'signed-out') return;
       requestLogin();
       router.navigate('/login');
+    }}
+    onRegister={() => {
+      if (auth.status !== 'signed-out') return;
+      requestRegistration();
+      router.navigate('/register');
     }}
     cleanup={auth.status === 'blocked' ? {
       message: text.errors.cleanup, retryLabel: text.retryCleanup,

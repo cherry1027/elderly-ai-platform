@@ -14,6 +14,8 @@ import Introduction from '../src/app/introduction';
 import Welcome from '../src/app/welcome';
 import Login from '../src/app/login';
 import Authenticated from '../src/app/authenticated';
+import Register from '../src/app/register';
+import Confirm from '../src/app/auth/confirm';
 import { introCopy } from '../src/intro-copy';
 import { copy, type Language as Locale } from '../src/i18n';
 import { PREFERENCES_KEY } from '../src/onboarding/preferences';
@@ -22,7 +24,7 @@ import { redirectSystemPath } from '../src/app/+native-intent';
 jest.mock('../src/auth/client', () => ({ createMobileAuth: jest.fn() }));
 jest.mock('../src/auth/config', () => ({ readMobileAuthConfig: jest.fn() }));
 const routes = { _layout: RootLayout, index: Entry, language: Language, introduction: Introduction,
-  welcome: Welcome, login: Login, authenticated: Authenticated };
+  welcome: Welcome, login: Login, authenticated: Authenticated, register: Register, 'auth/confirm': Confirm };
 let snapshot: AuthSnapshot;
 let listeners: Set<() => void>;
 let auth: MobileAuth;
@@ -60,7 +62,7 @@ function fill(language: Locale = 'en', email = 'a@example.test') {
 describe('actual native login routes with mocked auth services', () => {
   it.each<Locale>(['en', 'sv'])('logs in and signs out through the existing entrance in %s', async (language) => {
     await openWelcome(language);
-    expect(screen.getByRole('button', { name: introCopy[language].register })).toBeDisabled();
+    expect(screen.getByRole('button', { name: introCopy[language].register })).toBeEnabled();
     expect(screen.getByRole('button', { name: introCopy[language].guest })).toBeDisabled();
     await openLogin(language); fill(language);
     await screen.findByText('a@example.test');

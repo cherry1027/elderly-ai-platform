@@ -1,3 +1,137 @@
+# Memy Mobile Task 2C — Gated native registration
+
+Branch: feat/mobile-auth-registration. Base: a4807c0e8703ba3b8d5ed4a04fcb4b10b576a16b
+(completed Task 2B). All changes remain inside apps/mobile.
+
+## What works now
+
+Welcome's Create Account action opens the native EN/SV registration form. It
+validates required fields, email format, matching passwords and a six-character
+minimum. Only email is trimmed in the form; password characters are preserved.
+Both password fields have independent accessible visibility controls. Back to
+Welcome, Go to Log In, hardware Back, onboarding and Replay remain available.
+
+**Live signup and confirmation are deliberately NOT enabled.** The ordinary
+preview offers **Check details**, which validates locally while retaining entered
+values in memory, and explicitly says no account or email was created. It does not show fake signup
+success. SDK signup/confirmation behavior is exercised only with mocked transport
+in automated tests. There is no environment, URL, key or user switch to enable it.
+
+Existing normal login still uses its separate, previously approved development
+configuration/session store. Registration cannot replace it or auto-sign-in.
+Guest, password recovery, Story Projects, microphone and AI remain unavailable.
+
+## Safe PowerShell / iPhone form verification
+
+The prepared local dependencies require no new installation. From PowerShell:
+
+~~~powershell
+Set-Location 'C:\Users\Grkta\Documents\Codex\2026-10-15\files-mentioned-by-the-user-elderly\work\memy-mobile-registration\apps\mobile'
+npm start -- --port 8084
+~~~
+
+If port 8084 is already occupied, stop this command and choose an unused port;
+do not stop another project's process. This is Expo Go on local LAN, not a tunnel.
+Codex has not started this server or opened a microphone.
+
+1. Scan this worktree's QR code in Expo Go. On first use, choose a language and
+   view/skip the introduction. Returning signed-out users should reach Welcome.
+2. Tap Create Account. Read the notice that live registration is not enabled.
+   No development auth file is needed for these form-only checks.
+3. Use synthetic values such as person@example.test. Check empty/invalid email,
+   a five-character password, and mismatched confirmation. No email is sent.
+4. Enter matching six-or-more-character synthetic passwords. In Password, Next
+   moves to Confirm Password. In Confirm Password, press the iPhone keyboard's
+   checkmark/Done: it must dismiss the keyboard without checking or submitting
+   the form, and both values must remain. Use Show/Hide to confirm the retained
+   synthetic values, then mask them again.
+5. Tap Check details. Expect a local-check result explicitly saying no account/email
+   was created; both values must remain, masked unless you selected Show. Repeating
+   the check must work without retyping. Change only Confirm Password, press Done,
+   then Check details: expect a mismatch. Correct it and check again: expect success.
+   Results must never repeat either password. Never use a real password here.
+6. Check Show/Hide for both fields, Back, Android hardware Back, and Go to Log In.
+   Merely opening Login must not sign in. Guest must remain disabled.
+7. Repeat in Svenska; check large system text, VoiceOver/TalkBack, small-screen
+   scrolling, keyboard avoidance, Reduce Motion and Replay. Background/reopen:
+   passwords must be concealed and cleared.
+
+For the keyboard-fix retest, stop only this worktree's existing Expo terminal with
+Ctrl+C, then run `npm start -- --port 8084 --clear` from the folder above and reload
+this project in Expo Go. `--clear` clears Metro's cache, not saved app preferences
+or login sessions. Do not stop other projects or clear phone storage.
+
+Done, blur, refocus, Show/Hide and local checks retain controlled password values
+in React memory only. Leaving the form, backgrounding or an actual mocked signup
+attempt still follows the existing credential cleanup rules. No passwords are
+written to AsyncStorage, SecureStore, logs or files. The actual signup gate is
+unchanged. Codex's regression tests reproduce JS events, not physical UIKit.
+
+The known Expo Go QR/resume issue that sometimes reopens an intentional Login
+remains pending physical-device verification. Source guards and mock router tests
+do not prove Expo Go or standalone cold-start behavior. Do not clear sessions or
+onboarding preferences just to force a different screen.
+
+## Confirmation design and activation requirements
+
+The provisional callback base is memy-foundation://auth/confirm. Each pending
+signup adds a cryptographically random public state; the return link must carry
+that state plus the SDK code. State must match the pending registration BEFORE
+any code exchange. An old/different attempt cannot erase the current verifier.
+Exact callback-shaped links go to a separate confirmation screen, with codes
+kept out of router params and logs. Unrelated links retain the entrance policy. Direct route/query
+claims alone cannot verify an account. The in-memory inbox is bounded, one-use and
+expires after 60 seconds; this is not the server's email-link/code expiry policy.
+
+The isolated SDK test harness uses PKCE/S256, strict approved-development Auth
+paths, finite request/body deadlines and sanitized errors. Expected email, state and a
+bounded PKCE record use a separate device-only SecureStore namespace; SDK sessions
+remain in memory. One pending signup is allowed. Confirmation verifies the user,
+requires a confirmed non-anonymous identity matching that pending signup, cleans
+temporary material, then offers normal password login. No main-session promotion
+or backend/database writes are added. Remote scoped logout is best effort; local
+cleanup is mandatory. The local pending-record TTL is one hour; expired material
+is physically deleted on the next read or explicit cancellation, not by a native
+background timer. Server expiry is authoritative and may be shorter. Native
+storage operations cannot be cancelled.
+
+Before any real signup/confirmation is activated, obtain separate approval for:
+
+- Charan's exact additional mobile redirect and email-template RedirectTo behavior,
+  including preservation of the random state and returned SDK code;
+  preserve current web allowlisting/Site URL. No broad wildcard is proposed.
+- iOS/Android application identifiers, custom-scheme ownership, native development
+  build/distribution and physical callback checks. Expo Go is not proof that this
+  custom scheme works; opening the old web localhost URL on a phone is insufficient.
+- An SDK-compatible native cryptographic provider for secure randomness and SHA-256.
+  No crypto/dev-client package was installed here. The SDK's weak/plain fallback is
+  rejected; actual SDK tests assert S256. The native provider is still unverified.
+- Review and implementation of the gated activation path. This preview cannot be
+  unlocked merely by adding a key/configuration or changing an environment value.
+
+User-confirmed development settings: signup enabled, confirmation required,
+minimum six characters, no required character classes, CAPTCHA disabled, triggers
+and permissions checked. Email delivery is limited to **two emails/hour across
+the project**, shared with other signup/recovery testing. No automatic resend or
+ambiguous timeout retry is provided. Later live testing must coordinate one approved
+disposable recipient/slot, confirm on the initiating device, then log in normally.
+Cross-device/missing-verifier and expired/reused links fail safely; if the email
+was already confirmed on the server, ordinary login may still succeed.
+
+Self-review and mocked tests do not constitute independent review or live
+Supabase/native verification. See VERIFICATION.md for actual check results.
+
+References: [Expo native links](https://docs.expo.dev/linking/into-your-app/),
+[Supabase PKCE](https://supabase.com/docs/guides/auth/sessions/pkce-flow),
+[Supabase redirect URLs](https://supabase.com/docs/guides/auth/redirect-urls).
+
+---
+
+## Preserved Task 2B reference (historical scope and verification)
+
+The following describes the completed login foundation. Statements about
+registration being absent apply to that earlier task; Task 2C behavior is above.
+
 # Memy Mobile Task 2B — Development login
 
 This worktree adds only native email/password login and a small signed-in screen.

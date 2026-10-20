@@ -10,13 +10,14 @@ interface WelcomeScreenProps {
   language: Language;
   onChangeLanguage: () => void;
   onLogin?: () => void;
+  onRegister?: () => void;
   onReplayIntroduction?: () => void;
   storageUnavailable?: boolean;
   cleanup?: { message: string; retryLabel: string; onRetry: () => void };
 }
 
 export function WelcomeScreen({
-  language, onChangeLanguage, onLogin, onReplayIntroduction, storageUnavailable = false, cleanup,
+  language, onChangeLanguage, onLogin, onRegister, onReplayIntroduction, storageUnavailable = false, cleanup,
 }: WelcomeScreenProps) {
   const text = copy[language];
   const intro = introCopy[language];
@@ -55,7 +56,8 @@ export function WelcomeScreen({
           accessibilityLanguage={accessibilityLanguages[language]}
           style={screenStyles.footer}
         >
-          {onLogin ? (language === 'sv' ? 'Nya konton och gäståtkomst är inte tillgängliga ännu.'
+          {onRegister ? (language === 'sv' ? 'Du kan kontrollera dina uppgifter. Kontoregistrering är inte aktiverad ännu. Gäståtkomst är inte tillgänglig.'
+            : 'You can check your details. Live registration is not enabled yet. Guest access is unavailable.') : onLogin ? (language === 'sv' ? 'Nya konton och gäståtkomst är inte tillgängliga ännu.'
             : 'Account creation and guest access are not available yet.') : intro.unavailable}
         </Text>
         {cleanup && <>
@@ -66,7 +68,8 @@ export function WelcomeScreen({
           <LargeButton label={cleanup.retryLabel} language={language} onPress={cleanup.onRetry} variant="secondary" />
         </>}
         {onLogin && !cleanup && <LargeButton label={intro.login} language={language} onPress={onLogin} />}
-        {(onLogin && !cleanup ? [intro.register, intro.guest] : [intro.login, intro.register, intro.guest]).map((label) => (
+        {onRegister && !cleanup && <LargeButton label={intro.register} language={language} onPress={onRegister} variant="secondary" />}
+        {[...(!onLogin || cleanup ? [intro.login] : []), ...(!onRegister || cleanup ? [intro.register] : []), intro.guest].map((label) => (
           <Pressable
             key={label}
             disabled

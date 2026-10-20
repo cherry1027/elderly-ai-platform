@@ -1,3 +1,224 @@
+# Mobile Task 2C — verification and self-review
+
+Date: 2026-10-20. Worktree: memy-mobile-registration.
+Branch: feat/mobile-auth-registration.
+Verified clean starting HEAD/base: a4807c0e8703ba3b8d5ed4a04fcb4b10b576a16b
+(completed Task 2B). No branch creation/switch, staging, commit or push.
+All feature changes are inside apps/mobile. Self-review is not independent review.
+
+## Scope and release gate
+
+Create Account navigation, the EN/SV native form, local validation and clear
+closed-gate messaging are available for device review. Live registration and
+confirmation remain deliberately disabled. No preview success is fabricated:
+Check details says that no account or email was created. Real SDK flows run only
+through an injected, test-runtime-only mocked transport. Settings/URLs cannot
+activate them. No new dependencies or native development build were installed.
+
+The existing lock-matched dependency installation was copied read-only from the
+login reference into this worktree's ignored node_modules for offline checks.
+Both mobile dependency manifests/lockfiles and the protected launcher/configuration
+remain unchanged. Actual mobile-local configuration is absent and was not copied;
+the legacy root .env was never read. Other worktrees/backend/schema were not edited.
+
+## Current automated validation
+
+Final complete suite after the keyboard fix: **603 tests passed across 23 suites;
+0 failed, 0 skipped**, exit 0, 46.373 seconds. This includes all 594 prior tests
+and 9 new keyboard/retention cases. TypeScript and full ESLint then passed sequentially, exit 0,
+with no errors or lint warnings on the final code/test source.
+
+Expo public configuration passed with authentication disabled in verification
+mode. Offline dependency validation returned up to date, exit 0, with Expo's
+explicit warning that offline validation is unreliable; this is not an online
+audit. Tracked and all 16 new-file Git whitespace checks passed; new-file checks
+produce normal LF/CRLF advisories. All 25 changed code/test files match their
+recorded SHA-256 hashes. Nothing is staged and HEAD remains the starting base.
+
+Android JavaScript export passed (1,449 modules, 28.931 seconds); iOS JavaScript
+export passed (1,311 modules, 29.950 seconds), both exit 0. These use --no-bytecode
+for safe compilation verification. Expo's bytecode advisory and console-color
+warnings are informational. Exports are not native builds or device tests.
+
+| Final check | Result |
+| --- | --- |
+| Complete existing + registration tests | 603 passed / 0 failed / 0 skipped, 23 suites |
+| TypeScript | PASS, exit 0 |
+| Full ESLint | PASS, exit 0, no warnings/errors |
+| Expo public config | PASS, verification authentication disabled |
+| Expo offline dependencies | Up to date, exit 0; offline-validation limitation |
+| Android JS export | PASS, 1,449 modules |
+| iOS JS export | PASS, 1,311 modules |
+| Tracked/new-file whitespace | PASS |
+| Frozen changed code/test SHA-256 | 25/25 match after exports |
+| Git scope | 27 mobile-only files: 11 modified, 16 added; nothing staged |
+
+Two earlier full runs passed 555/555 tests before the final per-attempt state
+hardening. The 594-test run superseded them; the current 603-test run also includes
+the iPhone keyboard fix below. A focused SDK/storage/crypto
+run also passed 54/54 tests across three suites.
+Machine-readable final suite output: .verification/mobile-registration-results.json.
+Changed code/test hashes: .verification/registration-source-hashes.json.
+
+### iPhone keyboard Done follow-up
+
+USER-REPORTED: Password/Confirm Password appeared to disappear after the keyboard
+Done/checkmark, followed by a missing-input result on Check details. This is not
+a Codex device test. The code confirms that Confirm Password's onSubmitEditing
+called submit(), whose closed-gate branch explicitly cleared both values. Done
+therefore performed a premature local check; the next button check saw empty
+fields. Focus/blur handlers only change styling, and secureTextEntry remains
+controlled; no native masking defect was needed to reproduce this sequence.
+
+Before changing the component, all 9 newly added regression cases failed (51 other
+cases filtered out) against the old code. After the two functional corrections,
+all 60 registration-screen tests passed. Reproduction output is ignored at
+.verification/password-done-before.json; corrected focused output is at
+.verification/password-done-focused.json. All inputs were synthetic.
+
+Done now dismisses the keyboard without checking/submitting. Explicit local
+Check details retains values in React memory so they can be revealed/masked,
+corrected and checked again. Email trimming, password characters, minimum length,
+mismatch validation and generic results remain. Results/logs never repeat passwords;
+tests verify zero AsyncStorage/SecureStore password writes. No app password file
+storage is imported or added. Background, Back/Login departure and real mocked
+submission credential cleanup are unchanged. Live registration stays gated off.
+
+Tests cover Done in EN/SV with the gate closed and a synthetic enabled callback,
+Next/blur/refocus, repeated Show/Hide, repeated local checks, mismatch correction,
+and zero submission/network/persistent-write behavior. These simulate React Native
+events, not UIKit or a physical iPhone. Updated manual instructions are in README.md;
+device retesting remains pending before independent review.
+
+Only four pre-existing feature files changed during this follow-up:
+src/screens/RegistrationScreen.tsx, test/registration-screens.test.tsx, README.md
+and VERIFICATION.md. The other 23 feature files must remain hash-identical to the
+start-of-follow-up snapshot (.verification/before-password-done-fix.json).
+
+No real login, signup, email, Supabase Auth, FastAPI, AI, database or microphone
+operations are performed by the tests. Test setup blocks fetch/XMLHttpRequest/
+WebSocket unless a test explicitly supplies synthetic mocked transport. SDK tests
+use fake credentials and synthetic accounts. No interactive preview, backend or
+Docker stack was started. Metro runs only for the approved offline JS exports.
+
+## Security and source review
+
+- Main login client/provider/session storage/configuration are unchanged. Registration
+  uses a distinct namespace and never calls main setSession/signOut or promotes a
+  signup/callback session. Existing signed-in account A survives callback handling.
+- The SDK uses explicit PKCE with S256, URL session detection/refresh/debug disabled,
+  and a selective storage adapter. persistSession:true is needed for this SDK to
+  honor custom storage: session/user keys stay memory-only; only pending email,
+  random public state, creation time and bounded verifier material use SecureStore.
+- Strong random state must match the pending attempt before SDK code exchange.
+  The old-A/new-B regression verifies zero old-code exchange, unchanged B pending
+  material and successful later B confirmation with mocked transport. A URL claim
+  cannot verify an account. Implicit token links, extra/duplicate parameters, wrong
+  paths/schemes and malformed state/codes are rejected.
+- The native inbox holds one bounded callback, never a full URL. It clears consumed
+  code immediately and expires unconsumed data after 60 seconds. Duplicate public
+  states are bounded; a different attempt is not blocked by the old cooldown.
+- Actual SDK confirmation requires an approved-project session plus server getUser
+  verification of a confirmed, non-anonymous identity matching pending email.
+  Temporary session/verification cleanup must succeed before confirmation success.
+  Ordinary email/password login is still required. Remote local-scope logout is best
+  effort; failed native cleanup blocks progress and offers a retry through Back.
+- Native calls are serialized and cannot be cancelled. Closed adapters/generations
+  fence late work. The one-hour pending-record TTL is logical: physical deletion
+  occurs on next access/cancel, not a guaranteed native background deletion timer.
+- Strict fixed development Auth paths, request/body deadlines, abort/fencing,
+  sanitized error codes, omitted cookies/cache and rejected redirects remain isolated
+  from presentation. Existing-account responses share the generic check-email result.
+  Password characters are preserved; passwords/tokens/codes are not logged.
+- No profile/database writes, registered allowances, projects, paid AI or Guest
+  functions were added. Registration does not duplicate backend triggers.
+
+## Accessibility, navigation and corrections
+
+Native scroll/safe-area/keyboard layouts, scalable text, >=56-unit controls,
+visible labels/focus and separate password visibility controls reuse Memy's
+existing artwork/colors. Confirmation changes have native screen-reader
+announcements. Language changes do not deliberately steal input focus. Actual
+VoiceOver/TalkBack, large-text layout and device keyboard behavior remain pending.
+
+Review corrected cancellation during crypto/SDK initialization; stale callback
+interference with newer pending attempts; warm callback queuing; callback status
+loss after backgrounding; preservation of provider check-email state after form
+remount; hidden cleanup failures; and two React hook lint findings. Regression
+tests cover those paths. Guest stays disabled and existing introduction/Replay,
+login, foreground session checks, sign-out and preference behavior remain covered.
+
+The known USER-REPORTED Expo Go behavior sometimes reopening Login is NOT claimed
+fixed. Existing guards are preserved and tested with mock Router/native-link
+adapters, not a physical Expo Go/standalone cold start. Prior Task 2B device results
+are historical and do not verify this registration implementation.
+
+## Remaining approval / manual verification
+
+1. Review the gated form on iPhone/Android using README.md's PowerShell command.
+   Use synthetic input only; no signup/email is attempted by Check details.
+2. Obtain Charan's exact mobile redirect/email-template approval, including retention
+   of the random state query and SDK code. Bare-base allowlisting is not assumed to
+   accept dynamic state. Preserve web Site URL/redirects; no broad wildcard shortcut.
+3. Approve a secure native crypto integration, application identifiers, scheme
+   ownership and native development build/distribution. Expo Go is not custom-scheme
+   end-to-end evidence. The cryptographic capability test is not proof of a native
+   provider: current actual SDK tests use Node WebCrypto only in the Jest VM.
+4. Independently review activation before any real registration is enabled. Then
+   coordinate one disposable approved recipient with the two-email/hour PROJECT-WIDE
+   budget, confirm on the initiating device, and require normal login afterward.
+   No automatic resend/retry exists. Server password/expiry policy is authoritative.
+5. Verify live callbacks, device SecureStore/cleanup, account isolation and standalone
+   navigation before production use. Mocked tests/JS exports do not prove those.
+
+No Task 2C device verification has been reported or executed yet. No production
+readiness, complete cross-user verification or independent review is claimed.
+
+Suggested future commit message (do not commit yet):
+feat: add gated native account registration and confirmation flow
+
+## Exact Task 2C file inventory
+
+27 files: 11 modified, 16 added. Paths below are relative to apps/mobile.
+Generated test/export/cache/hash artifacts are ignored and are not source changes.
+
+Modified:
+
+- README.md
+- VERIFICATION.md
+- src/app/+native-intent.tsx
+- src/app/_layout.tsx
+- src/app/index.tsx
+- src/app/welcome.tsx
+- src/navigation/LoginNavigation.tsx
+- src/screens/WelcomeScreen.tsx
+- test/auth-routing.test.tsx
+- test/routing.test.tsx
+- test/safety.test.ts
+
+Added:
+
+- src/app/register.tsx
+- src/app/auth/confirm.tsx
+- src/auth/RegistrationProvider.tsx
+- src/auth/confirmation-link.ts
+- src/auth/confirmation-storage.ts
+- src/auth/registration-crypto.ts
+- src/auth/registration.ts
+- src/registration-copy.ts
+- src/screens/ConfirmationScreen.tsx
+- src/screens/RegistrationScreen.tsx
+- test/confirmation-link.test.ts
+- test/confirmation-storage.test.ts
+- test/registration-crypto.test.ts
+- test/registration-routing.test.tsx
+- test/registration-screens.test.tsx
+- test/registration-service.test.ts
+
+---
+
+## Historical Task 2B record (not a claim about Task 2C)
+
 # Mobile Task 2B — verification and self-review
 
 Date: 2026-10-20.

@@ -10,12 +10,15 @@ import IntroductionRoute from '../src/app/introduction';
 import WelcomeRoute from '../src/app/welcome';
 import LoginRoute from '../src/app/login';
 import AuthenticatedRoute from '../src/app/authenticated';
+import RegisterRoute from '../src/app/register';
+import ConfirmRoute from '../src/app/auth/confirm';
 import { copy, type Language } from '../src/i18n';
 import { introCopy } from '../src/intro-copy';
 import { PREFERENCES_KEY } from '../src/onboarding/preferences';
 
 const routes = { _layout: RootLayout, index: EntryRoute, language: LanguageRoute, introduction: IntroductionRoute,
-  welcome: WelcomeRoute, login: LoginRoute, authenticated: AuthenticatedRoute };
+  welcome: WelcomeRoute, login: LoginRoute, authenticated: AuthenticatedRoute,
+  register: RegisterRoute, 'auth/confirm': ConfirmRoute };
 
 async function openFlow(initialUrl = '/') {
   const flow = renderRouter(routes, { initialUrl });
@@ -111,13 +114,12 @@ describe('actual native router flow', () => {
     expect(globalThis.WebSocket).not.toHaveBeenCalled();
   });
 
-  it('enables only login while registration and guest destinations remain disabled', async () => {
+  it('enables login and gated registration navigation while guest remains disabled', async () => {
     await openFlow();
     await welcome();
     expect(screen.getByRole('button', { name: introCopy.en.login })).toBeEnabled();
-    for (const name of [introCopy.en.register, introCopy.en.guest]) {
-      expect(screen.getByRole('button', { name })).toBeDisabled();
-    }
+    expect(screen.getByRole('button', { name: introCopy.en.register })).toBeEnabled();
+    expect(screen.getByRole('button', { name: introCopy.en.guest })).toBeDisabled();
     expect(screen.queryByText('Create My Story')).toBeNull();
   });
 });

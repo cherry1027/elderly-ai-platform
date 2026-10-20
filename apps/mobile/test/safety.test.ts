@@ -25,14 +25,27 @@ describe('development-only mobile application boundaries', () => {
   });
 
   it('does not read environment credentials or browser state', () => {
-    expect(source).not.toMatch(/process\.env|import\.meta|localStorage|sessionStorage|\bwindow\b|\bdocument\b/);
+    // The only runtime environment lookup is the test-only registration seam.
+    // It cannot enable native registration or read any credential setting.
+    expect(source.replaceAll('process.env.NODE_ENV', "'runtime-mode'"))
+      .not.toMatch(/process\.env|import\.meta|localStorage|sessionStorage|\bwindow\b|\bdocument\b/);
   });
 
   it('keeps transports outside presentation and never adds story, AI or microphone operations', () => {
     expect(presentationSource).not.toMatch(/https?:\/\/|\bfetch\s*\(|XMLHttpRequest|WebSocket|getUserMedia|supabase|fastapi|expo-audio|expo-av/i);
-    expect(source).not.toMatch(/getUserMedia|fastapi|expo-audio|expo-av|signUp\s*\(|resetPasswordForEmail/i);
+    expect(source).not.toMatch(/getUserMedia|fastapi|expo-audio|expo-av|resetPasswordForEmail/i);
+    expect(fs.readFileSync(path.join(appRoot, 'src/auth/client.ts'), 'utf8')).not.toMatch(/signUp\s*\(/);
     expect(authSource).not.toMatch(/\b(?:client|supabase)\.(?:from|storage|functions|channel|rpc)\b/);
     expect(authSource).not.toContain('@react-native-async-storage/async-storage');
+  });
+
+  it('keeps live registration closed independently of development login configuration', () => {
+    const registration = fs.readFileSync(path.join(appRoot, 'src/auth/registration.ts'), 'utf8');
+    const provider = fs.readFileSync(path.join(appRoot, 'src/auth/RegistrationProvider.tsx'), 'utf8');
+    expect(registration).toContain("process.env.NODE_ENV === 'test'");
+    expect(provider).toContain('createRegistration()');
+    expect(provider).toContain('enabled: false');
+    expect(provider).not.toMatch(/readMobileAuthConfig|testHarness|EXPO_PUBLIC/);
   });
 
   it('does not import files outside the mobile source tree', () => {

@@ -8,8 +8,8 @@ import { useLoginNavigation } from '../navigation/LoginNavigation';
 export default function EntryRoute() {
   const { language, ready, completed } = useLanguage();
   const auth = useAuth();
-  const { cancelLogin, welcomeAvailable } = useLoginNavigation();
-  useFocusEffect(useCallback(() => { cancelLogin(); }, [cancelLogin]));
+  const { cancelLogin, cancelRegistration, welcomeAvailable } = useLoginNavigation();
+  useFocusEffect(useCallback(() => { cancelLogin(); cancelRegistration(); }, [cancelLogin, cancelRegistration]));
   if (!ready || !auth.appActive || auth.status === 'checking' || auth.status === 'busy') return <PreferenceLoading language={language} />;
   if (auth.status === 'signed-in' && auth.user) return <Redirect href="/authenticated" />;
   return <Redirect href={completed || welcomeAvailable ? '/welcome' : '/language'} />;

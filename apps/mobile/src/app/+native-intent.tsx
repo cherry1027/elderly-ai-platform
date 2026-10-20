@@ -1,7 +1,8 @@
 import type { NativeIntent } from 'expo-router';
+import { receiveConfirmationLink } from '../auth/confirmation-link';
 
-// This task has no external auth callbacks or content deep links. Both cold
-// launches and new native links enter through the verified session/preferences
-// decision at "/". In-app navigation (including Replay) does not use this hook.
-// Future recovery/registration callbacks need an explicit policy before reuse.
-export const redirectSystemPath: NonNullable<NativeIntent['redirectSystemPath']> = () => '/';
+// The provisional confirmation route receives only a bounded in-memory code,
+// never credentials in router params. Its service remains gated off for live use.
+// Every other external link still uses the verified entrance decision.
+export const redirectSystemPath: NonNullable<NativeIntent['redirectSystemPath']> = ({ path }) =>
+  receiveConfirmationLink(path) ? '/auth/confirm' : '/';

@@ -4,7 +4,7 @@ import type { AuthUser } from '../auth/client';
 import { readMobileApiConfig } from '../api/config';
 import {
   getStoryProject, updateStoryProject, validateStoryProjectId, validateUpdateStoryInput,
-  StoryProjectsError, type UpdateStoryProjectInput,
+  StoryProjectsError, type StoryProject, type UpdateStoryProjectInput,
 } from '../api/story-projects';
 import type { Language } from '../i18n';
 import { StoryDetailsScreen, type StoryDetailsState } from '../screens/StoryDetailsScreen';
@@ -17,6 +17,7 @@ interface Props {
   getAccessToken: (expectedUserId: string) => Promise<string | null>;
   onBack: () => void;
   onSignOut: () => void;
+  onConversation?: (project: StoryProject) => void;
 }
 type Frame = {
   owner: string; projectId: string | null; revision: number;
@@ -24,7 +25,7 @@ type Frame = {
 };
 type Phase = 'loading' | 'details' | 'details-error' | 'editing' | 'saving' | 'edit-blocked' | 'left';
 
-export function StoryDetails({ language, user, projectId: rawId, getAccessToken, onBack, onSignOut }: Props) {
+export function StoryDetails({ language, user, projectId: rawId, getAccessToken, onBack, onSignOut, onConversation }: Props) {
   const projectId = useMemo(() => { try { return validateStoryProjectId(rawId); } catch { return null; } }, [rawId]);
   const [config] = useState(readMobileApiConfig);
   const [revision, setRevision] = useState(0);
@@ -145,9 +146,16 @@ export function StoryDetails({ language, user, projectId: rawId, getAccessToken,
     }).finally(() => { if (current()) request.current = null; });
   }
 
+  function beginConversation() {
+    if (!onConversation || !alive.current || phase.current !== 'details' || !matching || details.status !== 'ready' ||
+        selection.current.owner !== user.id || selection.current.projectId !== projectId) return;
+    leave(() => onConversation(details.project));
+  }
+
   if (editing && details.status === 'ready') return <EditStoryScreen key={`${user.id}:${projectId}`} language={language}
     project={details.project} state={frame.edit} onSubmit={save} onBack={reload} onSignOut={() => leave(onSignOut)} />;
   return <StoryDetailsScreen language={language} state={details} onEdit={beginEdit}
+    onConversation={onConversation ? beginConversation : undefined}
     onRefresh={() => { if (phase.current === 'details' || phase.current === 'details-error') reload(); }}
     onBack={() => leave(onBack)} onSignOut={() => leave(onSignOut)} />;
 }

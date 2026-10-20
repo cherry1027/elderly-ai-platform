@@ -162,16 +162,19 @@ export interface ListStoryProjectsOptions {
 interface StoryRequest {
   method: 'GET' | 'POST' | 'PATCH';
   projectId?: string;
-  input?: CreateStoryProjectInput | UpdateStoryProjectInput;
+  input?: CreateStoryProjectInput | UpdateStoryProjectInput | Record<string, never>;
+  child?: 'continue' | 'sessions';
+  expectedStatus?: 200;
 }
 
-/** One transport for list/create/details/update, without SDK or native storage. */
+/** One transport for project and session actions, without SDK or native storage. */
 async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
   request = globalThis.fetch, timeoutMs = 10_000 }: ListStoryProjectsOptions,
   endpoint: StoryRequest, decode: (value: unknown) => T): Promise<T> {
   const writing = endpoint.method !== 'GET';
   const resource = `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-projects`;
-  const url = endpoint.projectId ? `${resource}/${endpoint.projectId}`
+  const url = endpoint.projectId ? `${resource}/${endpoint.projectId}${endpoint.child
+    ? `/${endpoint.child}${endpoint.child === 'sessions' ? '?limit=50&offset=0' : ''}` : ''}`
     : writing ? resource : storyProjectsUrl(baseUrl);
   if (typeof getAccessToken !== 'function' || typeof request !== 'function' ||
     !Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) throw new StoryProjectsError('configuration');
@@ -221,7 +224,7 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
       if (response.status >= 400) throw failure('unavailable', response.status, response.status >= 500);
       throw failure('invalid-response', undefined, true);
     }
-    if (response.status !== (endpoint.method === 'POST' ? 201 : 200) || response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json') {
+    if (response.status !== (endpoint.expectedStatus ?? (endpoint.method === 'POST' ? 201 : 200)) || response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json') {
       throw failure('invalid-response', undefined, true);
     }
     let text: string;
@@ -302,5 +305,104 @@ export async function updateStoryProject({ projectId, input, expectedLanguage, .
       throw new StoryProjectsError('invalid-response');
     }
     return updated;
+  });
+}
+
+export interface ConversationSession {
+  id: string;
+  project_id: string;
+  language: 'en' | 'sv';
+  status: 'active' | 'completed';
+  created_at: string;
+  updated_at: string;
+  ended_at: string | null;
+}
+
+/** Selected saved-draft metadata only; this feature never exposes draft prose or source memories. */
+export interface ContinuedDraftMetadata {
+  draft_id: string;
+  project_id: string;
+  language: 'en' | 'sv';
+  status: 'ready_for_review' | 'edited';
+  version: number;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StoryContinuation {
+  project_id: string;
+  language: 'en' | 'sv';
+  session: ConversationSession;
+  session_created: boolean;
+  latest_draft: ContinuedDraftMetadata | null;
+  generation_triggered: false;
+}
+
+export interface StorySessionOptions extends GetStoryProjectOptions { expectedLanguage: 'en' | 'sv' }
+
+function responseUuid(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+function conversationSession(value: unknown, projectId: string, language: 'en' | 'sv'): ConversationSession {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new StoryProjectsError('invalid-response');
+  const row = value as Record<string, unknown>;
+  if (!responseUuid(row.id) || !responseUuid(row.project_id) || row.project_id.toLowerCase() !== projectId ||
+    row.language !== language || (row.status !== 'active' && row.status !== 'completed') ||
+    !validDate(row.created_at) || !validDate(row.updated_at) || !(row.ended_at === null || validDate(row.ended_at)) ||
+    (row.status === 'active' && row.ended_at !== null)) {
+    throw new StoryProjectsError('invalid-response');
+  }
+  return { id: row.id.toLowerCase(), project_id: projectId, language, status: row.status,
+    created_at: row.created_at, updated_at: row.updated_at, ended_at: row.ended_at };
+}
+
+function continuedDraftMetadata(value: unknown, projectId: string, language: 'en' | 'sv'): ContinuedDraftMetadata | null {
+  if (value === null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new StoryProjectsError('invalid-response');
+  const row = value as Record<string, unknown>;
+  if (!responseUuid(row.draft_id) || !responseUuid(row.project_id) || row.project_id.toLowerCase() !== projectId ||
+    row.language !== language || (row.status !== 'ready_for_review' && row.status !== 'edited') ||
+    row.style !== 'warm' || row.mode !== 'mock' ||
+    !Number.isSafeInteger(row.version) || (row.version as number) < 1 ||
+    !Number.isSafeInteger(row.revision) || (row.revision as number) < 1 ||
+    !validDate(row.created_at) || !validDate(row.updated_at)) throw new StoryProjectsError('invalid-response');
+  // The full backend draft contains prose, source memories and a verification report.
+  // They are deliberately neither retained nor interpreted by this session landing feature.
+  return { draft_id: row.draft_id.toLowerCase(), project_id: projectId, language, status: row.status,
+    version: row.version as number, revision: row.revision as number,
+    created_at: row.created_at, updated_at: row.updated_at };
+}
+
+function sessionRequestIdentity(projectId: unknown, expectedLanguage: unknown): { id: string; language: 'en' | 'sv' } {
+  const id = validateStoryProjectId(projectId);
+  if (expectedLanguage !== 'en' && expectedLanguage !== 'sv') throw new StoryProjectsError('validation');
+  return { id, language: expectedLanguage };
+}
+
+/** Atomic backend start/resume; no direct session-creation POST and no automatic retries. */
+export async function continueStoryProject({ projectId, expectedLanguage, ...options }: StorySessionOptions): Promise<StoryContinuation> {
+  const { id, language } = sessionRequestIdentity(projectId, expectedLanguage);
+  return executeStoryRequest(options, { method: 'POST', projectId: id, child: 'continue', input: {}, expectedStatus: 200 }, data => {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new StoryProjectsError('invalid-response');
+    const row = data as Record<string, unknown>;
+    if (!responseUuid(row.project_id) || row.project_id.toLowerCase() !== id || row.language !== language ||
+      typeof row.session_created !== 'boolean' || row.generation_triggered !== false) throw new StoryProjectsError('invalid-response');
+    const session = conversationSession(row.session, id, language);
+    if (session.status !== 'active') throw new StoryProjectsError('invalid-response');
+    return { project_id: id, language, session, session_created: row.session_created,
+      latest_draft: continuedDraftMetadata(row.latest_draft, id, language), generation_triggered: false };
+  });
+}
+
+/** Read-only reconciliation after an uncertain continuation; backend order is newest first. */
+export async function listStorySessions({ projectId, expectedLanguage, ...options }: StorySessionOptions): Promise<ConversationSession[]> {
+  const { id, language } = sessionRequestIdentity(projectId, expectedLanguage);
+  return executeStoryRequest(options, { method: 'GET', projectId: id, child: 'sessions' }, data => {
+    if (!Array.isArray(data) || data.length > 50) throw new StoryProjectsError('invalid-response');
+    const rows = data.map(value => conversationSession(value, id, language));
+    if (new Set(rows.map(row => row.id)).size !== rows.length) throw new StoryProjectsError('invalid-response');
+    return rows;
   });
 }

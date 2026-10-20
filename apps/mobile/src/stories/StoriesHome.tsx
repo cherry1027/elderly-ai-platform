@@ -2,11 +2,12 @@ import { useCallback, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 import type { AuthUser } from '../auth/client';
 import { PreferenceLoading } from '../components/PreferenceLoading';
-import { validateStoryProjectId } from '../api/story-projects';
+import { validateStoryProjectId, type StoryProject } from '../api/story-projects';
 import type { Language } from '../i18n';
 import { CreateStory } from './CreateStory';
 import { StoryDashboard } from './StoryDashboard';
 import { StoryDetails } from './StoryDetails';
+import { Conversation } from './Conversation';
 
 interface Props {
   language: Language;
@@ -15,7 +16,8 @@ interface Props {
   onSignOut: () => void;
 }
 
-type View = { kind: 'list' | 'create' | 'inactive' } | { kind: 'details'; projectId: string };
+type View = { kind: 'list' | 'create' | 'inactive' } | { kind: 'details'; projectId: string }
+  | { kind: 'conversation'; project: StoryProject };
 
 /** Native views stay inside the existing verified authenticated route. */
 export function StoriesHome(props: Props) {
@@ -34,7 +36,10 @@ export function StoriesHome(props: Props) {
   }, []);
   if (view.kind === 'inactive') return <PreferenceLoading language={props.language} />;
   if (view.kind === 'create') return <CreateStory {...props} onBack={showList} />;
-  if (view.kind === 'details') return <StoryDetails key={view.projectId} {...props} projectId={view.projectId} onBack={showList} />;
+  if (view.kind === 'conversation') return <Conversation key={view.project.id} {...props} project={view.project}
+    onBack={() => showDetails(view.project.id)} />;
+  if (view.kind === 'details') return <StoryDetails key={view.projectId} {...props} projectId={view.projectId} onBack={showList}
+    onConversation={project => setView({ kind: 'conversation', project })} />;
   // Always ask the server for the list after leaving Create. Never insert the
   // POST response optimistically or fabricate a saved dashboard row.
   return <StoryDashboard {...props} onCreateStory={showCreate} onOpenStory={showDetails} />;

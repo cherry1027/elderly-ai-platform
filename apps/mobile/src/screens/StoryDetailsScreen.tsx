@@ -20,9 +20,10 @@ interface Props {
   onRefresh: () => void;
   onBack: () => void;
   onSignOut: () => void;
+  onConversation?: () => void;
 }
 
-export function StoryDetailsScreen({ language, state, onEdit, onRefresh, onBack, onSignOut }: Props) {
+export function StoryDetailsScreen({ language, state, onEdit, onRefresh, onBack, onSignOut, onConversation }: Props) {
   const text = storyDetailsCopy[language];
   const message = state.status === 'error' ? text.errors[state.error]
     : state.status === 'ready' && state.saved ? text.saved : null;
@@ -54,6 +55,7 @@ export function StoryDetailsScreen({ language, state, onEdit, onRefresh, onBack,
         <Text accessibilityLanguage={state.project.description ? accessibilityLanguages[state.project.language] : locale}
           allowFontScaling selectable style={styles.body}>{state.project.description || text.noDescription}</Text>
         <LargeButton label={text.edit} language={language} onPress={onEdit} />
+        {onConversation && <LargeButton label={text.conversation} language={language} onPress={onConversation} />}
       </>}
       {state.status !== 'loading' && !(state.status === 'error' && state.error === 'authentication') &&
         <LargeButton label={text.refresh} language={language} variant="secondary" onPress={onRefresh} />}

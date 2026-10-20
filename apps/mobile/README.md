@@ -1,4 +1,17 @@
-# Memy Mobile Task 3D-1 — Development FastAPI project list
+# Memy Mobile Task 3D-3 — Start / Continue Conversation
+
+Real story details now open a minimal authenticated conversation-session landing.
+The app reconciles saved sessions and uses the backend's atomic `/continue`
+workflow, without direct session creation, automatic write retries, voice or AI
+conversation content. Existing introduction, login, registration, project list,
+creation and editing are preserved. Sample Stories remains separate.
+
+See [CONVERSATION_CONTINUE.md](CONVERSATION_CONTINUE.md) for exact contracts,
+duplicate/uncertainty handling, missing ignored configuration, Windows startup
+and EN/SV iPhone acceptance. New start/resume device verification is pending.
+Earlier setup/results below describe their historical feature scopes.
+
+## Preserved Task 3D-1 — Development FastAPI project list
 
 The existing verified-session dashboard and shared API client match the Day 7
 project-list contract. No additional client, screen, dependency or production URL

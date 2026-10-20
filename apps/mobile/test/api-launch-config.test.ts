@@ -7,7 +7,7 @@ const { readApiConfig, normalizeApiBaseUrl } = load('../scripts/api-config.cjs')
   readApiConfig: (root: string, mode: string, read?: jest.Mock) => unknown;
   normalizeApiBaseUrl: (value: unknown) => string | null;
 };
-const valid = ['http://192.168.20.30:8000', 'https://10.23.45.67', 'http://172.16.0.1/api/v1/', 'http://172.31.255.255:65535/', 'http://10.0.0.1:80'];
+const valid = ['http://172.20.10.3:8000', 'http://192.168.20.30:8000', 'https://10.23.45.67', 'http://172.16.0.1/api/v1/', 'http://172.31.255.255:65535/', 'http://10.0.0.1:80'];
 const invalid = ['', ' http://10.0.0.1', 'http://10.0.0.1 ', 'http://localhost:8000', 'http://127.0.0.1:8000',
   'http://0.0.0.0', 'http://[::1]', 'http://169.254.169.254', 'http://8.8.8.8', 'https://example.test',
   'https://edbkuunyeyxnyenmmqud.supabase.co', 'http://172.15.1.1', 'http://172.32.1.1', 'http://192.169.1.1',
@@ -31,7 +31,7 @@ describe('mobile-local API configuration at launcher and runtime boundaries', ()
     expect(read).not.toHaveBeenCalled();
   });
   it('opens only the explicit ignored API settings file, normalizing the optional prefix', () => {
-    const read = jest.fn().mockReturnValue(JSON.stringify({ baseUrl: valid[2] }));
+    const read = jest.fn().mockReturnValue(JSON.stringify({ baseUrl: 'http://172.16.0.1/api/v1/' }));
     expect(readApiConfig('/mobile', 'development', read)).toEqual({ enabled: true, baseUrl: 'http://172.16.0.1' });
     expect(read).toHaveBeenCalledWith(path.join('/mobile', 'development.api.local.json'), 'utf8');
     expect(read).toHaveBeenCalledTimes(1);

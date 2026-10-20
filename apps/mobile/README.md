@@ -1,4 +1,17 @@
-# Memy Mobile Task 3C — Story Details and editing
+# Memy Mobile Task 3D-1 — Development FastAPI project list
+
+The existing verified-session dashboard and shared API client match the Day 7
+project-list contract. No additional client, screen, dependency or production URL
+is needed. See [FASTAPI_PROJECT_LIST.md](FASTAPI_PROJECT_LIST.md) for the approved
+hotspot setup, missing local settings, exact iPhone acceptance steps and limits.
+Use this handoff instead of the historical backend setup below.
+
+Both ignored local configuration files must be supplied privately in this
+worktree before live login/listing. They are not copied from other worktrees.
+Automated verification uses mocked transport; actual iPhone/FastAPI acceptance
+remains pending. Normal startup and Sample Stories stay separate.
+
+## Preserved Task 3C — Story Details and editing
 
 Task 3C adds accessible title feedback, Open Story and title/description editing.
 See [STORY_DETAILS.md](STORY_DETAILS.md) for the isolated, account-free iPhone

@@ -25,6 +25,11 @@ class StrictResponse(BaseModel):
 class StoryProjectCreate(StrictRequest):
     """Fields accepted when a user creates a story project."""
 
+    model_config = ConfigDict(json_schema_extra={"examples": [
+        {"title": "Min barndom i Malmö", "language": "sv"},
+        {"title": "My Childhood", "language": "en", "description": "Fictional development story"},
+    ]})
+
     title: str = Field(min_length=1, max_length=120)
     language: LanguageCode
     description: str | None = Field(default=None, max_length=4000)
@@ -37,6 +42,10 @@ class StoryProjectCreate(StrictRequest):
 
 class StoryProjectPatch(StrictRequest):
     """Mutable Day 2 metadata; project language is intentionally fixed."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [
+        {"title": "My Early Years"}, {"description": "A fictional development story"},
+    ]})
 
     title: str | None = Field(default=None, min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=4000)
@@ -57,6 +66,8 @@ class StoryProjectPatch(StrictRequest):
 
 class SessionCreate(StrictRequest):
     """Sessions inherit language from their project and accept no fields."""
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{}]})
 
 
 class StoryProjectResponse(StrictResponse):

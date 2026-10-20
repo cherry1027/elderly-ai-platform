@@ -4,12 +4,16 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.story_projects import LanguageCode, StrictRequest, StrictResponse
 
 
 class StoryGenerationRequest(StrictRequest):
+    model_config = ConfigDict(json_schema_extra={"examples": [
+        {"language": "sv", "style": "warm", "confirm_generation": True},
+    ]})
+
     language: LanguageCode
     style: Literal["warm"] = "warm"
     confirm_generation: Literal[True]
@@ -23,6 +27,10 @@ class StoryGenerationRequest(StrictRequest):
 
 
 class StoryDraftPatch(StrictRequest):
+    model_config = ConfigDict(json_schema_extra={"examples": [
+        {"content": "Jag växte upp i Malmö. Detta är min egen formulering.", "expected_revision": 1},
+    ]})
+
     content: str = Field(min_length=1, max_length=20_000)
     expected_revision: int = Field(ge=1)
 

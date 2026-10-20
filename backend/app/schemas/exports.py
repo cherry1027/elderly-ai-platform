@@ -6,7 +6,7 @@ import re
 from typing import Literal
 from uuid import UUID
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.story_drafts import StoryDraftResponse
 from app.schemas.story_projects import (
@@ -17,13 +17,17 @@ SAFE_PDF_FILENAME = r"memy-[a-z0-9]+(?:-[a-z0-9]+)*\.pdf"
 
 
 class StoryExportRequest(StrictRequest):
+    model_config = ConfigDict(json_schema_extra={"examples": [
+        {"format": "pdf", "include_title_page": True, "include_page_numbers": True},
+    ]})
+
     format: Literal["pdf"] = "pdf"
     include_title_page: bool = True
     include_page_numbers: bool = True
 
 
 class ContinueStoryRequest(StrictRequest):
-    pass
+    model_config = ConfigDict(json_schema_extra={"examples": [{}]})
 
 
 class StoryExportMetadata(StrictResponse):

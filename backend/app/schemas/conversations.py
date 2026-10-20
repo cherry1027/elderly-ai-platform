@@ -4,12 +4,17 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.story_projects import LanguageCode, StrictRequest, StrictResponse
 
 
 class MessageCreate(StrictRequest):
+    model_config = ConfigDict(json_schema_extra={"examples": [
+        {"text": "Jag flyttade till Malmö 1975.", "language": "sv"},
+        {"source_message_id": "11111111-1111-4111-8111-111111111111", "language": "en"},
+    ]})
+
     text: str | None = Field(default=None, min_length=1, max_length=4000)
     source_message_id: UUID | None = None
     language: LanguageCode
@@ -90,6 +95,12 @@ class ConversationTurnResponse(StrictResponse):
 
 
 class MemoryPatch(StrictRequest):
+    model_config = ConfigDict(json_schema_extra={"examples": [
+        {"status": "confirmed", "expected_version": 1},
+        {"status": "rejected", "expected_version": 1},
+        {"status": "confirmed", "corrected_value": "1976", "expected_version": 1},
+    ]})
+
     status: Literal["confirmed", "rejected"]
     corrected_value: str | None = Field(default=None, min_length=1, max_length=1000)
     expected_version: int = Field(ge=1)

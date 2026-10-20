@@ -14,6 +14,7 @@ from app.api.conversations import router as conversations_router
 from app.api.story_drafts import router as story_drafts_router
 from app.api.exports import router as exports_router
 from app.core.config import Settings
+from app.core.api_safety import APISafetyMiddleware
 from app.core.errors import APIError, api_error_handler, validation_error_handler
 from app.services.transcription import DisabledTranscriptionProvider, TranscriptionProvider
 from app.services.conversation_provider import (
@@ -52,7 +53,7 @@ def create_app(
                     await asyncio.gather(*tuple(application.state.pdf_tasks), return_exceptions=True)
 
     application = FastAPI(
-        title="Memy AI Backend", version="0.6.0", lifespan=lifespan
+        title="Memy AI Backend", version="0.7.0", lifespan=lifespan
     )
     application.state.settings = config
     application.state.transcription_provider = transcription_provider or DisabledTranscriptionProvider()
@@ -74,6 +75,7 @@ def create_app(
                 response.headers["Cache-Control"] = "no-store"
         return response
 
+    application.add_middleware(APISafetyMiddleware)
     application.add_middleware(
         CORSMiddleware,
         allow_origins=config.cors_origins,

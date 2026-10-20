@@ -9,7 +9,7 @@ export interface StoryProject {
 }
 
 export type StoryProjectsErrorKind = 'configuration' | 'authentication' | 'forbidden' | 'not-found' |
-  'validation' | 'unavailable' | 'network' | 'timeout' | 'invalid-response' | 'cancelled';
+  'validation' | 'conflict' | 'unavailable' | 'network' | 'timeout' | 'invalid-response' | 'cancelled';
 
 const messages: Record<StoryProjectsErrorKind, string> = {
   configuration: 'The development project service is not configured.',
@@ -17,6 +17,7 @@ const messages: Record<StoryProjectsErrorKind, string> = {
   forbidden: 'Access to these projects is not permitted.',
   'not-found': 'The project service could not be found.',
   validation: 'The project request could not be accepted.',
+  conflict: 'The project request conflicts with existing data.',
   unavailable: 'The development project service is unavailable. Please try again later.',
   network: 'The development project service could not be reached.',
   timeout: 'The project request took too long. Please try again.',
@@ -25,9 +26,42 @@ const messages: Record<StoryProjectsErrorKind, string> = {
 };
 
 export class StoryProjectsError extends Error {
-  constructor(readonly kind: StoryProjectsErrorKind, readonly status?: number) {
+  constructor(readonly kind: StoryProjectsErrorKind, readonly status?: number, readonly mayHaveCreated = false) {
     super(messages[kind]);
     this.name = 'StoryProjectsError';
+  }
+}
+
+export interface CreateStoryProjectInput { title: string; language: 'en' | 'sv' }
+
+export class CreateStoryInputError extends Error {
+  constructor(readonly kind: 'required' | 'too-long' | 'language') {
+    super(kind === 'required' ? 'Enter a story title.' : kind === 'too-long'
+      ? 'Use a title with no more than 120 characters.' : 'Choose English or Swedish.');
+    this.name = 'CreateStoryInputError';
+  }
+}
+
+/** Trim boundary whitespace; preserve internal text and count Unicode code points. */
+export function validateCreateStoryInput(value: unknown): CreateStoryProjectInput {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value) ||
+      Object.keys(value).sort().join(',') !== 'language,title') throw new CreateStoryInputError('required');
+    const { title: rawTitle, language } = value as Record<string, unknown>;
+    if (typeof rawTitle !== 'string') throw new CreateStoryInputError('required');
+    // Include Python str.strip() whitespace omitted by JavaScript trim().
+    const title = rawTitle.replace(/^[\s\u0085\u001c-\u001f]+|[\s\u0085\u001c-\u001f]+$/gu, '');
+    // Probe only: never strip internal joiners, accents or emoji from the payload.
+    // Format/control/mark-only text and blank fillers do not provide a title.
+    if (!/[^\p{White_Space}\p{Default_Ignorable_Code_Point}\p{Cc}\p{Cf}\p{M}\u2800]/u.test(title)) {
+      throw new CreateStoryInputError('required');
+    }
+    if (title.length > 240 || [...title].length > 120) throw new CreateStoryInputError('too-long');
+    if (language !== 'en' && language !== 'sv') throw new CreateStoryInputError('language');
+    return { title, language };
+  } catch (error) {
+    if (error instanceof CreateStoryInputError) throw error;
+    throw new CreateStoryInputError('required');
   }
 }
 
@@ -82,13 +116,18 @@ export interface ListStoryProjectsOptions {
   timeoutMs?: number;
 }
 
-/** No React, native storage, Supabase SDK or environment access. All failures are sanitized. */
-export async function listStoryProjects({ baseUrl, getAccessToken, signal,
-  request = globalThis.fetch, timeoutMs = 10_000 }: ListStoryProjectsOptions): Promise<StoryProject[]> {
-  const url = storyProjectsUrl(baseUrl);
+/** One transport for list/create: no React, native storage, SDK or environment access. */
+async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
+  request = globalThis.fetch, timeoutMs = 10_000 }: ListStoryProjectsOptions,
+  input: CreateStoryProjectInput | null, decode: (value: unknown) => T): Promise<T> {
+  const creating = input !== null;
+  const url = creating ? `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-projects` : storyProjectsUrl(baseUrl);
   if (typeof getAccessToken !== 'function' || typeof request !== 'function' ||
     !Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) throw new StoryProjectsError('configuration');
   const controller = new AbortController();
+  let dispatched = false;
+  const failure = (kind: StoryProjectsErrorKind, status?: number, ambiguous = false) =>
+    new StoryProjectsError(kind, status, creating && dispatched && ambiguous);
   let interruption: 'cancelled' | 'timeout' | null = null;
   let finished = false;
   let rejectInterrupted: (error: StoryProjectsError) => void = () => {};
@@ -97,9 +136,9 @@ export async function listStoryProjects({ baseUrl, getAccessToken, signal,
     if (finished || interruption) return;
     interruption = reason;
     controller.abort();
-    rejectInterrupted(new StoryProjectsError(reason));
+    rejectInterrupted(failure(reason, undefined, true));
   };
-  const check = () => { if (interruption) throw new StoryProjectsError(interruption); };
+  const check = () => { if (interruption) throw failure(interruption, undefined, true); };
   const abort = () => stop('cancelled');
   signal?.addEventListener('abort', abort, { once: true });
   if (signal?.aborted) abort();
@@ -113,41 +152,72 @@ export async function listStoryProjects({ baseUrl, getAccessToken, signal,
       !/^[A-Za-z0-9._~-]+$/.test(token) || /^sb_(?:publishable|secret)_/.test(token)) throw new StoryProjectsError('authentication');
     let response: Response;
     try {
+      dispatched = true;
       response = await request(url, {
-        method: 'GET', headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+        method: creating ? 'POST' : 'GET',
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(creating ? { 'Content-Type': 'application/json' } : {}) },
+        ...(creating ? { body: JSON.stringify(input) } : {}),
         credentials: 'omit', cache: 'no-store', redirect: 'error', signal: controller.signal,
       });
-    } catch { check(); throw new StoryProjectsError('network'); }
+    } catch { check(); throw failure('network', undefined, true); }
     check();
     if (response.status === 401) throw new StoryProjectsError('authentication', 401);
     if (response.status === 403) throw new StoryProjectsError('forbidden', 403);
     if (response.status === 404) throw new StoryProjectsError('not-found', 404);
+    if (response.status === 409) throw new StoryProjectsError('conflict', 409);
     if (response.status === 400 || response.status === 422) throw new StoryProjectsError('validation', response.status);
-    if (!response.ok) throw new StoryProjectsError('unavailable', response.status);
-    if (response.status !== 200 || response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json') {
-      throw new StoryProjectsError('invalid-response');
+    if (!response.ok) {
+      if (response.status >= 400) throw failure('unavailable', response.status, response.status >= 500);
+      throw failure('invalid-response', undefined, true);
+    }
+    if (response.status !== (creating ? 201 : 200) || response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json') {
+      throw failure('invalid-response', undefined, true);
     }
     let text: string;
-    try { text = await response.text(); } catch { check(); throw new StoryProjectsError('network'); }
+    try { text = await response.text(); } catch { check(); throw failure('network', undefined, true); }
     check();
-    if (text.length > 1_048_576) throw new StoryProjectsError('invalid-response');
+    if (text.length > 1_048_576) throw failure('invalid-response', undefined, true);
     let data: unknown;
-    try { data = JSON.parse(text); } catch { throw new StoryProjectsError('invalid-response'); }
-    if (!Array.isArray(data) || data.length > 50) throw new StoryProjectsError('invalid-response');
-    const rows = data.map(project);
-    if (new Set(rows.map(row => row.id.toLowerCase())).size !== rows.length) throw new StoryProjectsError('invalid-response');
+    try { data = JSON.parse(text); } catch { throw failure('invalid-response', undefined, true); }
+    const result = decode(data);
     check();
-    return rows;
+    return result;
   })();
   try {
     return await Promise.race([operation, interrupted]);
   } catch (error) {
-    if (error instanceof StoryProjectsError) throw error;
-    throw new StoryProjectsError('invalid-response');
+    if (error instanceof StoryProjectsError) {
+      if (creating && dispatched && error.kind === 'invalid-response') throw failure(error.kind, error.status, true);
+      throw error;
+    }
+    throw failure('invalid-response', undefined, true);
   } finally {
     finished = true;
     clearTimeout(timer);
     signal?.removeEventListener('abort', abort);
     controller.abort();
   }
+}
+
+export function listStoryProjects(options: ListStoryProjectsOptions): Promise<StoryProject[]> {
+  return executeStoryRequest(options, null, data => {
+    if (!Array.isArray(data) || data.length > 50) throw new StoryProjectsError('invalid-response');
+    const rows = data.map(project);
+    if (new Set(rows.map(row => row.id.toLowerCase())).size !== rows.length) throw new StoryProjectsError('invalid-response');
+    return rows;
+  });
+}
+
+export interface CreateStoryProjectOptions extends ListStoryProjectsOptions { input: CreateStoryProjectInput }
+
+/** No retries: an interrupted/malformed write can have succeeded on the server. */
+export async function createStoryProject({ input, ...options }: CreateStoryProjectOptions): Promise<StoryProject> {
+  const validated = validateCreateStoryInput(input);
+  return executeStoryRequest(options, validated, data => {
+    const created = project(data);
+    if (created.title !== validated.title || created.language !== validated.language || created.status !== 'draft') {
+      throw new StoryProjectsError('invalid-response');
+    }
+    return created;
+  });
 }

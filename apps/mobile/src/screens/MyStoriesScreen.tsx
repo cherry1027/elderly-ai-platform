@@ -19,14 +19,17 @@ interface MyStoriesScreenProps {
   user: AuthUser;
   state: MyStoriesState;
   onRefresh: () => void;
+  onCreateStory: () => void;
   onSignOut: () => void;
 }
 
-export function MyStoriesScreen({ language, user, state, onRefresh, onSignOut }: MyStoriesScreenProps) {
+export function MyStoriesScreen({ language, user, state, onRefresh, onCreateStory, onSignOut }: MyStoriesScreenProps) {
   const text = storiesCopy[language];
   const [refreshFocused, setRefreshFocused] = useState(false);
+  const [createFocused, setCreateFocused] = useState(false);
   const loading = state.status === 'loading';
-  const refreshDisabled = loading || (state.status === 'error' && state.error === 'authentication');
+  const authenticationFailed = state.status === 'error' && state.error === 'authentication';
+  const refreshDisabled = loading || authenticationFailed;
   const projects = state.status === 'ready' ? state.projects.slice(0, 50) : [];
 
   return <Screen>
@@ -39,6 +42,15 @@ export function MyStoriesScreen({ language, user, state, onRefresh, onSignOut }:
       <Text allowFontScaling selectable style={styles.identity}>{user.email}</Text>
     </View>
     <View style={styles.controls}>
+      <Pressable accessibilityRole="button" accessibilityLabel={text.createStory}
+        accessibilityLanguage={accessibilityLanguages[language]}
+        accessibilityState={{ disabled: authenticationFailed }} disabled={authenticationFailed}
+        onPress={() => { if (!authenticationFailed) onCreateStory(); }}
+        onFocus={() => setCreateFocused(true)} onBlur={() => setCreateFocused(false)}
+        style={({ pressed }) => [styles.refresh, styles.create, pressed && !authenticationFailed && styles.createPressed,
+          createFocused && styles.focused, authenticationFailed && styles.disabled]}>
+        <Text allowFontScaling style={[styles.refreshLabel, styles.createLabel]}>{text.createStory}</Text>
+      </Pressable>
       <Pressable accessibilityRole="button" accessibilityLabel={loading ? text.refreshing : text.refresh}
         accessibilityLanguage={accessibilityLanguages[language]}
         accessibilityState={{ disabled: refreshDisabled, busy: loading }} disabled={refreshDisabled}
@@ -92,6 +104,8 @@ const styles = StyleSheet.create({
     borderWidth: 2, borderColor: colors.forest, borderRadius: layout.controlRadius,
     backgroundColor: colors.paper, alignItems: 'center', justifyContent: 'center' },
   refreshLabel: { color: colors.forest, fontSize: 22, lineHeight: 32, fontWeight: '600', textAlign: 'center', flexShrink: 1 },
+  create: { backgroundColor: colors.forest }, createLabel: { color: colors.paper },
+  createPressed: { backgroundColor: colors.forestPressed, borderColor: colors.forestPressed },
   pressed: { backgroundColor: colors.selected }, focused: { borderColor: colors.ink }, disabled: { opacity: 0.65 },
   card: { width: '100%', gap: 12, padding: 20, borderWidth: 1, borderColor: colors.border,
     borderRadius: layout.controlRadius, backgroundColor: colors.paper },

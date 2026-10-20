@@ -13,7 +13,7 @@ function project(id = 'synthetic-project-a', title = 'A childhood memory', langu
     created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' };
 }
 function setup(state: MyStoriesState, language: Language = 'en') {
-  const callbacks = { onRefresh: jest.fn(), onSignOut: jest.fn() };
+  const callbacks = { onRefresh: jest.fn(), onCreateStory: jest.fn(), onSignOut: jest.fn() };
   const view = render(<MyStoriesScreen {...callbacks} language={language} user={user} state={state} />);
   return { ...callbacks, view };
 }
@@ -64,7 +64,7 @@ describe('native read-only My Stories presentation', () => {
   });
 
   it('offers working refresh after a network error and prevents refresh of an invalid session', () => {
-    const callbacks = { onRefresh: jest.fn(), onSignOut: jest.fn() };
+    const callbacks = { onRefresh: jest.fn(), onCreateStory: jest.fn(), onSignOut: jest.fn() };
     const view = render(<MyStoriesScreen {...callbacks} language="en" user={user} state={{ status: 'error', error: 'network' }} />);
     fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.refresh }));
     expect(callbacks.onRefresh).toHaveBeenCalledTimes(1);
@@ -102,7 +102,7 @@ describe('native read-only My Stories presentation', () => {
   });
 
   it('removes old rows immediately when the parent starts reloading or replaces the account', () => {
-    const callbacks = { onRefresh: jest.fn(), onSignOut: jest.fn() };
+    const callbacks = { onRefresh: jest.fn(), onCreateStory: jest.fn(), onSignOut: jest.fn() };
     const view = render(<MyStoriesScreen {...callbacks} language="en" user={user} state={{ status: 'ready', projects: [project()] }} />);
     expect(screen.getByText('A childhood memory')).toBeOnTheScreen();
     view.rerender(<MyStoriesScreen {...callbacks} language="en" user={{ id: 'synthetic-b', email: 'other@example.invalid' }} state={{ status: 'loading' }} />);
@@ -114,17 +114,48 @@ describe('native read-only My Stories presentation', () => {
 
   it('removes prior results when an error arrives', () => {
     const { view } = setup({ status: 'ready', projects: [project()] });
-    view.rerender(<MyStoriesScreen language="en" user={user} state={{ status: 'error', error: 'network' }} onRefresh={jest.fn()} onSignOut={jest.fn()} />);
+    view.rerender(<MyStoriesScreen language="en" user={user} state={{ status: 'error', error: 'network' }} onRefresh={jest.fn()} onCreateStory={jest.fn()} onSignOut={jest.fn()} />);
     expect(screen.queryByText('A childhood memory')).toBeNull();
     expect(screen.getByRole('alert')).toHaveTextContent(storiesCopy.en.errors.network);
   });
 
-  it('has no creation, editing, detail-opening, recording or guest actions', () => {
+  it('offers intentional story creation without editing, detail-opening, recording or guest actions', () => {
     setup({ status: 'ready', projects: [project()] });
-    expect(screen.getAllByRole('button')).toHaveLength(2);
-    expect(screen.queryByRole('button', { name: /create|edit|open|record|guest/i })).toBeNull();
+    expect(screen.getAllByRole('button')).toHaveLength(3);
+    expect(screen.getByRole('button', { name: storiesCopy.en.createStory })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: /edit|open|record|guest/i })).toBeNull();
     expect(screen.queryByText(/AI|microphone|recording/i)).toBeNull();
     expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it.each<Language>(['en', 'sv'])('offers an accessible explicit Create My Story action in %s without making a request', language => {
+    const { onCreateStory, onRefresh, onSignOut } = setup({ status: 'ready', projects: [] }, language);
+    const create = screen.getByRole('button', { name: storiesCopy[language].createStory });
+    expect(create.props.accessibilityLanguage).toBe(language === 'en' ? 'en-GB' : 'sv-SE');
+    expect(create).toBeEnabled(); fireEvent.press(create);
+    expect(onCreateStory).toHaveBeenCalledTimes(1);
+    expect(onRefresh).not.toHaveBeenCalled(); expect(onSignOut).not.toHaveBeenCalled();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it.each<MyStoriesState>([
+    { status: 'loading' }, { status: 'error', error: 'configuration' }, { status: 'error', error: 'network' },
+  ])('keeps creation available while the story list cannot load (%#)', state => {
+    const { onCreateStory } = setup(state);
+    const create = screen.getByRole('button', { name: storiesCopy.en.createStory });
+    expect(create).toBeEnabled(); fireEvent.press(create);
+    expect(onCreateStory).toHaveBeenCalledTimes(1);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it.each<Language>(['en', 'sv'])('blocks creation after authentication failure while preserving Sign Out in %s', language => {
+    const { onCreateStory, onSignOut } = setup({ status: 'error', error: 'authentication' }, language);
+    const create = screen.getByRole('button', { name: storiesCopy[language].createStory });
+    expect(create).toBeDisabled();
+    expect(create.props.accessibilityState.disabled).toBe(true);
+    fireEvent.press(create); expect(onCreateStory).not.toHaveBeenCalled();
+    fireEvent.press(screen.getByRole('button', { name: storiesCopy[language].signOut }));
+    expect(onSignOut).toHaveBeenCalledTimes(1);
   });
 
   it.each<Language>(['en', 'sv'])('keeps text scalable, targets large and layout scrollable with safe areas in %s', (language) => {
@@ -140,5 +171,8 @@ describe('native read-only My Stories presentation', () => {
     const refresh = screen.getByRole('button', { name: storiesCopy[language].refresh });
     fireEvent(refresh, 'focus'); expect(refresh).toHaveStyle({ borderColor: colors.ink });
     fireEvent(refresh, 'blur'); expect(refresh).toHaveStyle({ borderColor: colors.forest });
+    const create = screen.getByRole('button', { name: storiesCopy[language].createStory });
+    fireEvent(create, 'focus'); expect(create).toHaveStyle({ borderColor: colors.ink });
+    fireEvent(create, 'blur'); expect(create).toHaveStyle({ borderColor: colors.forest });
   });
 });

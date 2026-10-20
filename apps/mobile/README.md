@@ -1,4 +1,17 @@
-# Memy Mobile Task 3A — My Stories dashboard
+# Memy Mobile Task 3B — Create My Story
+
+My Stories now opens a native Swedish/English form for a title and story language.
+Creation uses the existing authenticated API transport. The development API URL
+remains unconfigured: the form validates locally and clearly says saving is
+unavailable, without a POST, fake success or fabricated dashboard row.
+
+See [CREATE_STORY.md](CREATE_STORY.md) for current scope and safe Windows/iPhone
+instructions and [CREATE_STORY_VERIFICATION.md](CREATE_STORY_VERIFICATION.md) for
+actual test results, security/accessibility review and exact changed files.
+Live signup, Guest and paid AI remain disabled. The following Task 3A/2C/2B notes
+are historical; statements about creation being unavailable describe those bases.
+
+# Preserved Task 3A — My Stories dashboard
 
 The verified signed-in destination now lists story projects in Swedish/English.
 It supports loading, empty/error states, refresh and existing secure sign-out.

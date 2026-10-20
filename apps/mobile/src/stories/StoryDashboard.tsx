@@ -9,10 +9,11 @@ interface Props {
   language: Language;
   user: AuthUser;
   getAccessToken: (expectedUserId: string) => Promise<string | null>;
+  onCreateStory: () => void;
   onSignOut: () => void;
 }
 
-export function StoryDashboard({ language, user, getAccessToken, onSignOut }: Props) {
+export function StoryDashboard({ language, user, getAccessToken, onCreateStory, onSignOut }: Props) {
   // No settings or account data are persisted. A fresh verified account mounts
   // a fresh dashboard; a configuration change requires restarting Expo.
   const [config] = useState(readMobileApiConfig);
@@ -47,6 +48,6 @@ export function StoryDashboard({ language, user, getAccessToken, onSignOut }: Pr
   // Also fence a prop change during render, before effect cleanup can run.
   const state: MyStoriesState = !config ? { status: 'error', error: 'configuration' }
     : result.owner === user.id && result.revision === revision ? result.state : { status: 'loading' };
-  return <MyStoriesScreen language={language} user={user} state={state} onSignOut={onSignOut}
+  return <MyStoriesScreen language={language} user={user} state={state} onCreateStory={onCreateStory} onSignOut={onSignOut}
     onRefresh={() => { if (!busy.current) { busy.current = true; setRevision(value => value + 1); } }} />;
 }

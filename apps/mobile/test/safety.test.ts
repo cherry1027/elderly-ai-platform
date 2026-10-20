@@ -39,8 +39,9 @@ describe('development-only mobile application boundaries', () => {
     expect(fs.readFileSync(path.join(appRoot, 'src/auth/client.ts'), 'utf8')).not.toMatch(/signUp\s*\(/);
     expect(authSource).not.toMatch(/\b(?:client|supabase)\.(?:from|storage|functions|channel|rpc)\b/);
     expect(authSource).not.toContain('@react-native-async-storage/async-storage');
-    expect(apiSource).not.toMatch(/@supabase|secure-store|async-storage|console\.|method:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/i);
-    expect(apiSource).toContain("method: 'GET'");
+    expect(apiSource).not.toMatch(/@supabase|secure-store|async-storage|console\.|method:\s*['"](?:PUT|PATCH|DELETE)['"]/i);
+    expect(apiSource).toContain("'GET'");
+    expect(apiSource).toContain("'POST'");
     expect(apiSource).not.toMatch(/\/sessions|user_id/);
   });
 

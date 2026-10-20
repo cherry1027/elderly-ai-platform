@@ -24,11 +24,19 @@ const childEnv = {
   EXPO_NO_DOTENV: '1',
   EXPO_NO_CLIENT_ENV_VARS: '1',
   EXPO_NO_TELEMETRY: '1',
+  // Explicit mobile-local client config; never enable general EXPO_PUBLIC loading.
+  MEMY_MOBILE_AUTH_MODE: 'verification',
 };
+// No inherited EXPO_PUBLIC setting is approved for this app. Client-safe auth
+// settings enter only through the validated mobile-local JSON configuration.
+for (const key of Object.keys(childEnv)) {
+  if (key.toUpperCase().startsWith('EXPO_PUBLIC_')) delete childEnv[key];
+}
 // LAN hosting and Expo's offline option are mutually exclusive. Clear even an
 // inherited offline setting for interactive startup; keep checks offline.
 if (actionName === 'start' || actionName === 'android') {
   delete childEnv.EXPO_OFFLINE;
+  childEnv.MEMY_MOBILE_AUTH_MODE = 'development';
 } else {
   childEnv.EXPO_OFFLINE = '1';
 }

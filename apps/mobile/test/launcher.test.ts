@@ -125,6 +125,15 @@ describe('mobile command launcher (mocked child processes)', () => {
     expect(options.shell).toBe(false);
   });
 
+  it.each(commands)('controls the mobile auth config mode for %s without enabling env injection', (action) => {
+    const execution = runLauncher(action, [], { MEMY_MOBILE_AUTH_MODE: 'development', EXPO_PUBLIC_SUPABASE_KEY: 'synthetic-forbidden-injection' });
+    const environment = execution.spawnSync.mock.calls[0][2].env;
+    expect(environment.MEMY_MOBILE_AUTH_MODE).toBe(['start', 'android'].includes(action) ? 'development' : 'verification');
+    expect(environment.EXPO_NO_DOTENV).toBe('1');
+    expect(environment.EXPO_NO_CLIENT_ENV_VARS).toBe('1');
+    expect(environment).not.toHaveProperty('EXPO_PUBLIC_SUPABASE_KEY');
+  });
+
   it.each(['unapproved-command', 'constructor', 'toString', '__proto__'])(
     'rejects unsupported action %s without launching a child process', (name) => {
     const execution = runLauncher(name);

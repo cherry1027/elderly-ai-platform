@@ -9,12 +9,14 @@ import { colors, headingFont, layout } from '../theme';
 interface WelcomeScreenProps {
   language: Language;
   onChangeLanguage: () => void;
+  onLogin?: () => void;
   onReplayIntroduction?: () => void;
   storageUnavailable?: boolean;
+  cleanup?: { message: string; retryLabel: string; onRetry: () => void };
 }
 
 export function WelcomeScreen({
-  language, onChangeLanguage, onReplayIntroduction, storageUnavailable = false,
+  language, onChangeLanguage, onLogin, onReplayIntroduction, storageUnavailable = false, cleanup,
 }: WelcomeScreenProps) {
   const text = copy[language];
   const intro = introCopy[language];
@@ -53,9 +55,18 @@ export function WelcomeScreen({
           accessibilityLanguage={accessibilityLanguages[language]}
           style={screenStyles.footer}
         >
-          {intro.unavailable}
+          {onLogin ? (language === 'sv' ? 'Nya konton och gäståtkomst är inte tillgängliga ännu.'
+            : 'Account creation and guest access are not available yet.') : intro.unavailable}
         </Text>
-        {[intro.login, intro.register, intro.guest].map((label) => (
+        {cleanup && <>
+          <Text accessibilityRole="alert" accessibilityLiveRegion="assertive"
+            accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={screenStyles.description}>
+            {cleanup.message}
+          </Text>
+          <LargeButton label={cleanup.retryLabel} language={language} onPress={cleanup.onRetry} variant="secondary" />
+        </>}
+        {onLogin && !cleanup && <LargeButton label={intro.login} language={language} onPress={onLogin} />}
+        {(onLogin && !cleanup ? [intro.register, intro.guest] : [intro.login, intro.register, intro.guest]).map((label) => (
           <Pressable
             key={label}
             disabled

@@ -10,12 +10,15 @@ function sourceFiles(directory: string): string[] {
 }
 const sources = sourceFiles(path.join(appRoot, 'src'));
 const source = sources.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
+const authSources = sources.filter((file) => file.startsWith(path.join(appRoot, 'src/auth') + path.sep));
+const authSource = authSources.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
+const presentationSource = sources.filter((file) => !authSources.includes(file)).map((file) => fs.readFileSync(file, 'utf8')).join('\n');
 const manifest = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
 const config = JSON.parse(fs.readFileSync(path.join(appRoot, 'app.json'), 'utf8')).expo;
 
-describe('isolated offline foundation boundaries', () => {
+describe('development-only mobile application boundaries', () => {
   it('imports only local native UI, Router and platform modules', () => {
-    const allowed = new Set(['react', 'react-native', 'react-native-svg', 'react-native-safe-area-context', 'expo-router', 'expo-status-bar', '@react-native-async-storage/async-storage']);
+    const allowed = new Set(['react', 'react-native', 'react-native-svg', 'react-native-safe-area-context', 'expo-router', 'expo-status-bar', 'expo-constants', 'expo-secure-store', '@supabase/supabase-js', '@react-native-async-storage/async-storage']);
     const imports = [...source.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((match) => match[1]);
     expect(imports.length).toBeGreaterThan(0);
     for (const name of imports) expect(name.startsWith('.') || allowed.has(name)).toBe(true);
@@ -25,8 +28,11 @@ describe('isolated offline foundation boundaries', () => {
     expect(source).not.toMatch(/process\.env|import\.meta|localStorage|sessionStorage|\bwindow\b|\bdocument\b/);
   });
 
-  it('contains no application endpoints, microphone or transport calls', () => {
-    expect(source).not.toMatch(/https?:\/\/|\bfetch\s*\(|XMLHttpRequest|WebSocket|getUserMedia|supabase|fastapi|expo-audio|expo-av/i);
+  it('keeps transports outside presentation and never adds story, AI or microphone operations', () => {
+    expect(presentationSource).not.toMatch(/https?:\/\/|\bfetch\s*\(|XMLHttpRequest|WebSocket|getUserMedia|supabase|fastapi|expo-audio|expo-av/i);
+    expect(source).not.toMatch(/getUserMedia|fastapi|expo-audio|expo-av|signUp\s*\(|resetPasswordForEmail/i);
+    expect(authSource).not.toMatch(/\b(?:client|supabase)\.(?:from|storage|functions|channel|rpc)\b/);
+    expect(authSource).not.toContain('@react-native-async-storage/async-storage');
   });
 
   it('does not import files outside the mobile source tree', () => {
@@ -51,10 +57,10 @@ describe('isolated offline foundation boundaries', () => {
     expect(config.ios?.infoPlist?.NSMicrophoneUsageDescription).toBeUndefined();
   });
 
-  it('keeps the app private and excludes backend SDKs', () => {
+  it('keeps the app private and excludes unrelated backend and voice SDKs', () => {
     expect(manifest.private).toBe(true);
     expect(manifest.main).toBe('expo-router/entry');
-    for (const name of ['@supabase/supabase-js', '@lovable.dev/mcp-js', 'expo-audio', 'expo-av']) {
+    for (const name of ['@lovable.dev/mcp-js', 'expo-audio', 'expo-av']) {
       expect(manifest.dependencies).not.toHaveProperty(name);
     }
   });

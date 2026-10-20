@@ -8,11 +8,14 @@ import EntryRoute from '../src/app/index';
 import LanguageRoute from '../src/app/language';
 import IntroductionRoute from '../src/app/introduction';
 import WelcomeRoute from '../src/app/welcome';
+import LoginRoute from '../src/app/login';
+import AuthenticatedRoute from '../src/app/authenticated';
 import { copy, type Language } from '../src/i18n';
 import { introCopy } from '../src/intro-copy';
 import { PREFERENCES_KEY } from '../src/onboarding/preferences';
 
-const routes = { _layout: RootLayout, index: EntryRoute, language: LanguageRoute, introduction: IntroductionRoute, welcome: WelcomeRoute };
+const routes = { _layout: RootLayout, index: EntryRoute, language: LanguageRoute, introduction: IntroductionRoute,
+  welcome: WelcomeRoute, login: LoginRoute, authenticated: AuthenticatedRoute };
 
 async function openFlow(initialUrl = '/') {
   const flow = renderRouter(routes, { initialUrl });
@@ -82,6 +85,7 @@ describe('actual native router flow', () => {
   });
 
   it('can reach language selection if Welcome was opened without history', async () => {
+    await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language: 'en', completed: true }));
     const flow = await openFlow('/welcome');
     fireEvent.press(screen.getByRole('button', { name: copy.en.changeLanguage }));
     await screen.findByRole('header', { name: copy.en.languageTitle });
@@ -107,10 +111,11 @@ describe('actual native router flow', () => {
     expect(globalThis.WebSocket).not.toHaveBeenCalled();
   });
 
-  it('keeps future authentication and guest destinations disabled', async () => {
+  it('enables only login while registration and guest destinations remain disabled', async () => {
     await openFlow();
     await welcome();
-    for (const name of [introCopy.en.login, introCopy.en.register, introCopy.en.guest]) {
+    expect(screen.getByRole('button', { name: introCopy.en.login })).toBeEnabled();
+    for (const name of [introCopy.en.register, introCopy.en.guest]) {
       expect(screen.getByRole('button', { name })).toBeDisabled();
     }
     expect(screen.queryByText('Create My Story')).toBeNull();

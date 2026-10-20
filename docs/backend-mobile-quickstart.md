@@ -7,10 +7,32 @@ The validated API baseline is commit `8375ada`; subsequent handoff changes do no
 change its routes. The [full integration guide](frontend-integration.md) contains
 all 25 operations, request/response examples and error handling.
 
-This handoff uses an iPhone and a Windows backend on the same
-trusted network. The Mac's `192.168.0.21` address is not a remotely hosted API.
-There is no shared public HTTPS endpoint. Use fictional development data only;
-LAN HTTP does not encrypt the Bearer token.
+The initial reported integration pair is backend `374b1dd` on
+`codex/day-7-mobile-integration` and mobile
+`59762f2f8413b7f328421fb158489594511a1e06` on
+[`feat/mobile-story-details`](https://github.com/cherry1027/elderly-ai-platform/tree/59762f2f8413b7f328421fb158489594511a1e06/apps/mobile).
+Record the actual commit IDs again after any update; branch names can advance.
+The mobile configuration below was checked against that exact mobile source,
+not inferred from a generic Expo environment-variable convention.
+
+This handoff requires an iPhone and a Windows backend on the same **trusted,
+privately controlled network**. The old Mac address `192.168.0.21` is stale;
+its latest observed address was `192.168.110.103`, not a remotely hosted API.
+Tarun must use his own Windows host's current address. There is no shared public
+HTTPS endpoint. Use fictional development
+data only; LAN HTTP does not encrypt the Bearer token.
+
+**Current network gate:** Tarun reports that the backend diagnostic returned
+`result=OK`/`head_status=200`, and that both `/health` and `/ready` opened on his
+iPhone with the pair above. These are user-reported public-probe results, not an
+authenticated mobile acceptance test. The reported shared `BTHWiFi` network is
+not approved for HTTP Bearer-token traffic. Do not start authenticated project
+requests there. The agreed test option is a trusted personal hotspot/private
+network; moving the devices and retesting still needs Tarun's confirmation.
+A future shared connection needs a separately reviewed HTTPS setup; an HTTPS DNS
+origin is not currently accepted by
+this mobile client's LAN-only URL policy. Recheck the Windows IP and both phone
+probes after changing networks. Do not weaken firewall, transport or URL guards.
 
 ## Start the backend on Windows
 
@@ -106,11 +128,12 @@ outer spaces or placeholder text. A differing key can also be a separately
 created valid key, so the fingerprint alone is not proof of rejection; use the
 HTTP result as well. Do not send the raw key or tokens in a diagnostic report.
 
-Process `SUPABASE_*` and `VITE_SUPABASE_*` environment variables take precedence
+Backend-process `SUPABASE_*` and `VITE_SUPABASE_*` environment variables take precedence
 over dotenv files. Within the same source, `SUPABASE_*` wins over the Vite alias.
-`backend/.env` takes precedence over the legacy root `.env`; `EXPO_PUBLIC_*` is
-for the Expo app and is not read by backend Settings. Editing a file or a
-different terminal does not replace configuration already loaded by FastAPI.
+`backend/.env` takes precedence over the legacy root `.env`. `EXPO_PUBLIC_*` is
+not read by backend Settings and is deliberately stripped by Tarun's current
+mobile launcher; it configures neither side of this integration. Editing a file
+or a different terminal does not replace configuration already loaded by FastAPI.
 
 Stop the existing backend with Ctrl+C. In the **same PowerShell terminal** that
 will restart it, set `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` as in the setup
@@ -136,36 +159,87 @@ and [Dashboard access control](https://supabase.com/docs/guides/platform/access-
 
 ## Configure the separate Expo app
 
-In Tarun's Expo project, use its existing local environment convention:
+Keep the backend and Expo checkouts separate: they communicate over HTTP; a Git
+merge is not needed to connect them. Do not switch the backend checkout to the
+mobile branch, overwrite Tarun's work, or run this checkout's legacy React/Vite
+client as a substitute for his Expo application.
 
-```ini
-EXPO_PUBLIC_API_BASE_URL=http://<WINDOWS_LAN_IP>:8000
-EXPO_PUBLIC_SUPABASE_URL=https://edbkuunyeyxnyenmmqud.supabase.co
-EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<development-publishable-key-shared-privately>
+The verified mobile launcher (`apps/mobile/scripts/run.cjs` at `59762f2`) disables
+dotenv loading and removes inherited `EXPO_PUBLIC_*` variables. **Do not create
+an Expo `.env` or use the previously suggested `EXPO_PUBLIC_API_BASE_URL` variables
+for this branch.** Its supported settings are two ignored, mobile-local JSON
+files. They contain client-public configuration only, never account credentials.
+
+From Tarun's **mobile checkout** in PowerShell:
+
+```powershell
+Set-Location -LiteralPath '<YOUR_MOBILE_CHECKOUT>\apps\mobile'
+if (-not (Test-Path -LiteralPath '.\development.auth.local.json')) {
+  Copy-Item -LiteralPath '.\development.auth.example.json' -Destination '.\development.auth.local.json'
+}
+if (-not (Test-Path -LiteralPath '.\development.api.local.json')) {
+  Copy-Item -LiteralPath '.\development.api.example.json' -Destination '.\development.api.local.json'
+}
+notepad .\development.auth.local.json
+notepad .\development.api.local.json
 ```
 
-The API variable is the root origin, without `/api/v1` or a trailing slash. Append
-`/api/v1` once in business calls. If the app already uses `EXPO_PUBLIC_API_URL`,
-map that existing name in one place rather than adding a conflicting second URL.
-Reload/restart the Expo development process after changing environment values.
-The app's repository, SDK version and configuration belong to Tarun; this
-backend checkout's React/Vite client is not his Expo app.
+Replace the checkout-path placeholder with the existing mobile checkout's path.
+The conditional copies preserve any existing local files. In
+`development.auth.local.json`, use exactly these two fields:
 
-Use Supabase SDK login and the current session's access token:
-
-```ts
-const { data, error } = await supabase.auth.getSession();
-if (error || !data.session) throw new Error("Sign in is required");
-
-const response = await fetch(`${API_BASE_URL}/api/v1/story-projects`, {
-  headers: { Authorization: `Bearer ${data.session.access_token}` },
-});
+```json
+{
+  "supabaseUrl": "https://edbkuunyeyxnyenmmqud.supabase.co",
+  "publishableKey": "<development-publishable-key-shared-privately>"
+}
 ```
+
+In `development.api.local.json`, use exactly one field, after the trusted-network
+gate above is satisfied:
+
+```json
+{
+  "baseUrl": "http://<WINDOWS_LAN_IP>:8000"
+}
+```
+
+Replace the key and IP placeholders. The IP must be the approved Windows machine's
+current private LAN IPv4 address, not the Mac, phone, loopback or an invented
+address. The client accepts a root origin or optional `/api/v1`, normalizes to the
+origin and appends `/api/v1` exactly once. Use the root form above. Public/DNS
+origins, other paths, credentials, queries, fragments and additional JSON fields
+are rejected. A future HTTPS hostname needs reviewed mobile support, not removal
+of these checks.
+
+Save both local files, then stop only this mobile checkout's existing Metro
+terminal with Ctrl+C. Fully close Expo Go without clearing its data and run:
+
+```powershell
+npm start
+```
+
+Confirm the terminal says `MEMY NORMAL APP`, wait for its **new** QR code and scan
+that code. The protected launcher chooses an unused port and clears Metro's bundle
+cache; this is not deletion of saved preferences or secure sessions. An old QR can
+open another running experience. Do not use `npm run preview:stories` for live
+integration: that isolated, labelled sample mode disables Auth/API operations and
+cannot save data. Verification/config/export commands also intentionally disable
+Auth/API and do not read the local files; they are not a live-startup check.
+
+Reuse the mobile app's existing verified Auth provider and
+`getAccessToken(expectedUserId)` accessor. The existing project transport obtains
+that current account's token and sends `Authorization: Bearer <access-token>`;
+it does not send an `apikey` or a client-supplied owner ID to FastAPI. Do not add
+a second SDK client, bypass the accessor with an unverified stored session, or
+replace Tarun's foreground/refresh/sign-out safeguards.
 
 Never use the publishable key as the user's Bearer token. Never share the
 backend `.env`, passwords, refresh/access tokens, secret/service-role keys or
 provider keys. Clear user-specific cached state on sign-out. Refresh an expired
 session through the SDK rather than substituting another user's credentials.
+Normal existing-user login does not depend on activating native registration;
+the mobile registration provider remains deliberately gated off at `59762f2`.
 
 ## Use the existing account and fictional data
 
@@ -202,16 +276,29 @@ IDs; never invent or hard-code another user's IDs.
 ## First integration acceptance
 
 Record the frontend and backend Git commit IDs and the actual API root used.
-Test these in order on the iPhone:
+Record the network type without sharing its password. The reported public-probe
+success is only the first checkpoint; all authenticated steps remain pending.
+Once the trusted-network gate is satisfied, test these in order on the iPhone:
 
 1. `/health` and `/ready` are reachable. The backend version in `/openapi.json`
    is 0.7.0; Swagger is at `/docs`.
 2. The existing account signs in through the development Supabase project.
 3. A project-list request without a Bearer token is rejected with 401; the
    signed-in request returns 200 and owned projects only.
-4. Create a fictional project, list/retrieve it, rename it, create a session and
-   verify the selected `en`/`sv` language is preserved.
-5. Submit the fixture messages, confirm/review their sourced facts, then tap
+4. Create a fictional project, list/retrieve it, rename it and verify the selected
+   `en`/`sv` language is preserved. The pinned mobile branch implements these
+   project operations, including title/description editing; record each real
+   server response and the visible result without capturing tokens or private data.
+
+The following is **later integration work**, not already available in the pinned
+mobile UI. Backend endpoints exist, but Tarun still needs to connect session,
+memory, draft, PDF and continuation screens/transports before a full phone demo:
+
+5. Use `POST /api/v1/story-projects/{project_id}/continue` with `{}` for
+   Start/Resume. It atomically returns an existing active session or creates one,
+   preserving its project's language without generating a draft. Reuse the
+   returned `session.id`; repeated direct session POSTs create separate sessions.
+   Submit the fixture messages, confirm/review their sourced facts, then tap
    Create My Story. Save a manual edit and show that it needs review.
 6. Download the saved revision's PDF privately. Continue, add the continuation
    fixture message, confirm its memory and explicitly generate version two.

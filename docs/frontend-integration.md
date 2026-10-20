@@ -6,6 +6,12 @@ the fictional autobiography workflow through private PDF export and continuation
 Real Expo/device acceptance still needs Tarun's confirmation; backend harness
 checks are not evidence of a successful iPhone integration.
 
+Day 8 reviewed Tarun's actual `feat/mobile-story-details` branch at `59762f2`
+against backend `374b1dd`. Its four project metadata operations match this API.
+Tarun reports successful Windows diagnostics and iPhone Safari `/health` and
+`/ready` probes. Authenticated iPhone create/list/detail/update acceptance remains
+pending. See [Day 8 status](day-8-status.md) for the exact verification scope.
+
 Use the pushed branch `codex/day-7-mobile-integration`. It builds on the
 verified `backend/day-6-pdf-continuation` branch; do not substitute an older
 `main` checkout or merge/deploy without a separate team decision.
@@ -45,16 +51,34 @@ The legacy web app's root VITE_SUPABASE_* values still target
 | Physical phone on same LAN | http://<developer-machine-LAN-IP>:8000 |
 | Shared remote development | Not deployed; team decision pending |
 
-Use this canonical frontend variable name and a root origin, **without
-`/api/v1`**. Append `/api/v1` once in business API calls. Earlier planning messages
-used `EXPO_PUBLIC_API_URL`; if the app already uses that name, map it in one place
-rather than defining two conflicting base URLs.
+The actual Expo branch does **not** read `EXPO_PUBLIC_*` variables. Its protected
+launcher disables dotenv and strips those variables. In the separate mobile
+checkout, configure these two ignored local files instead:
 
-```ini
-EXPO_PUBLIC_API_BASE_URL=http://<backend-machine-LAN-IP>:8000
-EXPO_PUBLIC_SUPABASE_URL=https://edbkuunyeyxnyenmmqud.supabase.co
-EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<development-publishable-key>
+`apps/mobile/development.auth.local.json`:
+
+```json
+{
+  "supabaseUrl": "https://edbkuunyeyxnyenmmqud.supabase.co",
+  "publishableKey": "<development-publishable-key>"
+}
 ```
+
+`apps/mobile/development.api.local.json`:
+
+```json
+{"baseUrl": "http://<WINDOWS_PRIVATE_LAN_IPV4>:8000"}
+```
+
+Replace the placeholders; the mobile validator requires an explicit private LAN
+IPv4 address. It rejects loopback, public addresses and DNS names, so the generic
+simulator/hosted addresses in the table above are not all supported by this
+particular mobile client. It accepts a root URL or `/api/v1` suffix and appends
+the API prefix once. Use `npm start` inside `apps/mobile/`, not
+`npm run preview:stories`; the latter has sample data and no live API saves.
+The [quickstart](backend-mobile-quickstart.md#configure-the-separate-expo-app)
+has copyable PowerShell instructions. No merge is required to run the mobile
+and backend processes in separate checkouts.
 
 Install the backend requirements in its virtual environment. The Day 7 launcher
 pins the dedicated development project, enables both free mock modes, leaves
@@ -80,12 +104,16 @@ network, with inbound port 8000 allowed. Opening `http://<host>:8000/health` and
 `/ready` on the phone tests reachability before debugging authenticated screens.
 `0.0.0.0` is a bind address, not a URL to enter on the phone.
 
-The Mac's observed LAN address on 20 October was `192.168.0.21`; it can change and
-is not a permanent shared URL. If Tarun runs this backend on Windows, use his
+The Mac's latest observed LAN address on 20 October was `192.168.110.103`;
+the earlier `192.168.0.21` address is stale. Neither is a permanent shared URL.
+If Tarun runs this backend on Windows, use his
 Windows machine's LAN IP instead. Separate home networks cannot reach each
 other's private LAN address. Local HTTP is for development only; no public tunnel
 or shared hosted server has been provisioned. Do not disable platform transport
 security broadly or expose this development server publicly to solve connectivity.
+The agreed device-test option is a trusted personal hotspot/private network.
+Do not send Bearer tokens over HTTP on BTH/student-housing shared Wi-Fi, even
+when the public health probes work. Recheck the Windows IP after changing networks.
 
 ## Authentication approach
 
@@ -101,13 +129,18 @@ ordinary user requests. The app must refresh expired sessions through the
 Supabase SDK; the backend never accepts a refresh token.
 
 ```ts
-const { data, error } = await supabase.auth.getSession();
-if (error || !data.session) throw new Error("Sign in is required");
+// Reuse the existing verified, account-scoped Auth provider in the Expo app.
+const accessToken = await getAccessToken(expectedUserId);
+if (!accessToken) throw new Error("Sign in is required");
 
 const response = await fetch(`${API_BASE_URL}/api/v1/story-projects`, {
-  headers: { Authorization: `Bearer ${data.session.access_token}` },
+  headers: { Authorization: `Bearer ${accessToken}` },
 });
 ```
+
+This illustrates the wire header, not a replacement API client. Keep the
+reviewed mobile transport's token callback, foreground/refresh/sign-out guards,
+timeouts and cancellation handling; do not add a second session lookup or SDK client.
 
 Configure the native Supabase client with persistent session storage compatible
 with Tarun's installed SDK; refresh sessions while the app is active and stop
@@ -133,9 +166,10 @@ callback already implements native code exchange.
 
 Use a development build with its registered custom scheme for this test, not
 Expo Go. Scheme changes require a new native build. The app's production bundle
-identifier is a separate decision. Apple Developer/signing/TestFlight access and
-Tarun's SDK/configuration are not verifiable from this React/Vite/backend checkout;
-coordinate them before scheduling physical-device confirmation tests. No native
+identifier is a separate decision. Apple Developer/signing/TestFlight access is
+not confirmed. The reviewed mobile branch declares the scheme, but registration
+is gated off and no native signing/build configuration was found; coordinate
+activation before scheduling physical-device confirmation tests. No native
 test email or paid build is required merely to run backend contract checks.
 See [Supabase PKCE](https://supabase.com/docs/guides/auth/sessions/pkce-flow) and
 [Expo app linking](https://docs.expo.dev/linking/into-your-app/).
@@ -609,9 +643,15 @@ passwords/tokens into chat or command arguments. The optional
 not permission to print or save access tokens. This harness does not change
 Auth settings or create users.
 
-Real Expo confirmation, SDK session refresh across app lifecycle, phone LAN
-reachability, recording permissions/format, native PDF sharing and complete
-mobile screens remain Tarun's acceptance tasks. A Python integration client
+Tarun reports public health/readiness reachability from the iPhone. Real Expo
+authenticated project persistence, confirmation, SDK session refresh across app
+lifecycle, recording permissions/format and native PDF sharing still need device
+acceptance. The reviewed mobile branch has project list/create/detail/metadata
+editing, not native session, conversation, draft, PDF or continuation screens.
+For the next Start/Resume integration, use the existing
+`POST /api/v1/story-projects/{project_id}/continue` contract: it resumes an active
+owned session atomically rather than creating another session on every tap.
+A Python integration client
 using genuine development JWTs can verify the backend independently, but cannot
 prove those device behaviors. Real speech/provider quality, privacy approvals,
 public deployment and AI spending remain outside this free mock integration.

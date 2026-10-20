@@ -76,6 +76,22 @@ download UX works. The four older opt-in live pytest cases remain skipped/pendin
 See the [single frontend handoff](../docs/frontend-integration.md) and
 [Day 7 evidence and limitations](../docs/day-7-status.md).
 
+For Day 8, use the [actual Expo configuration and device checklist](../docs/backend-mobile-quickstart.md)
+and [integration status](../docs/day-8-status.md). The reviewed mobile revision
+`59762f2` uses ignored local JSON files, not `EXPO_PUBLIC_*`. Existing project
+contracts match; authenticated iPhone acceptance and native session integration
+remain pending. Do not send Bearer tokens over shared Wi-Fi HTTP.
+
+An optional Node 24+ check runs the pinned real TypeScript project client against
+FastAPI in-process with synthetic Auth/Data API fixtures:
+
+```sh
+.venv/bin/python scripts/verify_mobile_contract.py
+```
+
+It requires the reviewed mobile Git object locally, opens no sockets and makes
+no cloud requests. It does not prove device networking, real login or RLS.
+
 ```sh
 curl -i http://127.0.0.1:8000/health
 curl -i http://127.0.0.1:8000/ready

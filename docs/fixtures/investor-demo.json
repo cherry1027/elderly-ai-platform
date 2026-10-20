@@ -1,0 +1,145 @@
+{
+  "fixture_version": 1,
+  "fixture_name": "Memy AI investor demo",
+  "fictional": true,
+  "simulation_label": "AI simulation",
+  "notice": "All memories and relationships are fictional. Names, dates, emotions, and real place names are used only as demonstration examples.",
+  "scenarios": [
+    {
+      "scenario": "english",
+      "fictional": true,
+      "simulation_label": "AI simulation",
+      "project": {
+        "title": "Investor demo - My Childhood (fictional)",
+        "language": "en",
+        "description": "Fictional investor demonstration; not a real person's memories."
+      },
+      "initial_messages": [
+        {
+          "text": "My name is Anna.",
+          "expected_fact": {
+            "fact_type": "person",
+            "value": "Anna",
+            "slot": "person:self_name",
+            "status": "pending"
+          }
+        },
+        {
+          "text": "I was born in 1950.",
+          "expected_fact": {
+            "fact_type": "date",
+            "value": "1950",
+            "slot": "date",
+            "year": 1950,
+            "status": "pending"
+          }
+        },
+        {
+          "text": "I grew up in Malmö.",
+          "expected_fact": {
+            "fact_type": "location",
+            "value": "Malmö",
+            "slot": "grew_up_location",
+            "status": "pending"
+          }
+        },
+        {
+          "text": "My mother is Eva.",
+          "expected_fact": {
+            "fact_type": "relationship",
+            "value": "Eva",
+            "slot": "relationship:mother",
+            "status": "pending"
+          }
+        },
+        {
+          "text": "I moved to Lund in 1975.",
+          "expected_fact": {
+            "fact_type": "event",
+            "value": "Lund",
+            "slot": "move",
+            "year": 1975,
+            "status": "pending"
+          }
+        }
+      ],
+      "continued_message": {
+        "text": "I felt happy.",
+        "expected_fact": {
+          "fact_type": "emotion",
+          "value": "happy",
+          "slot": "emotion",
+          "status": "pending"
+        }
+      }
+    },
+    {
+      "scenario": "swedish",
+      "fictional": true,
+      "simulation_label": "AI simulation",
+      "project": {
+        "title": "Investerardemo - Min barndom (fiktiv)",
+        "language": "sv",
+        "description": "Fiktiv investerardemonstration; inte en verklig persons minnen."
+      },
+      "initial_messages": [
+        {
+          "text": "Jag heter Anna.",
+          "expected_fact": {
+            "fact_type": "person",
+            "value": "Anna",
+            "slot": "person:self_name",
+            "status": "pending"
+          }
+        },
+        {
+          "text": "Jag föddes 1950.",
+          "expected_fact": {
+            "fact_type": "date",
+            "value": "1950",
+            "slot": "date",
+            "year": 1950,
+            "status": "pending"
+          }
+        },
+        {
+          "text": "Jag växte upp i Malmö.",
+          "expected_fact": {
+            "fact_type": "location",
+            "value": "Malmö",
+            "slot": "grew_up_location",
+            "status": "pending"
+          }
+        },
+        {
+          "text": "Min mamma är Eva.",
+          "expected_fact": {
+            "fact_type": "relationship",
+            "value": "Eva",
+            "slot": "relationship:mamma",
+            "status": "pending"
+          }
+        },
+        {
+          "text": "Jag flyttade till Lund 1975.",
+          "expected_fact": {
+            "fact_type": "event",
+            "value": "Lund",
+            "slot": "move",
+            "year": 1975,
+            "status": "pending"
+          }
+        }
+      ],
+      "continued_message": {
+        "text": "Jag kände mig glad.",
+        "expected_fact": {
+          "fact_type": "emotion",
+          "value": "glad",
+          "slot": "emotion",
+          "status": "pending"
+        }
+      }
+    }
+  ]
+}

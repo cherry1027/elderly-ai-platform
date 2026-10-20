@@ -38,7 +38,9 @@ device test or team agreement is implied by the checkboxes.
 
 ## Regression results
 
-- **608 backend tests passed; 4 opt-in live pytest cases remain skipped.**
+- **610 backend tests passed; 4 opt-in live pytest cases remain skipped.**
+  The original Day 7 run had 608; two fictional-demo fixture checks were added
+  during the subsequent mobile handoff.
 - **54 embedded PostgreSQL checks passed** across the unchanged migration chain.
 - `pip check`: no broken requirements. No dependency upgrades were needed.
 - Existing Starlette/httpx TestClient deprecation warning remains; it is not
@@ -142,3 +144,20 @@ revision/title/options; GET downloads retain the historical saved text.
 
 Use [frontend-integration.md](frontend-integration.md) as the single handoff;
 feature-specific guides remain linked there. No message was sent to Tarun.
+
+## Mobile handoff followup
+
+The [Windows and iPhone quickstart](backend-mobile-quickstart.md) adds copyable
+setup, safe client configuration, connection checks and an integration-error
+report format. The [fictional bilingual fixture](fixtures/investor-demo.json)
+contains five initial memories and a continuation memory in each language; the
+real mock provider recognises all entries without calls to an external service.
+Runtime/API behaviour is unchanged from `8375ada`.
+
+A read-only hosted check confirmed that the existing authorised development
+account has a confirmed email and configured password and is not banned. Its
+two explicitly fictional dashboard projects are present, with no sessions.
+Credentials and the account's email are not committed in these public guides.
+No password reset, email, account/data mutation or Auth-setting change was
+performed for the handoff. Its owner's actual app login and full iPhone flow
+still need acceptance; the local fixture is not automatically seeded into the UI.

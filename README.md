@@ -107,6 +107,7 @@ are opt-in and require two real development-project user tokens.
 
 - [Backend setup and live verification](backend/README.md)
 - [Tarun's frontend integration contract](docs/frontend-integration.md)
+- [Windows and iPhone backend quickstart](docs/backend-mobile-quickstart.md)
 - [Day 2 status](docs/day-2-status.md)
 - [Day 3 status and remaining acceptance](docs/day-3-status.md)
 - [Audio upload and transcript contract](docs/audio-api.md)

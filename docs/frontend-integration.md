@@ -6,9 +6,14 @@ the fictional autobiography workflow through private PDF export and continuation
 Real Expo/device acceptance still needs Tarun's confirmation; backend harness
 checks are not evidence of a successful iPhone integration.
 
-Use branch `codex/day-7-mobile-integration` after it is pushed. It builds on the
+Use the pushed branch `codex/day-7-mobile-integration`. It builds on the
 verified `backend/day-6-pdf-continuation` branch; do not substitute an older
 `main` checkout or merge/deploy without a separate team decision.
+
+Start with the [Windows and iPhone quickstart](backend-mobile-quickstart.md) for
+copyable setup commands, client configuration, the existing fictional dashboard
+fixtures and the first device acceptance checklist. Use the detailed contracts
+below when wiring individual screens.
 
 Day 5 adds explicit **Create My Story**, source-verified mock drafts, read/edit,
 version history and verification reports. Use the [Day 5 contract](story-drafts-api.md)

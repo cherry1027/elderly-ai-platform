@@ -22,6 +22,12 @@ from app.services.conversation_provider import (
 )
 from app.services.story_writer import DisabledStoryWriter, MockStoryWriter, StoryWriter
 from app.services.pdf_export import PdfRenderer
+ERROR_JSON_CONTENT = {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+API_GUARD_RESPONSES = {
+    408: {"content": ERROR_JSON_CONTENT, "description": "API request body timed out."},
+    413: {"content": ERROR_JSON_CONTENT, "description": "Request body exceeds its safe limit."},
+    500: {"content": ERROR_JSON_CONTENT, "description": "Sanitized unexpected API failure."},
+}
 
 
 def create_app(
@@ -87,11 +93,11 @@ def create_app(
     )
     application.include_router(health_router)
     application.include_router(readiness_router)
-    application.include_router(story_projects_router)
-    application.include_router(audio_router)
-    application.include_router(conversations_router)
-    application.include_router(story_drafts_router)
-    application.include_router(exports_router)
+    application.include_router(story_projects_router, responses=API_GUARD_RESPONSES)
+    application.include_router(audio_router, responses=API_GUARD_RESPONSES)
+    application.include_router(conversations_router, responses=API_GUARD_RESPONSES)
+    application.include_router(story_drafts_router, responses=API_GUARD_RESPONSES)
+    application.include_router(exports_router, responses=API_GUARD_RESPONSES)
     return application
 
 

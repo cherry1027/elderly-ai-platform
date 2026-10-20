@@ -138,3 +138,21 @@ def test_response_already_started_is_not_replaced():
     with pytest.raises(RuntimeError):
         asyncio.run(APISafetyMiddleware(downstream)({"type": "http", "path": "/api/v1/test", "headers": []}, receive, send))
     assert len(sent) == 1 and sent[0]["status"] == 200
+
+
+def test_openapi_documents_guard_errors_for_every_business_operation():
+    schema = create_app(Settings(_env_file=None)).openapi()
+    for path, item in schema["paths"].items():
+        if path.startswith("/api/v1/"):
+            for method, operation in item.items():
+                if method in {"get", "post", "patch"}:
+                    for status in ("408", "413", "500"):
+                        assert operation["responses"][status]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/ErrorResponse"}
+
+
+@pytest.mark.parametrize("path,method", [("/api/v1/story-drafts/{draft_id}/export", "post"),
+                                      ("/api/v1/story-exports/{export_id}/download", "get")])
+def test_pdf_errors_document_json_not_binary(path, method):
+    operation = create_app(Settings(_env_file=None)).openapi()["paths"][path][method]
+    for status in ("401", "404", "409", "422", "500", "503"):
+        assert set(operation["responses"][status]["content"]) == {"application/json"}

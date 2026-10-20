@@ -195,6 +195,33 @@ async def run_windows_probe_async(
         raise
 
 
+async def kill_and_reap_asyncio_process(process) -> None:
+    """Kill and reap a decoder even when request cancellation is repeated."""
+    if process.returncode is not None:
+        return
+    try:
+        process.kill()
+    except ProcessLookupError:
+        # The child may exit between the return-code check and the signal. It
+        # still needs wait() below so the transport/process is fully reaped.
+        pass
+
+    waiter = asyncio.create_task(process.wait())
+    cancelled = False
+    while not waiter.done():
+        try:
+            await asyncio.shield(waiter)
+        except asyncio.CancelledError:
+            # Keep the cleanup alive, but restore cancellation once the child
+            # has been reaped. This also handles a second shutdown/disconnect
+            # cancellation while an earlier cancellation is already unwinding.
+            cancelled = True
+            continue
+    waiter.result()
+    if cancelled:
+        raise asyncio.CancelledError
+
+
 async def probe_duration(path: Path, suffix: str) -> float:
     command = probe_command(path, suffix)
     cwd = str(path.parent.resolve())
@@ -230,8 +257,7 @@ async def probe_duration(path: Path, suffix: str) -> float:
             raise APIError(422, "AUDIO_PROCESSING_LIMIT", "Recording could not be processed within safe limits.") from None
         finally:
             if process.returncode is None:
-                process.kill()
-                await process.wait()
+                await kill_and_reap_asyncio_process(process)
         returncode = process.returncode
     if returncode == 3:
         raise APIError(422, "RECORDING_TOO_LONG", "Recordings must not exceed 90 seconds.")

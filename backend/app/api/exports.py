@@ -9,7 +9,6 @@ from fastapi import APIRouter, Body, Depends, Query, Request, Response
 
 from app.api.dependencies import get_current_user
 from app.core.errors import APIError, unavailable
-from app.schemas.errors import ErrorResponse
 from app.schemas.exports import (
     ContinueStoryRequest, ContinueStoryResponse, SAFE_PDF_FILENAME,
     StoryExportMetadata, StoryExportRequest,
@@ -21,7 +20,10 @@ from app.services.pdf_export import PdfDocument
 PDF_RENDER_TIMEOUT_SECONDS = 15
 
 router = APIRouter(prefix="/api/v1", tags=["PDF exports and continuation"], responses={
-    code: {"model": ErrorResponse} for code in (401, 403, 404, 409, 422, 503, 504)
+    # Explicit JSON media type: FastAPI otherwise inherits PDFResponse's media
+    # type for error models as well as successful binary downloads.
+    code: {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}}
+    for code in (401, 403, 404, 409, 422, 503, 504)
 })
 
 

@@ -14,7 +14,7 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 Swagger: http://127.0.0.1:8000/docs
 
-Backend version 0.6.0 includes [Day 5 Create My Story](../docs/story-drafts-api.md):
+Backend version 0.7.0 includes [Day 5 Create My Story](../docs/story-drafts-api.md):
 explicit generation, confirmed-memory evidence, immutable originals, versioned
 drafts, manual editing/history and conservative verification. For the free local
 simulation, set `CONVERSATION_MODE=mock STORY_GENERATION_MODE=mock` before the
@@ -27,6 +27,54 @@ requirements. No system PDF executable or font installation is required for the
 server; PDFs are rendered in memory with private/no-store download headers. The
 audit stores metadata only and retains the selected historical saved revision.
 Continuation resumes or creates a session but never generates a draft automatically.
+
+## Day 7 mobile development and acceptance
+
+Use the cumulative `codex/day-7-mobile-integration` review branch. From this
+directory, start the safe development launcher:
+
+```sh
+.venv/bin/python scripts/run_mobile_dev.py         # loopback only
+.venv/bin/python scripts/run_mobile_dev.py --lan   # trusted local network only
+```
+
+On Windows use `.venv\Scripts\python.exe`. The launcher refuses legacy/unknown
+Supabase projects, enables only the free conversation/story mocks, keeps real
+transcription disabled, disables access logs/proxy trust, and caps concurrent
+connections at 32. No public tunnel, deployment or paid provider is configured.
+Use the backend computer's LAN IP from a same-network phone; `0.0.0.0` is not a
+client URL and another computer's private address is not reachable across separate
+home networks. Stop the launcher with Ctrl+C after testing.
+
+Non-audio business API bodies are limited to 256 KiB and 30 seconds before JSON
+parsing. Safe failures are `413 REQUEST_TOO_LARGE`, `408 REQUEST_TIMEOUT`, and
+`500 INTERNAL_ERROR`; they never expose exception text and retain configured CORS
+and no-store. Audio keeps its separate authentication-before-read and 25 MB limit.
+PDF success bodies are binary, but their documented error responses are JSON.
+
+For authorized **disposable** existing development accounts only:
+
+```sh
+.venv/bin/python scripts/verify_day7.py --run --cleanup
+```
+
+This prompts privately for both account credentials, obtains/validates their
+access tokens online, then executes real FastAPI routes in-process against only
+`edbkuunyeyxnyenmmqud`. It injects a clearly fictional WAV transcription fixture
+and the existing free mock conversation/story providers; no speech/AI API is
+called. It verifies both languages, RLS denial, immutable originals, clarification,
+draft/edit/retry behavior, actual PDFs and historical versions. `--cleanup`
+deletes and verifies only this invocation's synthetic projects and children;
+without it data is retained and exact project IDs are reported. It never changes
+Auth settings or creates/deletes Auth users. Automated operators may explicitly
+use `--tokens-from-env` with two privately supplied `MEMY_DAY7_USER_A_TOKEN` /
+`MEMY_DAY7_USER_B_TOKEN` values; never place secrets in CLI arguments or chat.
+
+The authorized hosted Day 7 run passed for Swedish and English. This is backend
+acceptance, not proof that Tarun's Expo client, email confirmation or real iPhone
+download UX works. The four older opt-in live pytest cases remain skipped/pending.
+See the [single frontend handoff](../docs/frontend-integration.md) and
+[Day 7 evidence and limitations](../docs/day-7-status.md).
 
 ```sh
 curl -i http://127.0.0.1:8000/health

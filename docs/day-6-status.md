@@ -79,8 +79,10 @@ enables conversation/story **mock** modes; PDF export and continuation themselve
 need no AI provider. Auth/email configuration, existing user data, orphan settings,
 raw-audio retention, payments and subscriptions were not changed.
 
-Day 6 is committed locally, **not pushed or merged into main**. Development database
-deployment is separate from GitHub publication and public application hosting.
+Day 6 was subsequently pushed to `backend/day-6-pdf-continuation` at
+`dabe71fe706ecd74777f16705acb467719898d5f`; it was not merged into main.
+Day 7 builds cumulatively on that commit. Development database deployment is
+separate from GitHub publication and public application hosting.
 
 ## Handoff and remaining acceptance
 

@@ -14,7 +14,7 @@ python -m pytest -q -m 'not integration'
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-API: http://127.0.0.1:8000 · Swagger: http://127.0.0.1:8000/docs · Version: 0.6.0
+API: http://127.0.0.1:8000 · Swagger: http://127.0.0.1:8000/docs · Version: 0.7.0
 
 - GET /health: public process liveness.
 - GET /ready: public Supabase Data API connectivity, without fetching records.
@@ -46,6 +46,20 @@ and manual edits never receive an automatic factual pass. See
 Day 6 adds readable English/Swedish PDFs, immutable export metadata and explicit
 story continuation without overwriting earlier edits. PDF bytes are generated in
 memory, never stored in a public bucket. See [the PDF and continuation contract](docs/pdf-export-api.md).
+
+Day 7 consolidates the mobile handoff, adds safe request-body bounds and JSON
+failure responses, hardens cancelled decoder cleanup and verifies the complete
+Swedish/English mock journey against development Supabase with two issued user
+tokens. For a trusted same-network phone test, run from `backend/`:
+
+```sh
+.venv/bin/python scripts/run_mobile_dev.py --lan
+```
+
+The launcher pins the development project and enables only mock conversation and
+story generation. Normal audio transcription stays disabled. It does not create
+a public URL or establish real iPhone acceptance. See [Day 7 verification and
+remaining device checks](docs/day-7-status.md).
 
 Protected routes validate the supplied Supabase user access token through Auth
 `getUser`, then forward that exact user token plus the publishable key to the Data
@@ -102,6 +116,7 @@ are opt-in and require two real development-project user tokens.
 - [Day 5 status](docs/day-5-status.md)
 - [Day 6 PDF export and story continuation](docs/pdf-export-api.md)
 - [Day 6 status and verification](docs/day-6-status.md)
+- [Day 7 mobile integration and reliability verification](docs/day-7-status.md)
 - [Day 1 status](docs/day-1-status.md)
 - [Database design](docs/database-foundation.md)
 - [Initial audit](docs/day-1-audit.md)

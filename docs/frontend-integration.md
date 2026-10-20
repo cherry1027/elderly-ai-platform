@@ -470,7 +470,11 @@ body; oversized/slow requests return `413 REQUEST_TOO_LARGE` or
 `408 REQUEST_TIMEOUT`. Audio retains its separate multipart/processing limits.
 Unexpected server errors return sanitized `500 INTERNAL_ERROR`, not traces,
 tokens, database error bodies or private text. Configured CORS remains available
-on error responses.
+on application error responses. Always check HTTP status and Content-Type before
+parsing JSON: Uvicorn's launcher concurrency cap can reject an overloaded request
+with `503 text/plain` before the application middleware, without the JSON/CORS/
+cache headers above. Proxy/network failures can also lack the API envelope.
+Show a safe transient-unavailable message rather than crashing the client parser.
 
 | Condition | Client action |
 | --- | --- |

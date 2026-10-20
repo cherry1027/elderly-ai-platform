@@ -96,6 +96,13 @@ errors. Unexpected API exceptions before a response starts become JSON
 failures cannot be replaced with a second response. No exception/request secrets
 are written by the guard's fixed failure log message.
 
+The launcher's Uvicorn concurrency rejection occurs before ASGI middleware and
+can return `503 text/plain` without the JSON/no-store/CORS contract. Clients must
+check status and Content-Type before parsing; ingress/network errors are not
+guaranteed to have an application error envelope. LAN HTTP sends Bearer tokens
+without transport encryption, so use only disposable development identities on
+a trusted network; shared/public development needs HTTPS.
+
 Audio retains its 25,000,000-byte/90-second limit, its bounded multipart parsing,
 two admitted processing slots and isolated decoder process. Repeated request
 cancellation now waits for a killed Unix decoder to be reaped before temporary

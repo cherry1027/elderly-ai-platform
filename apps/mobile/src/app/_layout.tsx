@@ -5,8 +5,12 @@ import { LanguageProvider } from '../language';
 import { AuthProvider } from '../auth/AuthProvider';
 import { LoginNavigationProvider } from '../navigation/LoginNavigation';
 import { RegistrationProvider } from '../auth/RegistrationProvider';
+import { readStoryPreviewEnabled } from '../development/story-preview-config';
+import { StoryPreview } from '../development/StoryPreview';
 
 export default function RootLayout() {
+  // The explicit sample launcher never mounts account or preference providers.
+  if (readStoryPreviewEnabled()) return <SafeAreaProvider><StatusBar style="dark" /><StoryPreview /></SafeAreaProvider>;
   return <SafeAreaProvider>
     <LanguageProvider>
       <AuthProvider>

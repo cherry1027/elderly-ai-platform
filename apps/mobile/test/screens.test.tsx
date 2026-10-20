@@ -6,6 +6,7 @@ import { accessibilityLanguages, copy, type Language } from '../src/i18n';
 import { LanguageScreen } from '../src/screens/LanguageScreen';
 import { WelcomeScreen } from '../src/screens/WelcomeScreen';
 import { colors, layout } from '../src/theme';
+import { introCopy } from '../src/intro-copy';
 
 describe('language selection', () => {
   it('shows readable language self-names with an explicitly checked English default', () => {
@@ -70,6 +71,17 @@ describe('language selection', () => {
     fireEvent(swedish, 'blur');
     expect(swedish).toHaveStyle({ borderColor: colors.border });
   });
+
+  it.each<Language>(['en', 'sv'])('offers an optional returning Back action without presenting it as cancelling selected preferences in %s', language => {
+    const onBack = jest.fn(), onSelectLanguage = jest.fn(), onContinue = jest.fn();
+    render(<LanguageScreen language={language} onSelectLanguage={onSelectLanguage} onContinue={onContinue} onBack={onBack} />);
+    const back = screen.getByRole('button', { name: introCopy[language].back });
+    expect(back).toHaveStyle({ minHeight: 56 });
+    expect(back.props.accessibilityLanguage).toBe(accessibilityLanguages[language]);
+    expect(screen.queryByRole('button', { name: /cancel|avbryt/i })).toBeNull();
+    fireEvent.press(back);
+    expect(onBack).toHaveBeenCalledTimes(1); expect(onContinue).not.toHaveBeenCalled(); expect(onSelectLanguage).not.toHaveBeenCalled();
+  });
 });
 
 describe('Welcome', () => {
@@ -98,6 +110,20 @@ describe('Welcome', () => {
     }
     expect(screen.queryByText(/create my story/i)).toBeNull();
     expect(screen.getAllByRole('button').filter((button) => !button.props.accessibilityState?.disabled)).toHaveLength(1);
+  });
+
+  it.each<Language>(['en', 'sv'])('offers only an explicitly supplied primary action before the unavailable account controls in %s', language => {
+    const onPress = jest.fn(), label = language === 'sv' ? 'Öppna exempelberättelser' : 'Open sample stories';
+    render(<WelcomeScreen language={language} onChangeLanguage={jest.fn()} primaryAction={{ label, onPress }} />);
+    const primary = screen.getByRole('button', { name: label });
+    expect(primary).toHaveStyle({ minHeight: 56 }); expect(primary.props.accessibilityLanguage).toBe(accessibilityLanguages[language]);
+    expect(onPress).not.toHaveBeenCalled();
+    const buttons = screen.getAllByRole('button');
+    expect(buttons.indexOf(primary)).toBeLessThan(buttons.indexOf(screen.getByRole('button', { name: introCopy[language].login })));
+    for (const name of [introCopy[language].login, introCopy[language].register, introCopy[language].guest]) {
+      expect(screen.getByRole('button', { name })).toBeDisabled();
+    }
+    fireEvent.press(primary); expect(onPress).toHaveBeenCalledTimes(1); expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 });
 

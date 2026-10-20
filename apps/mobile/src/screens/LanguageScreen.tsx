@@ -10,11 +10,13 @@ import {
   type Language,
 } from '../i18n';
 import { colors, headingFont, layout } from '../theme';
+import { introCopy } from '../intro-copy';
 
 interface LanguageScreenProps {
   language: Language;
   onSelectLanguage: (language: Language) => void;
   onContinue: () => void;
+  onBack?: () => void;
 }
 
 const languages: Language[] = ['sv', 'en'];
@@ -23,6 +25,7 @@ export function LanguageScreen({
   language,
   onSelectLanguage,
   onContinue,
+  onBack,
 }: LanguageScreenProps) {
   const text = copy[language];
 
@@ -62,6 +65,7 @@ export function LanguageScreen({
         ))}
       </View>
       <LargeButton label={text.continue} language={language} onPress={onContinue} />
+      {onBack && <LargeButton label={introCopy[language].back} language={language} onPress={onBack} variant="secondary" />}
     </Screen>
   );
 }

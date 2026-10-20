@@ -8,7 +8,7 @@ export const createStoryCopy = {
     savingWarning: 'Your request may already have reached the service. Leaving this screen might not stop it. Check My Stories before trying again.',
     uncertain: 'We could not confirm whether your story was saved. Go back to My Stories and refresh before trying again.',
     success: 'Your story was saved.', savedLanguage: 'Language',
-    validation: { required: 'Enter a title for your story.', 'too-long': 'Use a title with no more than 120 characters.', language: 'Choose English or Swedish.' },
+    validation: { required: 'Please enter a title for your story.', 'too-long': 'Your story title must be 120 characters or fewer.', language: 'Choose English or Swedish.' },
     errors: {
       configuration: 'Saving is not available in this development setup. Nothing was saved.',
       authentication: 'Your session could not be verified. Sign out and log in again.',
@@ -32,7 +32,7 @@ export const createStoryCopy = {
     savingWarning: 'Din begäran kan redan ha nått tjänsten. Att lämna skärmen kanske inte stoppar den. Kontrollera Mina berättelser innan du försöker igen.',
     uncertain: 'Vi kunde inte bekräfta om din berättelse sparades. Gå tillbaka till Mina berättelser och uppdatera innan du försöker igen.',
     success: 'Din berättelse har sparats.', savedLanguage: 'Språk',
-    validation: { required: 'Skriv en titel för din berättelse.', 'too-long': 'Använd en titel med högst 120 tecken.', language: 'Välj engelska eller svenska.' },
+    validation: { required: 'Ange en titel för din berättelse.', 'too-long': 'Titeln får innehålla högst 120 tecken.', language: 'Välj engelska eller svenska.' },
     errors: {
       configuration: 'Det går inte att spara i den här utvecklingsmiljön. Ingenting sparades.',
       authentication: 'Din session kunde inte verifieras. Logga ut och logga in igen.',

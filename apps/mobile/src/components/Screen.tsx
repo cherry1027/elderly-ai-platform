@@ -1,17 +1,23 @@
-import type { PropsWithChildren } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import type { PropsWithChildren, RefObject } from 'react';
+import { ScrollView, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, layout } from '../theme';
 
-export function Screen({ children }: PropsWithChildren) {
+type ScreenProps = PropsWithChildren<{
+  scrollViewRef?: RefObject<ScrollView | null>;
+  onContentLayout?: (event: LayoutChangeEvent) => void;
+}>;
+
+export function Screen({ children, scrollViewRef, onContentLayout }: ScreenProps) {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
       <ScrollView
+        ref={scrollViewRef}
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.scrollContent}
         alwaysBounceVertical={false}
       >
-        <View style={styles.content}>{children}</View>
+        <View style={styles.content} onLayout={onContentLayout}>{children}</View>
       </ScrollView>
     </SafeAreaView>
   );

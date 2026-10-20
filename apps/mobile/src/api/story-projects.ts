@@ -30,6 +30,9 @@ export class StoryProjectsError extends Error {
     super(messages[kind]);
     this.name = 'StoryProjectsError';
   }
+  // Preserve the earlier constructor/property while also describing uncertain
+  // PATCH outcomes. Neither flag is evidence that a server write succeeded.
+  get mayHaveWritten(): boolean { return this.mayHaveCreated; }
 }
 
 export interface CreateStoryProjectInput { title: string; language: 'en' | 'sv' }
@@ -63,6 +66,46 @@ export function validateCreateStoryInput(value: unknown): CreateStoryProjectInpu
     if (error instanceof CreateStoryInputError) throw error;
     throw new CreateStoryInputError('required');
   }
+}
+
+export interface UpdateStoryProjectInput { title?: string; description?: string | null }
+
+export class UpdateStoryInputError extends Error {
+  constructor(readonly kind: 'description' | 'payload') {
+    super(kind === 'description' ? 'Use a description with no more than 4,000 characters.'
+      : 'Provide only a title or description to update.');
+    this.name = 'UpdateStoryInputError';
+  }
+}
+
+/** Omitted values stay omitted; explicit null clears only the description. */
+export function validateUpdateStoryInput(value: unknown): UpdateStoryProjectInput {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new UpdateStoryInputError('payload');
+    const keys = Object.keys(value);
+    if (!keys.length || keys.some(key => key !== 'title' && key !== 'description')) throw new UpdateStoryInputError('payload');
+    const input = value as Record<string, unknown>;
+    const result: UpdateStoryProjectInput = {};
+    if (Object.hasOwn(input, 'title')) result.title = validateCreateStoryInput({ title: input.title, language: 'en' }).title;
+    if (Object.hasOwn(input, 'description')) {
+      const description = input.description;
+      if (description !== null && (typeof description !== 'string' || description.length > 8000 || [...description].length > 4000)) {
+        throw new UpdateStoryInputError('description');
+      }
+      result.description = description;
+    }
+    return result;
+  } catch (error) {
+    if (error instanceof CreateStoryInputError || error instanceof UpdateStoryInputError) throw error;
+    throw new UpdateStoryInputError('payload');
+  }
+}
+
+export function validateStoryProjectId(value: unknown): string {
+  if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) {
+    throw new StoryProjectsError('validation');
+  }
+  return value.toLowerCase();
 }
 
 /** Explicit development LAN origins only; never DNS, loopback, public or alternate IP spellings. */
@@ -116,18 +159,26 @@ export interface ListStoryProjectsOptions {
   timeoutMs?: number;
 }
 
-/** One transport for list/create: no React, native storage, SDK or environment access. */
+interface StoryRequest {
+  method: 'GET' | 'POST' | 'PATCH';
+  projectId?: string;
+  input?: CreateStoryProjectInput | UpdateStoryProjectInput;
+}
+
+/** One transport for list/create/details/update, without SDK or native storage. */
 async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
   request = globalThis.fetch, timeoutMs = 10_000 }: ListStoryProjectsOptions,
-  input: CreateStoryProjectInput | null, decode: (value: unknown) => T): Promise<T> {
-  const creating = input !== null;
-  const url = creating ? `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-projects` : storyProjectsUrl(baseUrl);
+  endpoint: StoryRequest, decode: (value: unknown) => T): Promise<T> {
+  const writing = endpoint.method !== 'GET';
+  const resource = `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-projects`;
+  const url = endpoint.projectId ? `${resource}/${endpoint.projectId}`
+    : writing ? resource : storyProjectsUrl(baseUrl);
   if (typeof getAccessToken !== 'function' || typeof request !== 'function' ||
     !Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) throw new StoryProjectsError('configuration');
   const controller = new AbortController();
   let dispatched = false;
   const failure = (kind: StoryProjectsErrorKind, status?: number, ambiguous = false) =>
-    new StoryProjectsError(kind, status, creating && dispatched && ambiguous);
+    new StoryProjectsError(kind, status, writing && dispatched && ambiguous);
   let interruption: 'cancelled' | 'timeout' | null = null;
   let finished = false;
   let rejectInterrupted: (error: StoryProjectsError) => void = () => {};
@@ -154,9 +205,9 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
     try {
       dispatched = true;
       response = await request(url, {
-        method: creating ? 'POST' : 'GET',
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(creating ? { 'Content-Type': 'application/json' } : {}) },
-        ...(creating ? { body: JSON.stringify(input) } : {}),
+        method: endpoint.method,
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(writing ? { 'Content-Type': 'application/json' } : {}) },
+        ...(writing ? { body: JSON.stringify(endpoint.input) } : {}),
         credentials: 'omit', cache: 'no-store', redirect: 'error', signal: controller.signal,
       });
     } catch { check(); throw failure('network', undefined, true); }
@@ -170,7 +221,7 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
       if (response.status >= 400) throw failure('unavailable', response.status, response.status >= 500);
       throw failure('invalid-response', undefined, true);
     }
-    if (response.status !== (creating ? 201 : 200) || response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json') {
+    if (response.status !== (endpoint.method === 'POST' ? 201 : 200) || response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json') {
       throw failure('invalid-response', undefined, true);
     }
     let text: string;
@@ -187,7 +238,7 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
     return await Promise.race([operation, interrupted]);
   } catch (error) {
     if (error instanceof StoryProjectsError) {
-      if (creating && dispatched && error.kind === 'invalid-response') throw failure(error.kind, error.status, true);
+      if (writing && dispatched && error.kind === 'invalid-response') throw failure(error.kind, error.status, true);
       throw error;
     }
     throw failure('invalid-response', undefined, true);
@@ -200,7 +251,7 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
 }
 
 export function listStoryProjects(options: ListStoryProjectsOptions): Promise<StoryProject[]> {
-  return executeStoryRequest(options, null, data => {
+  return executeStoryRequest(options, { method: 'GET' }, data => {
     if (!Array.isArray(data) || data.length > 50) throw new StoryProjectsError('invalid-response');
     const rows = data.map(project);
     if (new Set(rows.map(row => row.id.toLowerCase())).size !== rows.length) throw new StoryProjectsError('invalid-response');
@@ -213,11 +264,43 @@ export interface CreateStoryProjectOptions extends ListStoryProjectsOptions { in
 /** No retries: an interrupted/malformed write can have succeeded on the server. */
 export async function createStoryProject({ input, ...options }: CreateStoryProjectOptions): Promise<StoryProject> {
   const validated = validateCreateStoryInput(input);
-  return executeStoryRequest(options, validated, data => {
+  return executeStoryRequest(options, { method: 'POST', input: validated }, data => {
     const created = project(data);
     if (created.title !== validated.title || created.language !== validated.language || created.status !== 'draft') {
       throw new StoryProjectsError('invalid-response');
     }
     return created;
+  });
+}
+
+export interface GetStoryProjectOptions extends ListStoryProjectsOptions { projectId: string }
+
+export async function getStoryProject({ projectId, ...options }: GetStoryProjectOptions): Promise<StoryProject> {
+  const id = validateStoryProjectId(projectId);
+  return executeStoryRequest(options, { method: 'GET', projectId: id }, data => {
+    const loaded = project(data);
+    if (loaded.id.toLowerCase() !== id) throw new StoryProjectsError('invalid-response');
+    return loaded;
+  });
+}
+
+export interface UpdateStoryProjectOptions extends GetStoryProjectOptions {
+  input: UpdateStoryProjectInput;
+  expectedLanguage: 'en' | 'sv';
+}
+
+/** A lost response may hide a committed update; callers must reconcile before retrying. */
+export async function updateStoryProject({ projectId, input, expectedLanguage, ...options }: UpdateStoryProjectOptions): Promise<StoryProject> {
+  const id = validateStoryProjectId(projectId);
+  const validated = validateUpdateStoryInput(input);
+  if (expectedLanguage !== 'en' && expectedLanguage !== 'sv') throw new StoryProjectsError('validation');
+  return executeStoryRequest(options, { method: 'PATCH', projectId: id, input: validated }, data => {
+    const updated = project(data);
+    if (updated.id.toLowerCase() !== id || updated.language !== expectedLanguage ||
+      (Object.hasOwn(validated, 'title') && updated.title !== validated.title) ||
+      (Object.hasOwn(validated, 'description') && updated.description !== validated.description)) {
+      throw new StoryProjectsError('invalid-response');
+    }
+    return updated;
   });
 }

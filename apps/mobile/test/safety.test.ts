@@ -20,7 +20,9 @@ const config = JSON.parse(fs.readFileSync(path.join(appRoot, 'app.json'), 'utf8'
 
 describe('development-only mobile application boundaries', () => {
   it('imports only local native UI, Router and platform modules', () => {
-    const allowed = new Set(['react', 'react-native', 'react-native-svg', 'react-native-safe-area-context', 'expo-router', 'expo-status-bar', 'expo-constants', 'expo-secure-store', '@supabase/supabase-js', '@react-native-async-storage/async-storage']);
+    // Expo Router's published navigation types describe the existing native stack;
+    // permit this exact SDK subpath, without allowing arbitrary external imports.
+    const allowed = new Set(['react', 'react-native', 'react-native-svg', 'react-native-safe-area-context', 'expo-router', 'expo-router/react-navigation', 'expo-status-bar', 'expo-constants', 'expo-secure-store', '@supabase/supabase-js', '@react-native-async-storage/async-storage']);
     const imports = [...source.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((match) => match[1]);
     expect(imports.length).toBeGreaterThan(0);
     for (const name of imports) expect(name.startsWith('.') || allowed.has(name)).toBe(true);
@@ -39,9 +41,10 @@ describe('development-only mobile application boundaries', () => {
     expect(fs.readFileSync(path.join(appRoot, 'src/auth/client.ts'), 'utf8')).not.toMatch(/signUp\s*\(/);
     expect(authSource).not.toMatch(/\b(?:client|supabase)\.(?:from|storage|functions|channel|rpc)\b/);
     expect(authSource).not.toContain('@react-native-async-storage/async-storage');
-    expect(apiSource).not.toMatch(/@supabase|secure-store|async-storage|console\.|method:\s*['"](?:PUT|PATCH|DELETE)['"]/i);
+    expect(apiSource).not.toMatch(/@supabase|secure-store|async-storage|console\.|method:\s*['"](?:PUT|DELETE)['"]/i);
     expect(apiSource).toContain("'GET'");
     expect(apiSource).toContain("'POST'");
+    expect(apiSource).toContain("'PATCH'");
     expect(apiSource).not.toMatch(/\/sessions|user_id/);
   });
 

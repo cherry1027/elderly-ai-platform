@@ -1,10 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { fireEvent, render, screen } from '@testing-library/react-native';
-import { Keyboard, KeyboardAvoidingView, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
+import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
+import { AccessibilityInfo, Keyboard, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, type KeyboardEvent } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { StoryProject, StoryProjectsErrorKind } from '../src/api/story-projects';
 import { createStoryCopy } from '../src/create-story-copy';
 import type { Language } from '../src/i18n';
+import { Screen } from '../src/components/Screen';
 import { CreateStoryScreen, type CreateStoryState } from '../src/screens/CreateStoryScreen';
 import { colors } from '../src/theme';
 
@@ -49,6 +50,122 @@ describe('native Create My Story form', () => {
     }
     expect(onSubmit).not.toHaveBeenCalled();
     expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it.each((['en', 'sv'] as const).flatMap(language => [
+    { name: 'empty', title: '', kind: 'required' as const },
+    { name: 'whitespace-only', title: ' \t\n ', kind: 'required' as const },
+    { name: 'overlong', title: 'a'.repeat(121), kind: 'too-long' as const },
+  ].map(value => ({ language, ...value }))))('shows adjacent, readable $name feedback without reopening the keyboard in $language', ({ language, title, kind }) => {
+    const dismiss = jest.spyOn(Keyboard, 'dismiss');
+    try {
+      const { onSubmit } = setup({ language });
+      const text = createStoryCopy[language];
+      const expected = language === 'en'
+        ? kind === 'required' ? 'Please enter a title for your story.' : 'Your story title must be 120 characters or fewer.'
+        : kind === 'required' ? 'Ange en titel för din berättelse.' : 'Titeln får innehålla högst 120 tecken.';
+      const input = screen.getByLabelText(text.titleLabel);
+      fireEvent.changeText(input, title);
+      fireEvent.press(screen.getByRole('button', { name: text.create }));
+      const alert = within(screen.getByTestId('create-story-title-field')).getByRole('alert');
+      expect(alert).toHaveTextContent(expected);
+      expect(alert).toHaveStyle({ fontSize: 22, lineHeight: 32 });
+      expect(alert.props.allowFontScaling).toBe(true);
+      expect(input.props.value).toBe(title);
+      expect(input.props.accessibilityHint).toBe(`${expected} ${text.titleHelp}`);
+      expect(input.props.autoFocus).not.toBe(true);
+      expect(input).toHaveStyle({ borderColor: colors.border });
+      expect(dismiss).toHaveBeenCalledTimes(1);
+      expect(onSubmit).not.toHaveBeenCalled(); expect(globalThis.fetch).not.toHaveBeenCalled();
+    } finally { dismiss.mockRestore(); }
+  });
+
+  it.each<Language>(['en', 'sv'])('keeps invalid feedback through edits and language choices until the title is corrected in %s', language => {
+    const { onSubmit } = setup({ language });
+    const text = createStoryCopy[language];
+    const input = screen.getByLabelText(text.titleLabel);
+    fireEvent.press(screen.getByRole('button', { name: text.create }));
+    fireEvent.changeText(input, '   ');
+    expect(screen.getByRole('alert')).toHaveTextContent(text.validation.required);
+    fireEvent.press(screen.getByRole('radio', { name: language === 'sv' ? text.english : text.swedish }));
+    expect(screen.getByRole('alert')).toHaveTextContent(text.validation.required);
+    fireEvent.changeText(input, 'a'.repeat(121));
+    expect(screen.getByRole('alert')).toHaveTextContent(text.validation['too-long']);
+    fireEvent.changeText(input, '\u0085\u200b');
+    expect(screen.getByRole('alert')).toHaveTextContent(text.validation.required);
+    fireEvent.changeText(input, 'Ett tydligt minne');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(input.props.accessibilityHint).toBe(text.titleHelp);
+    expect(onSubmit).not.toHaveBeenCalled(); expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it.each((['en', 'sv'] as const).flatMap(language => (['ios', 'android'] as const).map(platform => ({ language, platform }))))(
+    'uses one platform-appropriate error announcement per invalid attempt in $language on $platform', ({ language, platform }) => {
+      const original = AccessibilityInfo.announceForAccessibility;
+      const announce = jest.fn();
+      const os = jest.replaceProperty(Platform, 'OS', platform);
+      AccessibilityInfo.announceForAccessibility = announce;
+      let view: ReturnType<typeof render> | undefined;
+      try {
+        ({ view } = setup({ language }));
+        const text = createStoryCopy[language];
+        const create = screen.getByRole('button', { name: text.create });
+        fireEvent.press(create); fireEvent.press(create);
+        const alert = screen.getByRole('alert');
+        if (platform === 'ios') {
+          expect(announce).toHaveBeenCalledTimes(2);
+          expect(announce).toHaveBeenNthCalledWith(1, text.validation.required);
+          expect(announce).toHaveBeenNthCalledWith(2, text.validation.required);
+          expect(alert.props.accessibilityLiveRegion).toBeUndefined();
+        } else {
+          expect(announce).not.toHaveBeenCalled();
+          expect(alert.props.accessibilityLiveRegion).toBe('assertive');
+        }
+      } finally { view?.unmount(); AccessibilityInfo.announceForAccessibility = original; os.restore(); }
+    });
+
+  it.each<Language>(['en', 'sv'])('reveals the title field after layout and keyboard hide/show, then cleans up both listeners in %s', language => {
+    const original = Keyboard.addListener;
+    const subscriptions: { name: 'keyboardDidHide' | 'keyboardDidShow'; listener: (event: KeyboardEvent) => void; remove: jest.Mock }[] = [];
+    Keyboard.addListener = ((name, listener) => {
+      if (name !== 'keyboardDidHide' && name !== 'keyboardDidShow') return original.call(Keyboard, name, listener);
+      const subscription = { name, listener, remove: jest.fn() };
+      subscriptions.push(subscription);
+      return { remove: subscription.remove };
+    }) as typeof Keyboard.addListener;
+    let view: ReturnType<typeof render> | undefined;
+    try {
+      ({ view } = setup({ language }));
+      const scrollTo = jest.fn();
+      const container = screen.UNSAFE_getByType(Screen);
+      container.props.scrollViewRef.current = { scrollTo };
+      const layout = (y: number) => ({ nativeEvent: { layout: { x: 0, y, width: 320, height: 200 } } });
+      act(() => container.props.onContentLayout(layout(24)));
+      fireEvent(screen.getByTestId('create-story-form'), 'layout', layout(180));
+      fireEvent(screen.getByTestId('create-story-title-field'), 'layout', layout(70));
+      expect(scrollTo).not.toHaveBeenCalled();
+      fireEvent.press(screen.getByRole('button', { name: createStoryCopy[language].create }));
+      expect(scrollTo).toHaveBeenLastCalledWith({ y: 258, animated: false });
+      fireEvent(screen.getByTestId('create-story-form'), 'layout', layout(140));
+      expect(scrollTo).toHaveBeenLastCalledWith({ y: 218, animated: false });
+      const keyboardHidden: KeyboardEvent = { duration: 0, easing: 'keyboard',
+        endCoordinates: { screenX: 0, screenY: 800, width: 390, height: 0 } };
+      const hide = subscriptions.filter(subscription => subscription.name === 'keyboardDidHide').at(-1)!.listener;
+      const show = subscriptions.filter(subscription => subscription.name === 'keyboardDidShow').at(-1)!.listener;
+      scrollTo.mockClear();
+      act(() => hide(keyboardHidden));
+      expect(scrollTo).toHaveBeenCalledWith({ y: 218, animated: false });
+      scrollTo.mockClear();
+      act(() => show({ ...keyboardHidden, endCoordinates: { screenX: 0, screenY: 500, width: 390, height: 300 } }));
+      expect(scrollTo).toHaveBeenCalledWith({ y: 218, animated: false });
+      fireEvent.changeText(screen.getByLabelText(createStoryCopy[language].titleLabel), 'A corrected title');
+      scrollTo.mockClear(); act(() => { hide(keyboardHidden); show(keyboardHidden); });
+      expect(scrollTo).not.toHaveBeenCalled();
+      view.unmount(); view = undefined;
+      expect(subscriptions.length).toBeGreaterThan(0);
+      for (const subscription of subscriptions) expect(subscription.remove).toHaveBeenCalledTimes(1);
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    } finally { view?.unmount(); Keyboard.addListener = original; }
   });
 
   it.each((['en', 'sv'] as const).flatMap(language => [

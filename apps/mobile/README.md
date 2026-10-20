@@ -1,4 +1,20 @@
-# Memy Mobile Task 3B — Create My Story
+# Memy Mobile Task 3C — Story Details and editing
+
+Task 3C adds accessible title feedback, Open Story and title/description editing.
+See [STORY_DETAILS.md](STORY_DETAILS.md) for the isolated, account-free iPhone
+sample preview and [STORY_DETAILS_VERIFICATION.md](STORY_DETAILS_VERIFICATION.md)
+for actual checks and known limitations. Live story connectivity is unconfigured.
+The current complete-flow corrections, results and iPhone retest steps are in
+[NAVIGATION_AUDIT.md](NAVIGATION_AUDIT.md); its results supersede the initial
+1,406-test checkpoint. Sample Sign Out now returns to isolated Welcome.
+Startup now prints NORMAL APP or SAMPLE STORIES PREVIEW and picks an unused port
+by default. Use `npm start` for normal Memy; use `npm run preview:stories` only for
+fictional examples. When changing modes, stop this server, close Expo Go without
+deleting its data, and scan the NEW terminal QR. See STORY_DETAILS.md for exact steps.
+The following Task 3B/earlier sections are historical; the deferred title feedback
+is now implemented but physical iPhone/VoiceOver retesting is still pending.
+
+## Task 3B — Create My Story (historical)
 
 My Stories now opens a native Swedish/English form for a title and story language.
 Creation uses the existing authenticated API transport. The development API URL

@@ -5,6 +5,7 @@ import { PreferenceLoading } from '../components/PreferenceLoading';
 import { useLanguage } from '../language';
 import { StoriesHome } from '../stories/StoriesHome';
 import { useLoginNavigation } from '../navigation/LoginNavigation';
+import { useEntranceRoot } from '../navigation/entrance';
 
 export default function AuthenticatedRoute() {
   const router = useRouter();
@@ -19,6 +20,7 @@ export default function AuthenticatedRoute() {
     if (verifiedAccountId) rememberAuthenticatedVisit();
   }, [verifiedAccountId, rememberAuthenticatedVisit]);
   useFocusEffect(useCallback(() => { cancelLogin(); }, [cancelLogin]));
+  useEntranceRoot(ready && auth.appActive && !ending && auth.status === 'signed-in' && !!auth.user, 'authenticated');
   if (!ready || !auth.appActive || ending || ['checking', 'busy'].includes(auth.status)) {
     return <PreferenceLoading language={language} />;
   }

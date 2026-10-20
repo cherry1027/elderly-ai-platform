@@ -8,6 +8,7 @@ type LoginNavigation = {
   requestRegistration: () => void;
   cancelRegistration: () => void;
   welcomeAvailable: boolean;
+  rememberWelcomeVisit: () => void;
   rememberAuthenticatedVisit: () => void;
 };
 const LoginNavigationContext = createContext<LoginNavigation | null>(null);
@@ -21,12 +22,14 @@ export function LoginNavigationProvider({ children }: PropsWithChildren) {
   const cancelLogin = useCallback(() => setLoginRequested(false), []);
   const requestRegistration = useCallback(() => { setLoginRequested(false); setRegistrationRequested(true); }, []);
   const cancelRegistration = useCallback(() => setRegistrationRequested(false), []);
-  // A verified returning account can lack local onboarding preferences. Keep
-  // its sign-out destination without fabricating a completed preference record.
-  const rememberAuthenticatedVisit = useCallback(() => setWelcomeAvailable(true), []);
+  // A returning account or session-recovery flow can lack local preferences.
+  // Keep its Welcome destination without fabricating onboarding completion.
+  // This UI-only marker grants no authentication or data access.
+  const rememberWelcomeVisit = useCallback(() => setWelcomeAvailable(true), []);
+  const rememberAuthenticatedVisit = rememberWelcomeVisit;
   return <LoginNavigationContext.Provider value={{ loginRequested, requestLogin, cancelLogin,
     registrationRequested, requestRegistration, cancelRegistration,
-    welcomeAvailable, rememberAuthenticatedVisit }}>
+    welcomeAvailable, rememberWelcomeVisit, rememberAuthenticatedVisit }}>
     {children}
   </LoginNavigationContext.Provider>;
 }

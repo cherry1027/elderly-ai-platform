@@ -20,10 +20,11 @@ interface MyStoriesScreenProps {
   state: MyStoriesState;
   onRefresh: () => void;
   onCreateStory: () => void;
+  onOpenStory?: (projectId: string) => void;
   onSignOut: () => void;
 }
 
-export function MyStoriesScreen({ language, user, state, onRefresh, onCreateStory, onSignOut }: MyStoriesScreenProps) {
+export function MyStoriesScreen({ language, user, state, onRefresh, onCreateStory, onOpenStory, onSignOut }: MyStoriesScreenProps) {
   const text = storiesCopy[language];
   const [refreshFocused, setRefreshFocused] = useState(false);
   const [createFocused, setCreateFocused] = useState(false);
@@ -89,6 +90,8 @@ export function MyStoriesScreen({ language, user, state, onRefresh, onCreateStor
               <Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.detail}>
                 {text.status}: {status}
               </Text>
+              {onOpenStory && <LargeButton label={`${text.openStory}: ${title || text.untitled}`} language={language}
+                onPress={() => onOpenStory(project.id)} />}
             </View>;
           })}
         </>)}

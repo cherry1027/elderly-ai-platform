@@ -20,6 +20,8 @@ import { introCopy } from '../src/intro-copy';
 import { copy, type Language as Locale } from '../src/i18n';
 import { PREFERENCES_KEY } from '../src/onboarding/preferences';
 import { redirectSystemPath } from '../src/app/+native-intent';
+import { createStoryCopy } from '../src/create-story-copy';
+import { storiesCopy } from '../src/stories-copy';
 
 jest.mock('../src/auth/client', () => ({ createMobileAuth: jest.fn() }));
 jest.mock('../src/auth/config', () => ({ readMobileAuthConfig: jest.fn() }));
@@ -58,6 +60,11 @@ function fill(language: Locale = 'en', email = 'a@example.test') {
   fireEvent.changeText(screen.getByLabelText(authCopy[language].email), email);
   fireEvent.changeText(screen.getByLabelText(authCopy[language].password), 'synthetic-password');
   fireEvent.press(screen.getByRole('button', { name: authCopy[language].signIn }));
+}
+function appStack(flow: ReturnType<typeof renderRouter>) {
+  const root = flow.getRouterState()!;
+  // Expo Router's test container wraps the actual application stack in __root.
+  return root.routes[0]?.name === '__root' && root.routes[0].state ? root.routes[0].state : root;
 }
 
 describe('actual native login routes with mocked auth services', () => {
@@ -258,18 +265,125 @@ describe('canonical entrance and in-memory login intent', () => {
   });
 
   it('does not expose a stale Login through stack Back after success or sign-out', async () => {
-    await openWelcome(); await openLogin(); fill(); await screen.findByText('a@example.test');
-    if (router.canGoBack()) act(() => router.back());
-    await screen.findByText('a@example.test');
+    const flow = await openWelcome(); await openLogin(); fill(); await screen.findByText('a@example.test');
+    await waitFor(() => expect(appStack(flow).routes.map(route => route.name)).toEqual(['authenticated']));
+    expect(router.canGoBack()).toBe(false);
     expect(screen.queryByLabelText(authCopy.en.password)).toBeNull();
+    expect(auth.signOut).not.toHaveBeenCalled();
     fireEvent.press(screen.getByRole('button', { name: authCopy.en.signOut }));
     await screen.findByRole('header', { name: copy.en.welcomeTitle });
-    for (let attempt = 0; attempt < 3 && router.canGoBack(); attempt += 1) {
-      act(() => router.back());
-      await waitFor(() => expect(screen.queryByRole('header', { name: authCopy.en.title })).toBeNull());
-    }
+    await waitFor(() => expect(appStack(flow).routes.map(route => route.name)).toEqual(['welcome']));
+    expect(router.canGoBack()).toBe(false);
     expect(screen.queryByLabelText(authCopy.en.password)).toBeNull();
     expect(screen.queryByText('a@example.test')).toBeNull();
+    expect(auth.signOut).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['/', ...coldPaths])('keeps cold session-recovery entry %s on Welcome without inventing preferences', async path => {
+    snapshot = { status: 'signed-out', user: null, error: 'session' };
+    const flow = renderRouter(routes, { initialUrl: path });
+    await screen.findByRole('header', { name: copy.en.welcomeTitle });
+    expect(flow.getPathname()).toBe('/welcome');
+    expect(router.canGoBack()).toBe(false);
+    expect(await AsyncStorage.getItem(PREFERENCES_KEY)).toBeNull();
+    expect(auth.signIn).not.toHaveBeenCalled(); expect(auth.signOut).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText(authCopy.en.password)).toBeNull();
+  });
+
+  it('offers cleanup retry at cold Welcome even without saved preferences', async () => {
+    snapshot = { status: 'blocked', user: null, error: 'cleanup' };
+    const flow = renderRouter(routes, { initialUrl: '/' });
+    await screen.findByText(authCopy.en.errors.cleanup);
+    expect(flow.getPathname()).toBe('/welcome'); expect(router.canGoBack()).toBe(false);
+    expect(screen.getByRole('button', { name: introCopy.en.login })).toBeDisabled();
+    expect(await AsyncStorage.getItem(PREFERENCES_KEY)).toBeNull();
+    expect(auth.signOut).not.toHaveBeenCalled();
+    fireEvent.press(screen.getByRole('button', { name: authCopy.en.retryCleanup }));
+    await waitFor(() => expect(screen.getByRole('button', { name: introCopy.en.login })).toBeEnabled());
+    expect(flow.getPathname()).toBe('/welcome');
+    expect(await AsyncStorage.getItem(PREFERENCES_KEY)).toBeNull();
+  });
+
+  it.each(['checking', 'busy'] as const)('retains history while %s, then resets only the verified focused route without replacing its key', async status => {
+    const flow = await openWelcome();
+    act(() => { publish({ status, user: null, error: null }); router.push('/authenticated'); });
+    await waitFor(() => expect(flow.getPathname()).toBe('/authenticated'));
+    const before = appStack(flow);
+    const key = before.routes[before.index ?? 0].key;
+    expect(before.routes.length).toBeGreaterThan(1);
+    expect(screen.queryByText('a@example.test')).toBeNull();
+    expect(auth.signOut).not.toHaveBeenCalled();
+    act(() => publish({ status: 'signed-in', user: { id: 'verified-a', email: 'a@example.test' }, error: null }));
+    await screen.findByText('a@example.test');
+    await waitFor(() => expect(appStack(flow).routes.map(route => route.name)).toEqual(['authenticated']));
+    expect(appStack(flow).routes[0].key).toBe(key);
+    expect(auth.signOut).not.toHaveBeenCalled(); expect(auth.signIn).not.toHaveBeenCalled();
+  });
+
+  it.each(['checking', 'busy'] as const)('does not clear public history until Welcome is eligible and auth is no longer %s', async status => {
+    const flow = await openWelcome();
+    act(() => router.push('/language'));
+    act(() => { publish({ status, user: null, error: null }); router.push('/welcome'); });
+    await waitFor(() => expect(flow.getPathname()).toBe('/welcome'));
+    const before = appStack(flow);
+    const key = before.routes[before.index ?? 0].key;
+    expect(before.routes.length).toBeGreaterThan(1);
+    act(() => publish({ status: 'signed-out', user: null, error: null }));
+    await screen.findByRole('header', { name: copy.en.welcomeTitle });
+    await waitFor(() => expect(appStack(flow).routes.map(route => route.name)).toEqual(['welcome']));
+    expect(appStack(flow).routes[0].key).toBe(key);
+    expect(auth.signOut).not.toHaveBeenCalled();
+  });
+
+  it('defers authenticated history cleanup while backgrounded and preserves the verified route on foreground', async () => {
+    const original = AppState.addEventListener;
+    const changes = new Set<(state: AppStateStatus) => void>();
+    AppState.addEventListener = (event, listener) => {
+      const changed = listener as (state: AppStateStatus) => void;
+      if (event === 'change') changes.add(changed);
+      const subscription = original(event, listener);
+      return { remove: () => { changes.delete(changed); subscription.remove(); } };
+    };
+    let flow: Awaited<ReturnType<typeof openWelcome>> | undefined;
+    try {
+      flow = await openWelcome();
+      act(() => {
+        [...changes].forEach(listener => listener('background'));
+        publish({ status: 'signed-in', user: { id: 'verified-a', email: 'a@example.test' }, error: null });
+        router.push('/authenticated');
+      });
+      await waitFor(() => expect(flow!.getPathname()).toBe('/authenticated'));
+      const before = appStack(flow);
+      const key = before.routes[before.index ?? 0].key;
+      expect(before.routes.length).toBeGreaterThan(1);
+      expect(screen.queryByText('a@example.test')).toBeNull();
+      expect(auth.signOut).not.toHaveBeenCalled();
+      act(() => [...changes].forEach(listener => listener('active')));
+      await screen.findByText('a@example.test');
+      await waitFor(() => expect(appStack(flow!).routes.map(route => route.name)).toEqual(['authenticated']));
+      expect(appStack(flow).routes[0].key).toBe(key);
+      expect(auth.signOut).not.toHaveBeenCalled(); expect(auth.signIn).not.toHaveBeenCalled();
+    } finally { flow?.unmount(); AppState.addEventListener = original; }
+  });
+
+  it('removes an in-memory private draft on session expiry and never reveals it to the next account', async () => {
+    await openWelcome(); await openLogin(); fill(); await screen.findByText('a@example.test');
+    fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.createStory }));
+    await screen.findByLabelText(createStoryCopy.en.titleLabel);
+    fireEvent.changeText(screen.getByLabelText(createStoryCopy.en.titleLabel), 'Private account A draft');
+    act(() => publish({ status: 'checking', user: null, error: null }));
+    expect(screen.queryByLabelText(createStoryCopy.en.titleLabel)).toBeNull();
+    act(() => publish({ status: 'signed-out', user: null, error: 'session' }));
+    await screen.findByRole('header', { name: copy.en.welcomeTitle });
+    expect(screen.queryByText('a@example.test')).toBeNull();
+    expect(screen.queryByLabelText(authCopy.en.password)).toBeNull();
+    await openLogin(); fill('en', 'b@example.test'); await screen.findByText('b@example.test');
+    fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.createStory }));
+    await screen.findByLabelText(createStoryCopy.en.titleLabel);
+    expect(screen.getByLabelText(createStoryCopy.en.titleLabel).props.value).toBe('');
+    expect(screen.queryByText('Private account A draft')).toBeNull();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(auth.signOut).not.toHaveBeenCalled();
   });
 
   it('preserves Replay after returning from Login without changing the saved language or completion', async () => {

@@ -9,6 +9,7 @@
   "scripts": {
     "start": "node scripts/run.cjs start",
     "android": "node scripts/run.cjs android",
+    "preview:stories": "node scripts/run.cjs preview-stories",
     "test": "node scripts/run.cjs test",
     "typecheck": "node scripts/run.cjs typecheck",
     "lint": "node scripts/run.cjs lint",

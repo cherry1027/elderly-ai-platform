@@ -14,10 +14,11 @@ interface WelcomeScreenProps {
   onReplayIntroduction?: () => void;
   storageUnavailable?: boolean;
   cleanup?: { message: string; retryLabel: string; onRetry: () => void };
+  primaryAction?: { label: string; onPress: () => void };
 }
 
 export function WelcomeScreen({
-  language, onChangeLanguage, onLogin, onRegister, onReplayIntroduction, storageUnavailable = false, cleanup,
+  language, onChangeLanguage, onLogin, onRegister, onReplayIntroduction, storageUnavailable = false, cleanup, primaryAction,
 }: WelcomeScreenProps) {
   const text = copy[language];
   const intro = introCopy[language];
@@ -67,6 +68,7 @@ export function WelcomeScreen({
           </Text>
           <LargeButton label={cleanup.retryLabel} language={language} onPress={cleanup.onRetry} variant="secondary" />
         </>}
+        {primaryAction && <LargeButton label={primaryAction.label} language={language} onPress={primaryAction.onPress} />}
         {onLogin && !cleanup && <LargeButton label={intro.login} language={language} onPress={onLogin} />}
         {onRegister && !cleanup && <LargeButton label={intro.register} language={language} onPress={onRegister} variant="secondary" />}
         {[...(!onLogin || cleanup ? [intro.login] : []), ...(!onRegister || cleanup ? [intro.register] : []), intro.guest].map((label) => (

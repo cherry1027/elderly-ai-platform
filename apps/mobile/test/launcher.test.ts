@@ -21,6 +21,7 @@ function runLauncher(
   const spawnSync = jest.fn().mockReturnValue(result);
   const resolve = jest.fn((name: string) => name);
   const error = jest.fn();
+  const log = jest.fn();
   const environment = { ...inherited };
   const mockRequire = Object.assign((name: string) => {
     if (name === 'node:path') return path;
@@ -33,7 +34,7 @@ function runLauncher(
     vm.runInNewContext(launcherSource, {
       __dirname: path.dirname(launcherPath),
       require: mockRequire,
-      console: { error },
+      console: { error, log },
       process: {
         argv: ['node', launcherPath, action, ...forwarded],
         execPath: 'mock-local-node',
@@ -46,12 +47,13 @@ function runLauncher(
     exitCode = caught.code;
   }
 
-  return { spawnSync, resolve, error, environment, exitCode };
+  return { spawnSync, resolve, error, log, environment, exitCode };
 }
 
 const commands: [string, string, string[]][] = [
-  ['start', 'expo/bin/cli', ['start', '--go', '--lan']],
-  ['android', 'expo/bin/cli', ['start', '--go', '--lan', '--android']],
+  ['start', 'expo/bin/cli', ['start', '--go', '--lan', '--port', '0', '--clear']],
+  ['android', 'expo/bin/cli', ['start', '--go', '--lan', '--android', '--port', '0', '--clear']],
+  ['preview-stories', 'expo/bin/cli', ['start', '--go', '--lan', '--port', '0', '--clear']],
   ['typecheck', 'typescript/bin/tsc', ['--noEmit']],
   ['test', 'jest/bin/jest', ['--runInBand']],
   ['lint', 'eslint/bin/eslint.js', ['--config', 'eslint.config.cjs', '.']],
@@ -81,7 +83,7 @@ describe('mobile command launcher (mocked child processes)', () => {
     expect(execution.exitCode).toBe(0);
   });
 
-  it.each(['start', 'android'])('clears inherited offline mode for %s LAN startup', (action) => {
+  it.each(['start', 'android', 'preview-stories'])('clears inherited offline mode for %s LAN startup', (action) => {
     const execution = runLauncher(action, [], { EXPO_OFFLINE: '1' });
     const [, args, options] = execution.spawnSync.mock.calls[0];
 
@@ -125,6 +127,65 @@ describe('mobile command launcher (mocked child processes)', () => {
     expect(options.shell).toBe(false);
   });
 
+  it.each(['start', 'android', 'preview-stories'])('starts a fresh %s server with one cache reset and a fixed mode label', action => {
+    const execution = runLauncher(action);
+    const args = execution.spawnSync.mock.calls[0][1] as string[];
+    expect(args.filter(argument => argument === '--port')).toHaveLength(1);
+    expect(args[args.indexOf('--port') + 1]).toBe('0');
+    expect(args.filter(argument => argument === '--clear')).toHaveLength(1);
+    expect(execution.log).toHaveBeenCalledWith(action === 'preview-stories' ? 'MEMY SAMPLE STORIES PREVIEW' : 'MEMY NORMAL APP');
+    expect(execution.log).toHaveBeenCalledWith(expect.stringContaining('Scan the NEW QR code'));
+  });
+
+  it.each(['start', 'android', 'preview-stories'].flatMap(action => [
+    ['--port', '0'], ['--port=0'], ['--port', '65535'], ['--port=8083'], ['--port', '08081'],
+  ].map(args => ({ action, args }))))('honors one validated explicit port for $action (%#)', ({ action, args }) => {
+    const execution = runLauncher(action, args);
+    const actual = execution.spawnSync.mock.calls[0][1] as string[];
+    expect(actual.filter(argument => argument === '--port')).toHaveLength(1);
+    expect(actual[actual.indexOf('--port') + 1]).toBe(String(Number(args[0] === '--port' ? args[1] : args[0].slice('--port='.length))));
+    expect(actual.some(argument => argument.startsWith('--port='))).toBe(false);
+    expect(actual.filter(argument => argument === '--clear')).toHaveLength(1);
+  });
+
+  it.each([
+    ['--port'], ['--port', ''], ['--port', '-1'], ['--port', '65536'], ['--port', '1.5'],
+    ['--port', ' 8081 '], ['--port', '0x1f91'], ['--port', 'NaN'],
+    ['--port='], ['--port=Infinity'], ['--port=8083.5'], ['--port8083'], ['-p', '8083'], ['-p=8083'], ['-p8083'],
+    ['--port', '8083', '--port', '8084'], ['--port=8083', '--port=8084'], ['--port', '0', '--port=8084'],
+  ].map(args => ({ args })))('rejects duplicate or malformed port options without launching or echoing them (%#)', ({ args }) => {
+    const execution = runLauncher('start', args);
+    expect(execution.spawnSync).not.toHaveBeenCalled(); expect(execution.resolve).not.toHaveBeenCalled();
+    expect(execution.exitCode).toBe(1); expect(execution.log).not.toHaveBeenCalled();
+    expect(execution.error).toHaveBeenCalledWith('Use one valid --port value between 0 and 65535.');
+  });
+
+  it.each(['android', 'preview-stories'])('rejects duplicate explicit ports in %s too', action => {
+    const execution = runLauncher(action, ['--port=0', '--port', '8084']);
+    expect(execution.spawnSync).not.toHaveBeenCalled(); expect(execution.exitCode).toBe(1);
+  });
+
+  it('does not duplicate a forwarded cache reset or expose environment/argument contents in launcher messages', () => {
+    const execution = runLauncher('start', ['--clear', '--port', '8083', '--clear', '--max-workers', '2'], {
+      SYNTHETIC_PRIVATE_SETTING: 'synthetic-private-environment-sentinel',
+    });
+    const args = execution.spawnSync.mock.calls[0][1] as string[];
+    expect(args.filter(argument => argument === '--clear')).toHaveLength(1);
+    expect(args.slice(-2)).toEqual(['--max-workers', '2']);
+    const messages = JSON.stringify([...execution.log.mock.calls, ...execution.error.mock.calls]);
+    expect(messages).not.toContain('synthetic-private-environment-sentinel');
+    expect(messages).not.toContain('8083'); expect(messages).not.toContain('--max-workers');
+  });
+
+  it.each(commands)('scrubs inherited Windows Metro-port variants for %s without altering the parent environment', action => {
+    const inherited = { RCT_METRO_PORT: '8081', rct_metro_port: '8083', RcT_MeTrO_PoRt: '8084' };
+    const execution = runLauncher(action, [], inherited);
+    const child = execution.spawnSync.mock.calls[0][2].env;
+    expect(Object.keys(child).some(key => key.toUpperCase() === 'RCT_METRO_PORT')).toBe(false);
+    expect(execution.environment).toEqual(inherited);
+    if (!['start', 'android', 'preview-stories'].includes(action)) expect(execution.log).not.toHaveBeenCalled();
+  });
+
   it.each(commands)('controls the mobile auth config mode for %s without enabling env injection', (action) => {
     const execution = runLauncher(action, [], { MEMY_MOBILE_AUTH_MODE: 'development', EXPO_PUBLIC_SUPABASE_KEY: 'synthetic-forbidden-injection' });
     const environment = execution.spawnSync.mock.calls[0][2].env;
@@ -132,6 +193,55 @@ describe('mobile command launcher (mocked child processes)', () => {
     expect(environment.EXPO_NO_DOTENV).toBe('1');
     expect(environment.EXPO_NO_CLIENT_ENV_VARS).toBe('1');
     expect(environment).not.toHaveProperty('EXPO_PUBLIC_SUPABASE_KEY');
+  });
+
+  it('starts the explicit sample preview on LAN with verification-only settings and no tunnel', () => {
+    const execution = runLauncher('preview-stories', ['--port', '8082'], {
+      EXPO_OFFLINE: '1', MEMY_MOBILE_AUTH_MODE: 'development', MEMY_MOBILE_STORY_PREVIEW: 'untrusted-inherited',
+      EXPO_PUBLIC_SYNTHETIC_KEY: 'synthetic-never-pass',
+    });
+    const [, args, options] = execution.spawnSync.mock.calls[0];
+    expect(args.slice(1)).toEqual(['start', '--go', '--lan', '--port', '8082', '--clear']);
+    expect(args).not.toContain('--offline'); expect(args).not.toContain('--tunnel');
+    expect(options.env.MEMY_MOBILE_AUTH_MODE).toBe('verification');
+    expect(options.env.MEMY_MOBILE_STORY_PREVIEW).toBe('1');
+    expect(options.env).not.toHaveProperty('EXPO_OFFLINE'); expect(options.env).not.toHaveProperty('EXPO_PUBLIC_SYNTHETIC_KEY');
+    expect(options.env.EXPO_NO_DOTENV).toBe('1'); expect(options.env.EXPO_NO_CLIENT_ENV_VARS).toBe('1');
+  });
+
+  it.each(commands.filter(([action]) => action !== 'preview-stories'))('removes inherited sample-preview activation for normal %s', action => {
+    const execution = runLauncher(action, [], { MEMY_MOBILE_STORY_PREVIEW: '1' });
+    expect(execution.spawnSync.mock.calls[0][2].env).not.toHaveProperty('MEMY_MOBILE_STORY_PREVIEW');
+    expect(execution.environment.MEMY_MOBILE_STORY_PREVIEW).toBe('1');
+  });
+
+  it.each(['memy_mobile_story_preview', 'MeMy_MoBiLe_StOrY_PrEvIeW'])('removes Windows case-insensitive inherited preview flag %s', key => {
+    for (const action of ['start', 'config', 'bundle', 'bundle-ios']) {
+      const execution = runLauncher(action, [], { [key]: '1' });
+      const environment = execution.spawnSync.mock.calls[0][2].env;
+      expect(Object.keys(environment).some(name => name.toUpperCase() === 'MEMY_MOBILE_STORY_PREVIEW')).toBe(false);
+    }
+    const preview = runLauncher('preview-stories', [], { [key]: '1' });
+    expect(Object.keys(preview.spawnSync.mock.calls[0][2].env).filter(name => name.toUpperCase() === 'MEMY_MOBILE_STORY_PREVIEW'))
+      .toEqual(['MEMY_MOBILE_STORY_PREVIEW']);
+  });
+
+  it.each<Record<string, string>>([
+    { memy_mobile_auth_mode: 'development', expo_offline: '1' },
+    { MeMy_MoBiLe_AuTh_MoDe: 'development', ExPo_OfFlInE: '1' },
+  ])('uses canonical preview mode and LAN flags despite mixed-case Windows inheritance (%#)', inherited => {
+    const preview = runLauncher('preview-stories', [], inherited);
+    const environment = preview.spawnSync.mock.calls[0][2].env;
+    expect(Object.keys(environment).filter(key => key.toUpperCase() === 'MEMY_MOBILE_AUTH_MODE')).toEqual(['MEMY_MOBILE_AUTH_MODE']);
+    expect(environment.MEMY_MOBILE_AUTH_MODE).toBe('verification');
+    expect(Object.keys(environment).some(key => key.toUpperCase() === 'EXPO_OFFLINE')).toBe(false);
+    for (const action of ['start', 'config']) {
+      const execution = runLauncher(action, [], inherited);
+      const child = execution.spawnSync.mock.calls[0][2].env;
+      expect(Object.keys(child).filter(key => key.toUpperCase() === 'MEMY_MOBILE_AUTH_MODE')).toEqual(['MEMY_MOBILE_AUTH_MODE']);
+      expect(child.MEMY_MOBILE_AUTH_MODE).toBe(action === 'start' ? 'development' : 'verification');
+      expect(Object.keys(child).filter(key => key.toUpperCase() === 'EXPO_OFFLINE')).toEqual(action === 'start' ? [] : ['EXPO_OFFLINE']);
+    }
   });
 
   it.each(['unapproved-command', 'constructor', 'toString', '__proto__'])(

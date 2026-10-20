@@ -3,7 +3,7 @@ import { Redirect, useFocusEffect, useRouter } from 'expo-router';
 import { useAuth } from '../auth/AuthProvider';
 import { PreferenceLoading } from '../components/PreferenceLoading';
 import { useLanguage } from '../language';
-import { AuthenticatedScreen } from '../screens/AuthenticatedScreen';
+import { StoryDashboard } from '../stories/StoryDashboard';
 import { useLoginNavigation } from '../navigation/LoginNavigation';
 
 export default function AuthenticatedRoute() {
@@ -23,7 +23,7 @@ export default function AuthenticatedRoute() {
     return <PreferenceLoading language={language} />;
   }
   if (auth.status !== 'signed-in' || !auth.user) return <Redirect href="/" />;
-  return <AuthenticatedScreen language={language} user={auth.user} onSignOut={() => {
+  return <StoryDashboard key={auth.user.id} language={language} user={auth.user} getAccessToken={auth.getAccessToken} onSignOut={() => {
     if (ending) return;
     rememberAuthenticatedVisit();
     cancelLogin();

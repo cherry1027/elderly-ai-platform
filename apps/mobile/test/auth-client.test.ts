@@ -89,6 +89,118 @@ test('restored session is verified before exposing only id and email', async () 
   f.auth.dispose();
 });
 
+test('token access before restoration or while signed out performs no SDK work', async () => {
+  const f = fixture();
+  await expect(f.auth.getAccessToken('synthetic-a')).resolves.toBeNull();
+  expect(f.factory).not.toHaveBeenCalled();
+  await f.auth.restore();
+  await expect(f.auth.getAccessToken('synthetic-a')).resolves.toBeNull();
+  expect(f.sdk.auth.getSession).toHaveBeenCalledTimes(1);
+  expect(f.sdk.auth.getUser).not.toHaveBeenCalled();
+  expect(f.request).not.toHaveBeenCalled();
+});
+
+test.each(['restore', 'sign-in'] as const)('returns only the verified %s token for the expected account without extra SDK operations', async mode => {
+  const saved = session();
+  const f = fixture(mode === 'restore' ? saved : null);
+  await f.auth.restore();
+  if (mode === 'sign-in') {
+    f.sdk.auth.signInWithPassword.mockResolvedValueOnce({ data: { session: saved }, error: null });
+    await f.auth.signIn(email, password);
+  }
+  const reads = f.sdk.auth.getSession.mock.calls.length;
+  const verifications = f.sdk.auth.getUser.mock.calls.length;
+  const writes = f.storage.setItem.mock.calls.length;
+  await expect(f.auth.getAccessToken(saved.user.id)).resolves.toBe(saved.access_token);
+  await expect(f.auth.getAccessToken('synthetic-b')).resolves.toBeNull();
+  await expect(f.auth.getAccessToken('')).resolves.toBeNull();
+  await expect(f.auth.getAccessToken(saved.user.id)).resolves.toBe(saved.access_token);
+  expect(f.sdk.auth.getSession).toHaveBeenCalledTimes(reads);
+  expect(f.sdk.auth.getUser).toHaveBeenCalledTimes(verifications);
+  expect(f.storage.setItem).toHaveBeenCalledTimes(writes);
+  expect(f.request).not.toHaveBeenCalled();
+  expect(JSON.stringify(f.auth.getSnapshot())).not.toContain(saved.access_token);
+});
+
+test('does not expose a restored token until server verification finishes', async () => {
+  const saved = session(); const f = fixture(saved);
+  let finish!: (value: Awaited<ReturnType<typeof f.sdk.auth.getUser>>) => void;
+  f.sdk.auth.getUser.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const pending = f.auth.restore();
+  for (let step = 0; step < 12 && !finish; step += 1) await Promise.resolve();
+  expect(finish).toBeDefined();
+  await expect(f.auth.getAccessToken(saved.user.id)).resolves.toBeNull();
+  finish({ data: { user: saved.user }, error: null }); await pending;
+  await expect(f.auth.getAccessToken(saved.user.id)).resolves.toBe(saved.access_token);
+});
+
+test('token access is blocked in background and until foreground revalidation completes', async () => {
+  const saved = session(); const f = fixture(saved);
+  await f.auth.restore();
+  f.auth.setForeground(false);
+  await expect(f.auth.getAccessToken(saved.user.id)).resolves.toBeNull();
+  let finish!: (value: Awaited<ReturnType<typeof f.sdk.auth.getUser>>) => void;
+  f.sdk.auth.getUser.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  f.auth.setForeground(true);
+  const pending = f.auth.restore();
+  for (let step = 0; step < 12 && !finish; step += 1) await Promise.resolve();
+  expect(finish).toBeDefined();
+  await expect(f.auth.getAccessToken(saved.user.id)).resolves.toBeNull();
+  finish({ data: { user: saved.user }, error: null }); await pending;
+  await expect(f.auth.getAccessToken(saved.user.id)).resolves.toBe(saved.access_token);
+});
+
+test('checks token expiry on every read even before the expiry timer runs', async () => {
+  const saved = session(); const f = fixture(saved);
+  await f.auth.restore();
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(saved.expires_at! * 1000);
+  try { await expect(f.auth.getAccessToken(saved.user.id)).resolves.toBeNull(); }
+  finally { clock.mockRestore(); }
+});
+
+test.each(['project', 'deadline', 'identity'] as const)('rejects a cached token whose %s no longer matches its verified session', async mismatch => {
+  const saved = session(); const f = fixture(saved);
+  await f.auth.restore();
+  if (mismatch === 'project') saved.access_token = `synthetic.${Buffer.from(JSON.stringify({ iss: 'https://legacy.invalid/auth/v1', sub: saved.user.id, role: 'authenticated', exp: saved.expires_at })).toString('base64url')}.signature`;
+  else if (mismatch === 'deadline') saved.expires_at = saved.expires_at! + 60;
+  else saved.user = { ...saved.user, id: 'synthetic-b' };
+  await expect(f.auth.getAccessToken('synthetic-a')).resolves.toBeNull();
+  expect(f.sdk.auth.getUser).toHaveBeenCalledTimes(1);
+});
+
+test('sign-out immediately closes token access while cleanup is pending and after completion', async () => {
+  const saved = session(); const f = fixture(saved);
+  await f.auth.restore();
+  let finish!: () => void;
+  f.storage.clear.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+  const pending = f.auth.signOut();
+  await expect(f.auth.getAccessToken(saved.user.id)).resolves.toBeNull();
+  for (let step = 0; step < 12 && !finish; step += 1) await Promise.resolve();
+  expect(finish).toBeDefined();
+  finish(); await pending;
+  await expect(f.auth.getAccessToken(saved.user.id)).resolves.toBeNull();
+});
+
+test('cleanup failure and disposal never expose the cached token', async () => {
+  const saved = session(); const f = fixture(saved);
+  await f.auth.restore();
+  f.storage.clear.mockRejectedValueOnce(new Error('synthetic-cleanup-failure'));
+  await expect(f.auth.signOut()).rejects.toMatchObject({ kind: 'cleanup' });
+  await expect(f.auth.getAccessToken(saved.user.id)).resolves.toBeNull();
+  const other = fixture(saved); await other.auth.restore(); other.auth.dispose();
+  await expect(other.auth.getAccessToken(saved.user.id)).resolves.toBeNull();
+});
+
+test('an earlier account cannot acquire a replacement account token', async () => {
+  const saved = session(); const next = session('synthetic-b'); const f = fixture(saved);
+  await f.auth.restore(); await f.auth.signOut();
+  f.sdk.auth.signInWithPassword.mockResolvedValueOnce({ data: { session: next }, error: null });
+  f.sdk.auth.getUser.mockResolvedValueOnce({ data: { user: next.user }, error: null });
+  await f.auth.signIn(email, password);
+  await expect(f.auth.getAccessToken(saved.user.id)).resolves.toBeNull();
+  await expect(f.auth.getAccessToken(next.user.id)).resolves.toBe(next.access_token);
+});
+
 test('SDK persists exclusively through secure native storage and disables URL auth detection', async () => {
   const f = fixture();
   await f.auth.restore();
@@ -136,6 +248,7 @@ test.each([
   f.sdk.auth.getUser.mockResolvedValueOnce({ data: { user }, error: null });
   await f.auth.restore();
   expect(f.auth.getSnapshot()).toEqual({ status: 'signed-out', user: null, error: 'session' });
+  await expect(f.auth.getAccessToken('synthetic-a')).resolves.toBeNull();
   expect(f.storage.clear).toHaveBeenCalled();
   f.auth.dispose();
 });

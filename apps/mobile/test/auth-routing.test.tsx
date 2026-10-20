@@ -36,6 +36,7 @@ beforeEach(async () => {
     getSnapshot: () => snapshot,
     subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     restore: jest.fn(async () => {}),
+    getAccessToken: jest.fn(async () => null),
     signIn: jest.fn(async (email) => publish({ status: 'signed-in', user: { id: email, email }, error: null })),
     signOut: jest.fn(async () => publish({ status: 'signed-out', user: null, error: null })),
     setForeground: jest.fn(), dispose: jest.fn(),

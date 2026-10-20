@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { useEffect } from 'react';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { AppState, Pressable, Text, type AppStateStatus } from 'react-native';
 import { AuthProvider, useAuth } from '../src/auth/AuthProvider';
 import { createMobileAuth, type AuthSnapshot, type MobileAuth } from '../src/auth/client';
@@ -25,6 +26,7 @@ function fakeAuth() {
   const unsubscribe = jest.fn();
   const auth: MobileAuth = {
     getSnapshot: () => snapshot,
+    getAccessToken: jest.fn(async () => null as string | null),
     subscribe: jest.fn((next) => { listener = next; return unsubscribe; }),
     restore: jest.fn(async () => publish({ status: 'signed-out', user: null, error: null })),
     signIn: jest.fn(async () => publish({ status: 'signed-in', user: userA, error: null })),
@@ -54,7 +56,8 @@ describe('native auth provider with mocked services', () => {
     render(<AuthProvider><Probe /></AuthProvider>);
     expect(screen.getByText('checking')).toBeOnTheScreen();
     expect(screen.getByText('no account')).toBeOnTheScreen();
-    await waitFor(() => expect(current.auth.restore).toHaveBeenCalledTimes(1));
+    await act(async () => { await Promise.resolve(); });
+    expect(current.auth.restore).toHaveBeenCalledTimes(1);
     act(() => current.publish({ status: 'signed-in', user: userA, error: null }));
     expect(screen.getByText(userA.email)).toBeOnTheScreen();
   });
@@ -93,5 +96,42 @@ describe('native auth provider with mocked services', () => {
     expect(current.unsubscribe).toHaveBeenCalledTimes(1);
     expect(current.auth.dispose).toHaveBeenCalledTimes(1);
     expect(remove).toHaveBeenCalledTimes(1);
+  });
+  it('provides a stable token callback without retaining tokens in provider state', async () => {
+    let read!: MobileAuth['getAccessToken'];
+    function TokenProbe() {
+      const auth = useAuth();
+      useEffect(() => { read = auth.getAccessToken; }, [auth.getAccessToken]);
+      return <Text>{auth.status}</Text>;
+    }
+    const view = render(<AuthProvider><TokenProbe /></AuthProvider>);
+    const first = read;
+    const beforeInitialization = read(userA.id);
+    expect(current.auth.getAccessToken).not.toHaveBeenCalled();
+    await act(async () => { await expect(beforeInitialization).resolves.toBeNull(); });
+    await screen.findByText('signed-out');
+    act(() => current.publish({ status: 'signed-in', user: userA, error: null }));
+    jest.mocked(current.auth.getAccessToken).mockResolvedValueOnce('synthetic-access-token');
+    await expect(read(userA.id)).resolves.toBe('synthetic-access-token');
+    expect(current.auth.getAccessToken).toHaveBeenCalledWith(userA.id);
+    expect(read).toBe(first);
+    expect(screen.queryByText('synthetic-access-token')).toBeNull();
+    view.unmount();
+    await expect(read(userA.id)).resolves.toBeNull();
+    expect(current.auth.getAccessToken).toHaveBeenCalledTimes(1);
+  });
+  it('returns no token when development configuration fails', async () => {
+    let read!: MobileAuth['getAccessToken'];
+    function TokenProbe() {
+      const auth = useAuth();
+      useEffect(() => { read = auth.getAccessToken; }, [auth.getAccessToken]);
+      return null;
+    }
+    jest.mocked(readMobileAuthConfig).mockImplementation(() => { throw new AuthError('configuration'); });
+    render(<AuthProvider><TokenProbe /><Probe /></AuthProvider>);
+    await screen.findByText('configuration');
+    await expect(read(userA.id)).resolves.toBeNull();
+    expect(createMobileAuth).not.toHaveBeenCalled();
+    expect(current.auth.getAccessToken).not.toHaveBeenCalled();
   });
 });

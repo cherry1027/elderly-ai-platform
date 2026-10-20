@@ -12,7 +12,9 @@ const sources = sourceFiles(path.join(appRoot, 'src'));
 const source = sources.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
 const authSources = sources.filter((file) => file.startsWith(path.join(appRoot, 'src/auth') + path.sep));
 const authSource = authSources.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
-const presentationSource = sources.filter((file) => !authSources.includes(file)).map((file) => fs.readFileSync(file, 'utf8')).join('\n');
+const apiSources = sources.filter((file) => file.startsWith(path.join(appRoot, 'src/api') + path.sep));
+const apiSource = apiSources.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
+const presentationSource = sources.filter((file) => !authSources.includes(file) && !apiSources.includes(file)).map((file) => fs.readFileSync(file, 'utf8')).join('\n');
 const manifest = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
 const config = JSON.parse(fs.readFileSync(path.join(appRoot, 'app.json'), 'utf8')).expo;
 
@@ -31,12 +33,15 @@ describe('development-only mobile application boundaries', () => {
       .not.toMatch(/process\.env|import\.meta|localStorage|sessionStorage|\bwindow\b|\bdocument\b/);
   });
 
-  it('keeps transports outside presentation and never adds story, AI or microphone operations', () => {
+  it('keeps transports outside presentation and never adds AI or microphone operations', () => {
     expect(presentationSource).not.toMatch(/https?:\/\/|\bfetch\s*\(|XMLHttpRequest|WebSocket|getUserMedia|supabase|fastapi|expo-audio|expo-av/i);
     expect(source).not.toMatch(/getUserMedia|fastapi|expo-audio|expo-av|resetPasswordForEmail/i);
     expect(fs.readFileSync(path.join(appRoot, 'src/auth/client.ts'), 'utf8')).not.toMatch(/signUp\s*\(/);
     expect(authSource).not.toMatch(/\b(?:client|supabase)\.(?:from|storage|functions|channel|rpc)\b/);
     expect(authSource).not.toContain('@react-native-async-storage/async-storage');
+    expect(apiSource).not.toMatch(/@supabase|secure-store|async-storage|console\.|method:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/i);
+    expect(apiSource).toContain("method: 'GET'");
+    expect(apiSource).not.toMatch(/\/sessions|user_id/);
   });
 
   it('keeps live registration closed independently of development login configuration', () => {

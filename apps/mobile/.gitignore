@@ -6,5 +6,6 @@ coverage/
 .env
 .env.*
 development.auth.local.json
+development.api.local.json
 *.log
 expo-env.d.ts

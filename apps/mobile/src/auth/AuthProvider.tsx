@@ -6,6 +6,7 @@ import { AuthError } from './errors';
 
 type AuthContextValue = AuthSnapshot & {
   appActive: boolean;
+  getAccessToken: (expectedUserId: string) => Promise<string | null>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
 };
@@ -57,8 +58,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
     return service.current.signIn(email, password);
   }, []);
   const signOut = useCallback(() => service.current?.signOut() ?? Promise.resolve(), []);
+  const getAccessToken = useCallback((expectedUserId: string) =>
+    service.current?.getAccessToken(expectedUserId) ?? Promise.resolve(null), []);
   return <AuthContext.Provider value={{ ...snapshot, user: appActive ? snapshot.user : null,
-    appActive, signIn, signOut }}>{children}</AuthContext.Provider>;
+    appActive, getAccessToken, signIn, signOut }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

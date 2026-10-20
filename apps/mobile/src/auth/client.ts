@@ -12,6 +12,7 @@ export interface AuthSnapshot {
 }
 export interface MobileAuth {
   getSnapshot(): AuthSnapshot;
+  getAccessToken(expectedUserId: string): Promise<string | null>;
   subscribe(listener: () => void): () => void;
   restore(): Promise<void>;
   signIn(email: string, password: string): Promise<void>;
@@ -304,6 +305,17 @@ export function createMobileAuth(settings: MobileAuthConfig, dependencies: Depen
 
   return {
     getSnapshot: () => snapshot,
+    async getAccessToken(expectedUserId) {
+      const target = engine;
+      const session = target?.verifiedSession;
+      // Only expose a session already checked by getUser. This read does not
+      // initialize the SDK, refresh tokens, or put credentials in React state.
+      if (disposed || !foreground || snapshot.status !== 'signed-in' ||
+          snapshot.user?.id !== expectedUserId || knownUserId !== expectedUserId ||
+          !target || target.closed || !session || session.user?.id !== expectedUserId ||
+          !sessionBelongsToProject(session, config.supabaseUrl)) return null;
+      return session.access_token;
+    },
     subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     restore,
     async signIn(email, password) {

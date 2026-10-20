@@ -1,4 +1,18 @@
-# Memy Mobile Task 2C — Gated native registration
+# Memy Mobile Task 3A — My Stories dashboard
+
+The verified signed-in destination now lists story projects in Swedish/English.
+It supports loading, empty/error states, refresh and existing secure sign-out.
+The backend URL is deliberately unconfigured; no project requests can run until
+an approved private LAN address is explicitly configured. Automated verification
+uses synthetic mocked services, not real accounts or a backend.
+
+See [STORY_DASHBOARD.md](STORY_DASHBOARD.md) for current setup, iPhone checks,
+backend prerequisites and limitations, and
+[STORY_DASHBOARD_VERIFICATION.md](STORY_DASHBOARD_VERIFICATION.md) for actual results.
+Live registration and Guest/AI remain disabled. The following Task 2C/2B notes
+are historical; their references to stories being unavailable describe that base.
+
+# Preserved Task 2C — Gated native registration
 
 Branch: feat/mobile-auth-registration. Base: a4807c0e8703ba3b8d5ed4a04fcb4b10b576a16b
 (completed Task 2B). All changes remain inside apps/mobile.

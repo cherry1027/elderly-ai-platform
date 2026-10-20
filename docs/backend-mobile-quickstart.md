@@ -67,6 +67,73 @@ the mobile API client. Do not port-forward, publish an unauthenticated tunnel or
 broadly disable iOS transport security. Shared/remote access needs a separately
 approved HTTPS deployment. Stop the backend with Ctrl+C when testing ends.
 
+## Diagnose a readiness 503 or Supabase 401
+
+On 20 October, the current publishable key was compared with the exact
+`edbkuunyeyxnyenmmqud` Dashboard API Keys page. The same zero-row profiles HEAD
+probe returned 200, and the real FastAPI `/ready` route returned 200 against
+hosted Supabase with conversation, story generation and transcription disabled.
+No key rotation, database grant, RLS policy or production-setting change was
+needed. A failure on another computer still needs that computer's configuration
+checked; these results do not establish its cause remotely.
+
+Update the clean backend checkout on `codex/day-7-mobile-integration` without
+resetting local work. From `backend/`, run:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\diagnose_supabase.py
+```
+
+Expected safe output includes:
+
+```text
+configured_project=edbkuunyeyxnyenmmqud
+key_outer_whitespace=false
+key_sha256_12=7dbc1add8497
+head_status=200
+result=OK
+```
+
+The helper prints a comparison fingerprint, not the key, password, token,
+response body or arbitrary exception text. It sends only read-only requests to
+the pinned development project and refuses secret/service-role or legacy JWT
+keys. It does not sign in, modify users or call an AI provider. It uses the same
+configured header as readiness rather than silently repairing whitespace.
+
+If the fingerprint differs, recopy the current development **publishable** key
+from the exact project's Dashboard and check for copied quotes, line breaks,
+outer spaces or placeholder text. A differing key can also be a separately
+created valid key, so the fingerprint alone is not proof of rejection; use the
+HTTP result as well. Do not send the raw key or tokens in a diagnostic report.
+
+Process `SUPABASE_*` and `VITE_SUPABASE_*` environment variables take precedence
+over dotenv files. Within the same source, `SUPABASE_*` wins over the Vite alias.
+`backend/.env` takes precedence over the legacy root `.env`; `EXPO_PUBLIC_*` is
+for the Expo app and is not read by backend Settings. Editing a file or a
+different terminal does not replace configuration already loaded by FastAPI.
+
+Stop the existing backend with Ctrl+C. In the **same PowerShell terminal** that
+will restart it, set `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` as in the setup
+above, using the verified key shared privately. Run the diagnostic there, then
+restart the launcher and retest `/ready`. Do not change RLS, grant anonymous data
+access, use a secret key or substitute the publishable key for a user's JWT.
+
+The optional GET classification after HEAD 401 still uses `select=id&limit=0`.
+Known results such as `INVALID_API_KEY`, `API_KEY_MISSING`, `42501` or `PGRST301`
+help distinguish gateway/permission/token problems. `HEAD_REJECTED_GET_OK`
+means the two methods behaved differently, not that the key was invalid.
+Unclassified/dependency/network errors stay generic. If the expected fingerprint
+still gets 401, send only the helper output, backend commit ID and whether proxy
+or VPN routing is involved; do not bypass network protections automatically.
+
+Supabase Dashboard organization membership and application Auth accounts are
+separate. A Dashboard invitation gives management access after acceptance; it is
+not required to call this API with a valid project key/user session and does not
+fix an invalid key. The existing profiles probe checks Data API/key/relation
+reachability without fetching records; it does not certify authenticated RLS.
+See [Supabase API keys](https://supabase.com/docs/guides/getting-started/api-keys)
+and [Dashboard access control](https://supabase.com/docs/guides/platform/access-control).
+
 ## Configure the separate Expo app
 
 In Tarun's Expo project, use its existing local environment convention:

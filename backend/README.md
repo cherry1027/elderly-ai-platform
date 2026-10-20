@@ -104,6 +104,14 @@ dotenv files. Paths are resolved from the code location, independently of cwd.
 Defaults cover localhost/127.0.0.1 ports 8080 and 5173. Add deployment origins
 explicitly. `REQUEST_TIMEOUT_SECONDS` defaults to 5 and accepts values >0 to 30.
 
+For a Windows readiness 503/upstream 401, run the read-only
+`scripts/diagnose_supabase.py` helper (`.venv\Scripts\python.exe` on Windows).
+It pins the development project, reports only a key fingerprint/configuration
+hints and probes zero rows; it never prints keys, tokens or upstream bodies.
+See [the readiness troubleshooting steps](../docs/backend-mobile-quickstart.md#diagnose-a-readiness-503-or-supabase-401)
+before changing credentials or permissions. Dashboard membership is separate
+from project-key validity and is not required for application API access.
+
 ## Current HTTP contract
 
 The public operational routes are unchanged.

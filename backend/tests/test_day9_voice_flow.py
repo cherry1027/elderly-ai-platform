@@ -29,6 +29,7 @@ from app.core.config import Settings
 from app.main import create_app
 from app.services.conversation_provider import MockConversationProvider
 from app.services.transcription import (
+    DisabledTranscriptionProvider,
     SIMULATED_TRANSCRIPT_NOTICE,
     SIMULATED_TRANSCRIPTS,
     SimulatedTranscriptionProvider,
@@ -818,6 +819,23 @@ def test_real_stereo_m4a_flows_through_simulated_transcript_and_source_conversat
         )
         assert resolved_questions.status_code == 200
         assert resolved_questions.json() == []
+
+        # Provenance belongs to the stored original, not to the current server
+        # mode. Turning simulation off still permits labelled history reads,
+        # while POST replay deliberately fails before touching the claim ledger.
+        app.state.transcription_provider = DisabledTranscriptionProvider()
+        preserved = client.get(
+            f"/api/v1/story-sessions/{SESSION_ID}/transcripts",
+            headers=auth_headers(),
+        )
+        assert preserved.status_code == 200, preserved.text
+        assert preserved.json() == [transcript]
+        assert preserved.json()[0]["text"].startswith(SIMULATED_TRANSCRIPT_NOTICE)
+        claim_count = store.events.count("claim_audio_transcription")
+        disabled_replay = post_audio(client, content, language=language)
+        assert_error(disabled_replay, 503, "TRANSCRIPTION_DISABLED")
+        assert store.events.count("claim_audio_transcription") == claim_count
+        assert len(provider.calls) == 1
 
     assert temporary_paths
     assert all(not path.exists() for path in temporary_paths)

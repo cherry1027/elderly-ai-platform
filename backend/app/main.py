@@ -59,7 +59,7 @@ def create_app(
                     await asyncio.gather(*tuple(application.state.pdf_tasks), return_exceptions=True)
 
     application = FastAPI(
-        title="Memy AI Backend", version="0.7.0", lifespan=lifespan
+        title="Memy AI Backend", version="0.8.0", lifespan=lifespan
     )
     application.state.settings = config
     application.state.transcription_provider = transcription_provider or DisabledTranscriptionProvider()

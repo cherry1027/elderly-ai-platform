@@ -50,7 +50,8 @@ async def transcribe_recording(
     try:
         with TemporaryDirectory(prefix="memy-audio-") as directory:
             recording = await read_recording(request, Path(directory), session["language"])
-            # Never return a fabricated successful transcript from the real app.
+            # Ordinary startup stays disabled. The explicit development launcher
+            # can inject permanently labelled fictional fixtures, not recognition.
             provider = request.app.state.transcription_provider
             if not provider.enabled:
                 raise APIError(503, "TRANSCRIPTION_DISABLED", "Live speech transcription is not enabled.")

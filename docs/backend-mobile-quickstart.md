@@ -1,6 +1,6 @@
 # Memy backend handoff for mobile integration
 
-Use this setup to connect Tarun's Expo app to backend 0.7.0 without public hosting or
+Use this setup to connect Tarun's Expo app to backend 0.8.0 without public hosting or
 paid AI. The backend code and API contract are on
 [`codex/day-7-mobile-integration`](https://github.com/cherry1027/elderly-ai-platform/tree/codex/day-7-mobile-integration).
 The validated API baseline is commit `8375ada`; subsequent handoff changes do not
@@ -14,6 +14,12 @@ The initial reported integration pair is backend `374b1dd` on
 Record the actual commit IDs again after any update; branch names can advance.
 The mobile configuration below was checked against that exact mobile source,
 not inferred from a generic Expo environment-variable convention.
+
+The later reviewed mobile revision is `ed05ebd` on `feat/mobile-story-continue`;
+it adds native Start/Continue but no recorder/upload/conversation messages. Day 9
+keeps the API paths compatible and adds explicit `--simulate-transcription` to
+the backend launcher. Use the [Day 9 audio guide](day-9-mobile-audio.md) for that
+opt-in; it does not enable real speech recognition or microphone access itself.
 
 This handoff requires an iPhone and a Windows backend on the same **trusted,
 privately controlled network**. The old Mac address `192.168.0.21` is stale;
@@ -276,12 +282,15 @@ IDs; never invent or hard-code another user's IDs.
 ## First integration acceptance
 
 Record the frontend and backend Git commit IDs and the actual API root used.
-Record the network type without sharing its password. The reported public-probe
-success is only the first checkpoint; all authenticated steps remain pending.
-Once the trusted-network gate is satisfied, test these in order on the iPhone:
+Record the network type without sharing its password. Tarun reports successful
+login, public probes and Start/Continue testing at `ed05ebd`. The 21 October
+read-only database check found two owned projects and two sessions, one per
+language, with no duplicates. This does not prove recording/upload or replace
+device evidence for the entire create-to-dashboard flow. On the trusted network,
+use this acceptance sequence after updating either checkout:
 
 1. `/health` and `/ready` are reachable. The backend version in `/openapi.json`
-   is 0.7.0; Swagger is at `/docs`.
+   is 0.8.0; Swagger is at `/docs`.
 2. The existing account signs in through the development Supabase project.
 3. A project-list request without a Bearer token is rejected with 401; the
    signed-in request returns 200 and owned projects only.
@@ -289,18 +298,21 @@ Once the trusted-network gate is satisfied, test these in order on the iPhone:
    `en`/`sv` language is preserved. The pinned mobile branch implements these
    project operations, including title/description editing; record each real
    server response and the visible result without capturing tokens or private data.
+5. Start/Resume is implemented in `ed05ebd`: the client lists owned sessions and
+   reuses an active ID, otherwise calls
+   `POST /api/v1/story-projects/{project_id}/continue` with `{}`. It atomically
+   returns an existing active session or creates one without generating a draft.
+   Reuse the returned `session.id`; repeated direct session POSTs create separate
+   sessions. Tarun reports this step passed on iPhone.
 
 The following is **later integration work**, not already available in the pinned
-mobile UI. Backend endpoints exist, but Tarun still needs to connect session,
-memory, draft, PDF and continuation screens/transports before a full phone demo:
+mobile UI. Backend endpoints exist, but Tarun still needs to connect recording,
+messages/memory, draft and PDF screens/transports before a full phone demo:
 
-5. Use `POST /api/v1/story-projects/{project_id}/continue` with `{}` for
-   Start/Resume. It atomically returns an existing active session or creates one,
-   preserving its project's language without generating a draft. Reuse the
-   returned `session.id`; repeated direct session POSTs create separate sessions.
-   Submit the fixture messages, confirm/review their sourced facts, then tap
+6. Follow the [Day 9 audio guide](day-9-mobile-audio.md) for explicitly simulated
+   native uploads and source-linked messages. Confirm/review sourced facts, then tap
    Create My Story. Save a manual edit and show that it needs review.
-6. Download the saved revision's PDF privately. Continue, add the continuation
+7. Download the saved revision's PDF privately. Continue, add the continuation
    fixture message, confirm its memory and explicitly generate version two.
    The older edited draft and PDF must still be available.
 
@@ -311,8 +323,9 @@ status and Content-Type before parsing responses; successful PDF routes return
 binary data and server/proxy overload can return non-JSON errors.
 
 Label the assistant/story as an **AI simulation**. Normal audio uploads do not
-transcribe speech; valid owned uploads return `503 TRANSCRIPTION_DISABLED`.
-Successful fictional transcription was tested only in the backend harness. The
+transcribe speech; default valid owned uploads return `503 TRANSCRIPTION_DISABLED`.
+Day 9's explicit simulation flag instead returns permanently labelled fictional
+fixtures after validation; see its audio guide before wiring that flow. The
 complete Expo workflow and native email-confirmation callback remain separate
 acceptance work; existing-user login does not require finishing registration.
 

@@ -14,7 +14,7 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 Swagger: http://127.0.0.1:8000/docs
 
-Backend version 0.7.0 includes [Day 5 Create My Story](../docs/story-drafts-api.md):
+Backend version 0.8.0 includes [Day 5 Create My Story](../docs/story-drafts-api.md):
 explicit generation, confirmed-memory evidence, immutable originals, versioned
 drafts, manual editing/history and conservative verification. For the free local
 simulation, set `CONVERSATION_MODE=mock STORY_GENERATION_MODE=mock` before the
@@ -91,6 +91,26 @@ FastAPI in-process with synthetic Auth/Data API fixtures:
 
 It requires the reviewed mobile Git object locally, opens no sockets and makes
 no cloud requests. It does not prove device networking, real login or RLS.
+
+## Day 9 native audio simulation
+
+From this directory, explicitly opt into labelled fictional transcripts:
+
+```sh
+.venv/bin/python scripts/run_mobile_dev.py --lan --simulate-transcription
+```
+
+On Windows use `.\.venv\Scripts\python.exe`. The launcher pins the development
+project and otherwise keeps transcription disabled; no environment variable or
+model key enables it. Valid recording bytes are decoded and bounded, but their
+speech is not interpreted. A permanent bilingual simulation notice is stored
+with the fixed EN/SV transcript. Process its returned ID through `/messages`
+using `source_message_id`, not copied text, to avoid a second original.
+
+See the [native upload and memory-review handoff](../docs/day-9-mobile-audio.md)
+and [Day 9 results](../docs/day-9-status.md). No new API paths, database migration,
+retained-audio storage or paid provider is added. Physical-device recording,
+upload and display still need Tarun's implementation/acceptance.
 
 ```sh
 curl -i http://127.0.0.1:8000/health
@@ -311,8 +331,9 @@ verification are recorded in [Day 4 status](../docs/day-4-status.md).
 ## Day 3 audio foundation
 
 Backend version 0.3.0 adds bounded, authenticated audio upload and immutable
-transcript retrieval. Live transcription remains disabled; the real app never
-returns a simulated transcript. [Audio API](../docs/audio-api.md) describes the
+transcript retrieval. Live transcription remains disabled. Ordinary startup
+does not return simulated transcripts; Day 9's explicit development launcher
+flag is the only supplied runtime opt-in. [Audio API](../docs/audio-api.md) describes the
 multipart contract, errors, privacy and retry rules.
 
 The decoder uses PyAV's bundled FFmpeg libraries; a system `ffmpeg`/`ffprobe`

@@ -14,14 +14,14 @@ python -m pytest -q -m 'not integration'
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-API: http://127.0.0.1:8000 · Swagger: http://127.0.0.1:8000/docs · Version: 0.7.0
+API: http://127.0.0.1:8000 · Swagger: http://127.0.0.1:8000/docs · Version: 0.8.0
 
 - GET /health: public process liveness.
 - GET /ready: public Supabase Data API connectivity, without fetching records.
 - /api/v1/story-projects: authenticated create, list, read and metadata update.
 - /api/v1/story-projects/{project_id}/sessions: authenticated create and list.
 - /api/v1/story-sessions/{session_id}/transcribe: authenticated bounded upload;
-  currently returns `503 TRANSCRIPTION_DISABLED` after validation.
+  defaults to `503 TRANSCRIPTION_DISABLED`; explicit development simulation is available.
 - /api/v1/story-sessions/{session_id}/transcripts: immutable audio originals.
 - /api/v1/story-sessions/{session_id}/messages: ordered history and opt-in mock turns.
 - /api/v1/story-sessions/{session_id}/memories and /clarifications: owned memory review.
@@ -34,8 +34,10 @@ API: http://127.0.0.1:8000 · Swagger: http://127.0.0.1:8000/docs · Version: 0.
 - /api/v1/story-exports/{export_id}/download: authenticated historical PDF retrieval.
 
 Live speech recognition is deliberately disabled: no paid provider is wired or
-called. Provider/persistence success paths are tested with explicit test doubles,
-not fabricated results from the running application. See [the audio API](docs/audio-api.md).
+called. Day 9 adds `--simulate-transcription` to the dedicated development
+launcher: valid audio returns a fixed fictional transcript with a permanent
+simulation notice, not recognized speech. Ordinary startup remains disabled.
+See [the audio API](docs/audio-api.md) and [native audio handoff](docs/day-9-mobile-audio.md).
 Day 4's explicitly labelled text-conversation simulation is separately available
 with `CONVERSATION_MODE=mock`; it does not enable speech recognition or a live AI
 provider. See [the conversation API](docs/conversation-api.md).
@@ -60,6 +62,12 @@ The launcher pins the development project and enables only mock conversation and
 story generation. Normal audio transcription stays disabled. It does not create
 a public URL or establish real iPhone acceptance. See [Day 7 verification and
 remaining device checks](docs/day-7-status.md).
+
+For Day 9's explicitly labelled audio simulation, add `--simulate-transcription`
+to that launcher command. The same upload and source-message APIs preserve one
+immutable original, separate assistant/memory records and versioned review.
+No new migration or model key is needed. Native recording/upload screens and
+physical-iPhone audio acceptance remain Tarun's work; see [Day 9 status](docs/day-9-status.md).
 
 Protected routes validate the supplied Supabase user access token through Auth
 `getUser`, then forward that exact user token plus the publishable key to the Data

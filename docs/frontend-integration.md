@@ -1,10 +1,16 @@
 # Frontend integration handoff for Tarun
 
-Updated for backend 0.7.0 on 20 October 2026. This is the shared contract for
+Updated for backend 0.8.0 on 21 October 2026. This is the shared contract for
 Tarun's Expo mobile app and the development web preview. The backend supports
 the fictional autobiography workflow through private PDF export and continuation.
 Real Expo/device acceptance still needs Tarun's confirmation; backend harness
 checks are not evidence of a successful iPhone integration.
+
+Day 9 adds an explicit development-only `--simulate-transcription` launcher
+flag, permanent simulation notices and native-format/source-linkage checks.
+The [Day 9 audio guide](day-9-mobile-audio.md) is the current upload, retry and
+review contract. It does not enable real speech recognition. Mobile `ed05ebd`
+has Start/Continue but no recording/upload/message UI; that device flow remains pending.
 
 Day 8 reviewed Tarun's actual `feat/mobile-story-details` branch at `59762f2`
 against backend `374b1dd`. Its four project metadata operations match this API.
@@ -355,17 +361,18 @@ The server validates decoded audio, not just extension/MIME. It checks ownership
 before reading the upload and removes temporary files on normal success/error
 paths. Abrupt host failure requires deployment-level cleanup.
 
-Normal FastAPI still returns `503 TRANSCRIPTION_DISABLED` for valid uploads.
-Only the integration harness injects an explicitly fictional transcription
-provider; there is no selectable fake speech-recognition mode in the running
-application. The tested successful response shape is:
+Normal FastAPI and the default launcher still return `503 TRANSCRIPTION_DISABLED`
+for valid uploads. Day 9's dedicated development launcher can explicitly enable
+`--simulate-transcription`; it validates recording bytes but returns fixed
+fictional text, not recognized speech. Keep the permanent simulation notice and
+UI label. The unchanged six-field response shape, with the simulated fixture, is:
 
 ```json
 {
   "transcript_id":"74000000-0000-4000-8000-000000000001",
   "session_id":"73000000-0000-4000-8000-000000000001",
   "language":"sv",
-  "text":"Jag flyttade till Malmö 1975.",
+  "text":"[SIMULATED TRANSCRIPT / SIMULERAD TRANSKRIPTION — FICTIONAL / FIKTIVT. Not derived from uploaded audio / Inte baserat på uppladdat ljud.]\nJag flyttade till Malmö 1974. Jag arbetade som lärare.",
   "status":"completed",
   "created_at":"2026-10-20T10:01:00Z"
 }
@@ -569,16 +576,17 @@ automatically a confirmed memory. Project/session erasure cascades source rows.
 
 Day 3 uses temporary audio only, with explicit per-upload processing consent.
 There is no retained-audio bucket or permanent recording URL. The running app
-returns `TRANSCRIPTION_DISABLED` until a real provider is explicitly enabled;
-it never returns a fake transcript. See [the audio API](audio-api.md) before
+returns `TRANSCRIPTION_DISABLED` by default. Only the explicit development
+simulation flag produces clearly labelled fictional transcripts; no real
+provider is implemented. See [the audio API](audio-api.md) before
 implementing a recording screen. Additional retention/provider policy approval
 is needed before real pilot-user recordings.
 
 ## Complete fictional integration walkthrough
 
 Use the dedicated development project, not the old Lovable project or real
-user memories. The runtime flags enable typed simulated conversation and story
-generation; they do not enable audio transcription.
+user memories. Conversation/story environment flags do not enable transcription;
+the separate Day 9 launcher switch enables only labelled audio simulation.
 
 1. Start the backend, open `/health` and `/ready` from the target client and sign
    in through development Supabase. Get the current SDK access token.
@@ -586,9 +594,11 @@ generation; they do not enable audio transcription.
    it. Retain the returned project UUID, not a single hard-coded current story.
 3. Create a session and verify its inherited Swedish language.
 4. If testing normal runtime audio, upload a valid fictional short M4A/WAV with
-   consent and verify sanitized `TRANSCRIPTION_DISABLED`, not a fabricated
-   transcript. The backend integration harness separately injects fictional
-   transcription to verify successful upload, persistence, replay and cleanup.
+   consent and verify sanitized `TRANSCRIPTION_DISABLED`. For an explicit Day 9
+   simulation, enable its launcher flag, expect a labelled fictional transcript,
+   and process the returned source ID without copying its text. The backend
+   harness and isolated PostgreSQL tests verify persistence, replay and cleanup;
+   they do not replace the native device test.
 5. For the app's free typed flow, submit `Jag flyttade till Malmö 1975.` with a
    UUID action key. Read the messages, memories and open clarification lists.
 6. Confirm each intended sourced candidate with its current version. Also test
@@ -643,15 +653,15 @@ passwords/tokens into chat or command arguments. The optional
 not permission to print or save access tokens. This harness does not change
 Auth settings or create users.
 
-Tarun reports public health/readiness reachability from the iPhone. Real Expo
-authenticated project persistence, confirmation, SDK session refresh across app
-lifecycle, recording permissions/format and native PDF sharing still need device
-acceptance. The reviewed mobile branch has project list/create/detail/metadata
-editing, not native session, conversation, draft, PDF or continuation screens.
-For the next Start/Resume integration, use the existing
-`POST /api/v1/story-projects/{project_id}/continue` contract: it resumes an active
-owned session atomically rather than creating another session on every tap.
-A Python integration client
+Tarun reports login, public health/readiness reachability and Start/Continue
+testing on iPhone. Mobile `ed05ebd` implements project metadata operations and
+native session entry/resumption using the existing continuation contract, rather
+than creating another session on every tap. The 21 October read-only hosted
+check found two owned projects/two sessions, one EN and one SV, with no duplicates.
+Recording/upload, conversation messages, memory review, drafts and PDF UI are not
+implemented in that revision. The complete create-to-dashboard acceptance,
+confirmation, refresh lifecycle, audio and sharing behaviors still need explicit
+device results. A Python integration client
 using genuine development JWTs can verify the backend independently, but cannot
 prove those device behaviors. Real speech/provider quality, privacy approvals,
 public deployment and AI spending remain outside this free mock integration.

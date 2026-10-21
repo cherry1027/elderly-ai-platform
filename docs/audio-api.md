@@ -1,10 +1,24 @@
 # Audio upload and transcript API
 
-Backend 0.3.0 provides authenticated upload validation, immutable transcript
-storage and retrieval. Live speech recognition is not enabled. A valid upload
-currently returns `503 TRANSCRIPTION_DISABLED`, without contacting a provider
-or creating a transcription claim. Successful transcription responses below are
-the tested contract, not a currently available live speech-recognition service.
+Backend 0.8.0 retains authenticated upload validation, immutable transcript
+storage and retrieval. Ordinary Uvicorn startup and the default development
+launcher return `503 TRANSCRIPTION_DISABLED` after validation, without a claim
+or provider call. Real speech recognition remains unimplemented.
+
+Day 9 adds an explicit **development-only simulation**, using the same endpoint:
+
+```sh
+.venv/bin/python scripts/run_mobile_dev.py --lan --simulate-transcription
+```
+
+On Windows use `.\.venv\Scripts\python.exe`. The launcher refuses any project
+except `edbkuunyeyxnyenmmqud`. It validates real recording bytes but returns a
+fixed fictional English/Swedish fixture, **not words recognized from the audio**.
+There is no model, provider key, paid call or new database migration. A bilingual
+simulation notice is permanently stored inside the original text, including
+GET results and completed retries. Preserve it and visibly label the UI.
+See [the Day 9 native-audio handoff](day-9-mobile-audio.md) for the full two-step
+upload → source-linked conversation flow and pending iPhone acceptance.
 
 ## Requests
 
@@ -61,7 +75,10 @@ const response = await fetch(
 Do not set the request Content-Type manually: the browser/mobile multipart
 implementation must include its generated boundary. Native Expo clients should
 provide a file URI, the correct extension and its matching audio Content-Type.
-No provider key belongs in frontend configuration.
+The descriptor must cause the native multipart implementation to send file bytes;
+posting the literal `file://` URI as text is not an audio upload. No provider key
+belongs in frontend configuration. AAC inside M4A is supported; raw ADTS `.aac`
+and Android AMR/3GP recordings are not accepted by this contract.
 
 `GET /api/v1/story-sessions/{session_id}/transcripts` returns a plain array, in
 ascending `created_at, transcript_id` order. `limit` defaults to 50 (1–100) and
@@ -70,16 +87,16 @@ in-progress requests. All protected responses have `Cache-Control: no-store`.
 
 ## Tested success contract
 
-When a provider is enabled in a future implementation, POST returns HTTP 200.
-Completed retries return the same record, not a new original. GET uses the same
-six fields for each item:
+With the explicit simulated adapter enabled, POST returns HTTP 200. Completed
+retries return the same record, not a new original. GET uses the same six fields
+for each item; no new response fields were added:
 
 ```json
 {
   "transcript_id": "22222222-2222-4222-8222-222222222222",
   "session_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
   "language": "sv",
-  "text": "Jag föddes i Malmö 1974.",
+  "text": "[SIMULATED TRANSCRIPT / SIMULERAD TRANSKRIPTION — FICTIONAL / FIKTIVT. Not derived from uploaded audio / Inte baserat på uppladdat ljud.]\nJag flyttade till Malmö 1974. Jag arbetade som lärare.",
   "status": "completed",
   "created_at": "2026-10-18T08:06:00Z"
 }
@@ -90,6 +107,13 @@ and no longer than 32,000 characters. It is separate from editable corrections,
 extracted memories and generated chapters. Project/session language never changes
 because of the spoken language or Accept-Language header. No detected-language
 claim or translation is implemented.
+
+POST does not automatically call the conversation endpoint. Process the returned
+`transcript_id` with `POST /api/v1/story-sessions/{session_id}/messages`, a separate
+stable UUID action key, and `{"source_message_id":"TRANSCRIPT_ID","language":"sv"}`.
+Do not resend its text: the existing source ID avoids a second original message.
+The assistant and its source-linked memory candidates are saved separately and
+the conversation response explicitly has `mode: "mock"`.
 
 ## Errors and retries
 
@@ -110,7 +134,7 @@ human-readable message or expose upstream bodies in the UI.
 | 422 | `INVALID_RECORDING`, `RECORDING_TOO_LONG`, `AUDIO_PROCESSING_LIMIT` | Replace the invalid/unsafe recording |
 | 422 | `CONSENT_REQUIRED`, `LANGUAGE_MISMATCH`, `VALIDATION_ERROR` | Correct consent, language or request fields |
 | 429 | `AUDIO_BUSY` | Back off; at most two audio requests per server process |
-| 503 | `TRANSCRIPTION_DISABLED` | Expected until a real provider is configured |
+| 503 | `TRANSCRIPTION_DISABLED` | Default behavior; explicit development simulation is opt-in |
 | 503 | `TRANSCRIPTION_UNAVAILABLE`, `TRANSCRIPTION_INVALID_RESPONSE` | Controlled provider failure; same-key retry |
 | 503 | `AUDIO_PROCESSING_UNAVAILABLE`, `SUPABASE_UNAVAILABLE` | Dependency unavailable; bounded retry |
 | 504 | `TRANSCRIPTION_TIMEOUT` | Provider exceeded its 60-second processing limit |
@@ -127,6 +151,8 @@ billing if a future external provider succeeds and its response or a DB write is
 lost. There is no automatic provider retry or retained-audio outbox. The client
 must resend identical bytes/key. Upload retries still repeat local validation;
 while the provider is disabled they always return 503, even for an old key.
+POST also requires an active session, including completed-request replay. After
+session completion, use GET transcripts rather than promising another upload.
 
 ## Privacy and deployment limits
 
@@ -146,17 +172,25 @@ local temporary deletion does not establish an external provider retention polic
 The user-JWT SQL RPCs allow authenticated users to append source text for their
 own sessions. RLS, immutable records and idempotency are enforced; these records
 are not cryptographic proof of a provider result or speaker identity. No raw audio
-retention policy, permanent audio URL, live conversation, AI memory extraction or
-story generation is included.
+retention policy, permanent audio URL or real AI/speech recognition is included.
+Mock conversation and memory review are separate existing endpoints; none of
+these checks establish speech-recognition accuracy or speaker identity.
 
 ## Verification
 
-Offline API tests inject a fictional provider; the running server has no fake
-success mode or OpenAI adapter. Hosted database checks passed independently of
+Day 9 offline API tests exercise the same simulated adapter available through
+the explicit launcher flag, with real encoded AAC/M4A test bytes. The generated
+clips are test audio, not captured iPhone speech. No OpenAI adapter is present.
+The Day 9 PostgreSQL tests compose audio claim/completion, source-linked turns,
+review, retries, immutability and two-user isolation in an isolated database.
+
+Historical hosted database checks passed independently of
 Auth sign-in. Three hosted HTTP cases also passed using two genuine anonymous
 Auth users and explicit fictional transcripts. Permanent email/password login and
 actual speech recognition were not part of that run. To repeat with existing
 development accounts, run the opt-in two-user HTTP tests through
 `backend/scripts/verify_two_users.py --day3`; these also use fictional results and
-make no paid calls. Real Swedish/English speech quality and provider integration
-remain pending. See [Day 3 status](day-3-status.md).
+make no paid calls. This does not authorize creating accounts or changing Auth
+settings. Real iPhone recording/upload/display remains pending until Tarun adds
+those native screens. See [Day 9 status](day-9-status.md) and the historical
+[Day 3 status](day-3-status.md).

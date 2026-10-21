@@ -116,6 +116,14 @@ _GREW_UP_PATTERNS = {
     "sv": re.compile(rf"(?i:\bJag\s+växte\s+upp\s+i\s+)(?P<city>{_PROPER_NAME})"),
 }
 
+# Deliberately recognize only the two agreed fictional demo sentences. Other
+# jobs, additional qualifications and compound claims stay unextracted rather
+# than being generalized into facts by this deterministic mock.
+_OCCUPATION_PATTERNS = {
+    "en": re.compile(r"(?i:\bI[ \t]+worked[ \t]+as[ \t]+a[ \t]+)(?P<occupation>(?i:teacher))\b"),
+    "sv": re.compile(r"(?i:\bJag[ \t]+arbetade[ \t]+som[ \t]+)(?P<occupation>(?i:lärare))\b"),
+}
+
 _RELATIONSHIPS_EN = (
     "wife|husband|mother|father|sister|brother|daughter|son|partner|"
     "grandmother|grandfather"
@@ -263,6 +271,24 @@ def _is_safe_match(text: str, match: re.Match[str]) -> bool:
     return not _inside_quotation(text, match.start()) and not _is_hypothetical(
         text, match.start()
     )
+
+
+def _is_standalone_occupation(text: str, match: re.Match[str]) -> bool:
+    """Require a complete, unqualified first-person past-tense statement.
+
+    Prefixes such as 'Maybe', quotations, hypotheticals and job wishes must not
+    be silently discarded. Trailing questions, negation, qualifications and
+    compound roles likewise must not turn into an asserted occupation.
+    """
+    # A line break does not end an immediately preceding introduction such as
+    # "Imagine:\n" or "My father said:\n". Reject any adjacent colon-led
+    # quotation/scenario, without trying to interpret distant earlier sentences.
+    if text[: match.start()].rstrip().endswith(":"):
+        return False
+    boundary = max(text.rfind(mark, 0, match.start()) for mark in ".!?;\n")
+    if text[boundary + 1 : match.start()].strip():
+        return False
+    return bool(re.match(r"[ \t\r]*(?:[.!](?=\s|$)|(?=\n|$))", text[match.end() :]))
 
 
 def _question_for(
@@ -480,6 +506,19 @@ class MockConversationProvider:
                     value=match.group("city"),
                     evidence=match.group(0),
                     slot="grew_up_location",
+                ),
+            )
+
+        for match in _OCCUPATION_PATTERNS[language].finditer(text):
+            if not _is_standalone_occupation(text, match):
+                continue
+            add(
+                match,
+                FactCandidate(
+                    fact_type="event",
+                    value=match.group("occupation"),
+                    evidence=match.group(0),
+                    slot="occupation",
                 ),
             )
 

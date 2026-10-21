@@ -474,3 +474,135 @@ def test_provider_rejects_unsupported_language_and_oversized_input() -> None:
     assert respond("x" * 32_000).facts == []
     with pytest.raises(ValueError, match="32000"):
         respond("x" * 32_001)
+
+
+@pytest.mark.parametrize(
+    ("language", "source", "value"),
+    [
+        ("en", "I worked as a teacher.", "teacher"),
+        ("sv", "Jag arbetade som lärare.", "lärare"),
+        ("en", "  I worked as a Teacher  ", "Teacher"),
+        ("sv", "Jag arbetade som LÄRARE!", "LÄRARE"),
+    ],
+)
+def test_demo_occupation_is_narrow_source_grounded_and_preserves_case(language, source, value):
+    result = respond(source, language=language)
+    assert result.facts == [FactCandidate(
+        fact_type="event", value=value,
+        evidence=source.strip().removesuffix(".").removesuffix("!"),
+        slot="occupation",
+    )]
+    fact = result.facts[0]
+    assert fact.year is None
+    assert fact.value in source and fact.evidence in source
+    assert fact.uncertain is False
+
+
+@pytest.mark.parametrize(
+    ("language", "source", "occupation"),
+    [
+        ("en", "I moved to Malmö in 1974. I worked as a teacher.", "teacher"),
+        ("sv", "Jag flyttade till Malmö 1974. Jag arbetade som lärare.", "lärare"),
+    ],
+)
+def test_move_and_occupation_are_distinct_source_ordered_candidates(language, source, occupation):
+    facts = respond(source, language=language).facts
+    assert [(fact.slot, fact.value, fact.year) for fact in facts] == [
+        ("move", "Malmö", 1974), ("occupation", occupation, None),
+    ]
+    assert all(fact.value in source and fact.evidence in source for fact in facts)
+
+
+@pytest.mark.parametrize(
+    ("language", "correction"),
+    [("en", "Actually, it was 1975."), ("sv", "Egentligen var det 1975.")],
+)
+def test_later_occupation_does_not_redirect_explicit_year_correction(language, correction):
+    facts = respond(correction, language=language, prior_facts=[
+        {"id": "move-fact", "fact_type": "event", "value": "Malmö", "year": 1974,
+         "slot": "move", "status": "pending", "corrected_value": None},
+        {"id": "occupation-fact", "fact_type": "event", "value": "teacher", "year": None,
+         "slot": "occupation", "status": "pending", "corrected_value": None},
+    ]).facts
+    assert len(facts) == 1
+    assert facts[0].slot == "move"
+    assert facts[0].year == 1975
+    assert facts[0].conflicts_with_fact_id == "move-fact"
+    assert facts[0].uncertain is True
+
+
+@pytest.mark.parametrize(
+    ("language", "source"),
+    [
+        ("en", "I did not work as a teacher."),
+        ("en", "I never worked as a teacher."),
+        ("en", "Maybe I worked as a teacher."),
+        ("en", "I think I worked as a teacher."),
+        ("en", "If I worked as a teacher, I would remember."),
+        ("en", "Imagine I worked as a teacher."),
+        ("en", 'My father said, "I worked as a teacher."'),
+        ("en", "'I worked as a teacher.'"),
+        ("en", "I will work as a teacher."),
+        ("en", "I wish I worked as a teacher."),
+        ("en", "I worked as a teacher?"),
+        ("en", "I worked as a teacher and a doctor."),
+        ("en", "I worked as a teacher in Malmö."),
+        ("en", "I worked as a teacher, maybe."),
+        ("en", "I worked as a teacher—not really."),
+        ("en", "I worked as a teacher's assistant."),
+        ("en", "I worked as a doctor."),
+        ("en", "I worked as a teachertrainer."),
+        ("sv", "Jag arbetade inte som lärare."),
+        ("sv", "Jag arbetade aldrig som lärare."),
+        ("sv", "Kanske jag arbetade som lärare."),
+        ("sv", "Jag tror att jag arbetade som lärare."),
+        ("sv", "Om jag arbetade som lärare skulle jag minnas det."),
+        ("sv", "Tänk om jag arbetade som lärare."),
+        ("sv", 'Hon sa: “Jag arbetade som lärare.”'),
+        ("sv", "Jag kommer att arbeta som lärare."),
+        ("sv", "Jag önskar att jag arbetade som lärare."),
+        ("sv", "Jag arbetade som lärare?"),
+        ("sv", "Jag arbetade som lärare och läkare."),
+        ("sv", "Jag arbetade som lärare i Malmö."),
+        ("sv", "Jag arbetade som lärare, kanske."),
+        ("sv", "Jag arbetade som läkare."),
+        ("sv", "Jag arbetade som lärarassistent."),
+    ],
+)
+def test_unqualified_occupation_is_not_guessed_from_unsupported_claims(language, source):
+    assert respond(source, language=language).facts == []
+
+
+@pytest.mark.parametrize(("language", "source"), [("en", "1975"), ("sv", "1975"),
+                                                   ("en", "Yes"), ("en", "No"),
+                                                   ("sv", "Ja"), ("sv", "Nej")])
+def test_bare_year_or_review_answer_does_not_guess_an_occupation_or_resolve_memory(language, source):
+    assert respond(source, language=language, prior_facts=[
+        {"id": "occupation-fact", "fact_type": "event", "value": "teacher", "year": None,
+         "slot": "occupation", "status": "pending", "corrected_value": None},
+    ]).facts == []
+
+
+@pytest.mark.parametrize(
+    ("language", "source"),
+    [
+        ("en", "Imagine:\nI worked as a teacher."),
+        ("en", "My father said:\nI worked as a teacher."),
+        ("en", "My father said:  \r\n\n  I worked as a teacher."),
+        ("en", "Suppose:\nI worked as a teacher."),
+        ("sv", "Tänk dig:\nJag arbetade som lärare."),
+        ("sv", "Min pappa sa:\nJag arbetade som lärare."),
+        ("sv", "Min pappa sa:  \r\n\n  Jag arbetade som lärare."),
+        ("sv", "Tänk om:\nJag arbetade som lärare."),
+    ],
+)
+def test_adjacent_multiline_introduction_does_not_assert_occupation(language, source):
+    assert respond(source, language=language).facts == []
+
+
+@pytest.mark.parametrize("language", ["en", "sv"])
+def test_fictional_fixture_notice_is_not_mistaken_for_quoted_occupation(language):
+    from app.services.transcription import SIMULATED_TRANSCRIPTS
+
+    facts = respond(SIMULATED_TRANSCRIPTS[language], language=language).facts
+    assert [(fact.slot, fact.year) for fact in facts] == [("move", 1974), ("occupation", None)]

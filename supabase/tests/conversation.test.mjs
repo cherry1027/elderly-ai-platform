@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { test } from "node:test";
 import { PGlite } from "@electric-sql/pglite";
@@ -666,6 +667,103 @@ test("Day 4 conversation persistence is atomic, private and replay-safe", async 
       assert.equal((await db.query("SELECT original_text FROM conversation_messages WHERE id=$1", [orphanSource])).rows[0].original_text, "Detta original ska lämnas orört.");
       assert.equal((await db.query("SELECT * FROM memory_facts WHERE id=$1", [state.bobFact.id])).rows.length, 1);
     });
+
+    for (const language of ["en", "sv"]) {
+      await t.test(`Day 9 ${language} audio original feeds one sourced turn and stays immutable`, async () => {
+        // Isolated PostgreSQL fixtures only. Actual AAC decoding is covered by
+        // Python's native-audio API tests, not by this SQL persistence check.
+        const projectId = randomUUID();
+        const sessionId = randomUUID();
+        const uploadKey = randomUUID();
+        const turnKey = randomUUID();
+        const hash = "9".repeat(64);
+        const notice = "[SIMULATED TRANSCRIPT / SIMULERAD TRANSKRIPTION — FICTIONAL / FIKTIVT. " +
+          "Not derived from uploaded audio / Inte baserat på uppladdat ljud.]\n";
+        const moveEvidence = language === "sv" ? "Jag flyttade till Malmö 1974" : "I moved to Malmö in 1974";
+        const jobEvidence = language === "sv" ? "Jag arbetade som lärare" : "I worked as a teacher";
+        const text = `${notice}${moveEvidence}. ${jobEvidence}.`;
+        const job = language === "sv" ? "lärare" : "teacher";
+        let original, turn;
+
+        await asUser(db, alice, async () => {
+          await db.query("INSERT INTO story_projects (id,user_id,title,language) VALUES ($1,$2,'Fictional Day 9 SQL fixture',$3)",
+            [projectId, alice, language]);
+          await db.query("INSERT INTO conversation_sessions (id,project_id,language) VALUES ($1,$2,$3)",
+            [sessionId, projectId, language]);
+          const claim = (await db.query("SELECT * FROM claim_audio_transcription($1,$2,$3,$4,$5)",
+            [projectId, sessionId, uploadKey, hash, language])).rows[0];
+          assert.equal(claim.outcome, "claimed");
+          original = (await db.query("SELECT * FROM complete_audio_transcription($1,$2,$3)",
+            [claim.request_id, claim.claim_token, text])).rows[0];
+          assert.equal(original.text, text);
+          assert.equal(original.session_id, sessionId);
+          assert.equal(original.language, language);
+
+          const replay = (await db.query("SELECT * FROM claim_audio_transcription($1,$2,$3,$4,$5)",
+            [projectId, sessionId, uploadKey, hash, language])).rows[0];
+          assert.equal(replay.outcome, "completed");
+          assert.equal(replay.transcript_id, original.transcript_id);
+          assert.equal(replay.text, text);
+          await expectSqlError(db, "SELECT * FROM claim_audio_transcription($1,$2,$3,$4,$5)",
+            [projectId, sessionId, uploadKey, "8".repeat(64), language], "23505");
+
+          turn = await appendTurn(db, {
+            sessionId, key: turnKey, text, language, sourceMessageId: original.transcript_id,
+            expectedSequence: await currentSequence(db, sessionId),
+            assistantText: language === "sv" ? "Tack för att du delar det minnet." : "Thank you for sharing that memory.",
+            facts: [
+              { fact_type: "event", value: "Malmö", evidence: moveEvidence, year: 1974, slot: "move", uncertain: false },
+              { fact_type: "event", value: job, evidence: jobEvidence, slot: "occupation", uncertain: false },
+            ],
+          });
+          assert.equal(turn.user_message.id, original.transcript_id);
+          assert.equal(turn.user_message.text, text);
+          assert.equal(turn.message.language, language);
+          assert.equal(turn.mode, "mock");
+          assert.equal(turn.memories.length, 2);
+          assert.ok(turn.memories.every(f => f.source_message_id === original.transcript_id && f.status === "pending"));
+          assert.deepEqual(await getTurn(db, {
+            sessionId, key: turnKey, text, language, sourceMessageId: original.transcript_id,
+          }), turn);
+          await assert.rejects(() => appendTurn(db, {
+            sessionId, key: randomUUID(), text, language, sourceMessageId: original.transcript_id,
+            expectedSequence: turn.message.sequence,
+          }), error => error.code === "23505");
+
+          const move = turn.memories.find(f => f.slot === "move");
+          const occupation = turn.memories.find(f => f.slot === "occupation");
+          const confirmed = await resolveFact(db, move.id, "confirmed", null, 1);
+          const corrected = await resolveFact(db, move.id, "confirmed", "1975", confirmed.version);
+          assert.equal(corrected.value, "Malmö");
+          assert.equal(corrected.year, 1974);
+          assert.equal(corrected.evidence, moveEvidence);
+          assert.equal(corrected.corrected_value, "1975");
+          assert.equal(corrected.source_message_id, original.transcript_id);
+          assert.equal((await resolveFact(db, occupation.id, "rejected", null, 1)).status, "rejected");
+          await assert.rejects(() => resolveFact(db, move.id, "rejected", null, 1), error => error.code === "55000");
+          const messages = (await db.query("SELECT role,original_text FROM conversation_messages WHERE session_id=$1 ORDER BY sequence", [sessionId])).rows;
+          assert.equal(messages.length, 2);
+          assert.equal(messages.filter(row => row.role === "user").length, 1);
+          assert.equal(messages[0].original_text, text);
+          assert.equal((await db.query("SELECT text FROM audio_transcripts WHERE transcript_id=$1", [original.transcript_id])).rows[0].text, text);
+        });
+
+        await asUser(db, bob, async () => {
+          for (const relation of ["conversation_message_history", "audio_transcripts", "memory_facts"]) {
+            assert.equal((await db.query(`SELECT count(*)::integer AS count FROM ${relation} WHERE session_id=$1`, [sessionId])).rows[0].count, 0);
+          }
+          await expectSqlError(db, "SELECT * FROM claim_audio_transcription($1,$2,$3,$4,$5)",
+            [projectId, sessionId, uploadKey, hash, language], "P0002");
+          await assert.rejects(() => getTurn(db, {
+            sessionId, key: turnKey, text, language, sourceMessageId: original.transcript_id,
+          }), error => error.code === "P0002");
+          await assert.rejects(() => resolveFact(db, turn.memories[0].id, "confirmed", null, 1), error => error.code === "P0002");
+        });
+        await expectSqlError(db, "UPDATE conversation_messages SET original_text='Rewritten' WHERE id=$1",
+          [original.transcript_id], "55000");
+        assert.equal((await db.query("SELECT original_text FROM conversation_messages WHERE id=$1", [original.transcript_id])).rows[0].original_text, text);
+      });
+    }
 
     await t.test("rollback-only hosted verification SQL also passes locally", async () => {
       const cloudSql = await readFile(new URL("./cloud-conversation.sql", import.meta.url), "utf8");

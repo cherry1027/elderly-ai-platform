@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { BackHandler } from 'react-native';
+import { SessionRecording, type SessionRecordingHandle } from '../audio/SessionRecording';
 import type { AuthUser } from '../auth/client';
 import { readMobileApiConfig } from '../api/config';
 import { continueStoryProject, listStorySessions, StoryProjectsError, type StoryProject } from '../api/story-projects';
@@ -18,6 +19,7 @@ interface Props {
 /** Mounted only by an intentional action on a freshly loaded, owned story. */
 export function Conversation({ language, user, project, getAccessToken, onBack, onSignOut }: Props) {
   const [config] = useState(readMobileApiConfig);
+  const recording = useRef<SessionRecordingHandle | null>(null);
   const selected = useMemo(() => ({ id: project.id, title: project.title, language: project.language }),
     [project.id, project.title, project.language]);
   const identity = `${user.id}:${selected.id}:${selected.language}`;
@@ -101,11 +103,15 @@ export function Conversation({ language, user, project, getAccessToken, onBack, 
     setRevision(value => value + 1);
   };
   const leave = useCallback((destination: () => void) => {
-    phase.current = 'left';
-    alive.current = false;
-    cancel();
-    setFrame(previous => ({ ...previous, state: { status: 'loading' } }));
-    destination();
+    const proceed = () => {
+      phase.current = 'left';
+      alive.current = false;
+      cancel();
+      setFrame(previous => ({ ...previous, state: { status: 'loading' } }));
+      destination();
+    };
+    if (recording.current) recording.current.requestLeave(proceed);
+    else proceed();
   }, [cancel]);
   useEffect(() => {
     const listener = BackHandler.addEventListener('hardwareBackPress', () => { leave(onBack); return true; });
@@ -114,5 +120,8 @@ export function Conversation({ language, user, project, getAccessToken, onBack, 
   const state: ConversationState = frame.identity === identity && frame.revision === revision
     ? frame.state : { status: 'loading' };
   return <ConversationScreen language={language} state={state} onCheck={retry}
+    recordingPanel={state.status === 'ready' ? <SessionRecording ref={recording} language={language}
+      ownerId={user.id} projectId={selected.id} sessionId={state.session.id} sessionLanguage={state.session.language}
+      baseUrl={config?.baseUrl ?? null} getAccessToken={getAccessToken} /> : undefined}
     onBack={() => leave(onBack)} onSignOut={() => leave(onSignOut)} />;
 }

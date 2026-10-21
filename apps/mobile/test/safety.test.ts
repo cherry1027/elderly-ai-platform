@@ -14,7 +14,7 @@ const authSources = sources.filter((file) => file.startsWith(path.join(appRoot, 
 const authSource = authSources.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
 const apiSources = sources.filter((file) => file.startsWith(path.join(appRoot, 'src/api') + path.sep));
 const apiSource = apiSources.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
-const presentationSource = sources.filter((file) => !authSources.includes(file) && !apiSources.includes(file)).map((file) => fs.readFileSync(file, 'utf8')).join('\n');
+const presentationSource = sources.filter((file) => !authSources.includes(file) && !apiSources.includes(file) && !file.endsWith(path.join('audio', 'native-recorder.ts'))).map((file) => fs.readFileSync(file, 'utf8')).join('\n');
 const manifest = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
 const config = JSON.parse(fs.readFileSync(path.join(appRoot, 'app.json'), 'utf8')).expo;
 
@@ -22,7 +22,7 @@ describe('development-only mobile application boundaries', () => {
   it('imports only local native UI, Router and platform modules', () => {
     // Expo Router's published navigation types describe the existing native stack;
     // permit this exact SDK subpath, without allowing arbitrary external imports.
-    const allowed = new Set(['react', 'react-native', 'react-native-svg', 'react-native-safe-area-context', 'expo-router', 'expo-router/react-navigation', 'expo-status-bar', 'expo-constants', 'expo-secure-store', '@supabase/supabase-js', '@react-native-async-storage/async-storage']);
+    const allowed = new Set(['react', 'react-native', 'react-native-svg', 'react-native-safe-area-context', 'expo-router', 'expo-router/react-navigation', 'expo-status-bar', 'expo-constants', 'expo-secure-store', 'expo-audio', 'expo-file-system', 'expo-crypto', '@supabase/supabase-js', '@react-native-async-storage/async-storage']);
     const imports = [...source.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((match) => match[1]);
     expect(imports.length).toBeGreaterThan(0);
     for (const name of imports) expect(name.startsWith('.') || allowed.has(name)).toBe(true);
@@ -35,9 +35,9 @@ describe('development-only mobile application boundaries', () => {
       .not.toMatch(/process\.env|import\.meta|localStorage|sessionStorage|\bwindow\b|\bdocument\b/);
   });
 
-  it('keeps transports outside presentation and never adds AI or microphone operations', () => {
+  it('keeps transports outside presentation and confines microphone operations to the approved adapter', () => {
     expect(presentationSource).not.toMatch(/https?:\/\/|\bfetch\s*\(|XMLHttpRequest|WebSocket|getUserMedia|supabase|fastapi|expo-audio|expo-av/i);
-    expect(source).not.toMatch(/getUserMedia|fastapi|expo-audio|expo-av|resetPasswordForEmail/i);
+    expect(source).not.toMatch(/getUserMedia|fastapi|expo-av|resetPasswordForEmail/i);
     expect(fs.readFileSync(path.join(appRoot, 'src/auth/client.ts'), 'utf8')).not.toMatch(/signUp\s*\(/);
     expect(authSource).not.toMatch(/\b(?:client|supabase)\.(?:from|storage|functions|channel|rpc)\b/);
     expect(authSource).not.toContain('@react-native-async-storage/async-storage');
@@ -66,23 +66,29 @@ describe('development-only mobile application boundaries', () => {
     }
   });
 
-  it('uses only the native Router configuration plugin', () => {
-    expect(config.plugins).toEqual(['expo-router']);
+  it('uses Router and foreground-only audio configuration', () => {
+    expect(config.plugins).toEqual(['expo-router', ['expo-audio', expect.objectContaining({
+      recordAudioAndroid: true, enableBackgroundRecording: false, enableBackgroundPlayback: false,
+      microphonePermission: expect.any(String),
+    })]]);
     expect(config.platforms).toEqual(['android', 'ios']);
     expect(config.extra).toBeUndefined();
     expect(config.updates).toBeUndefined();
   });
 
-  it('requests no additional device permissions and blocks microphone access', () => {
+  it('permits only the approved foreground microphone capability', () => {
     expect(config.android.permissions).toEqual([]);
-    expect(config.android.blockedPermissions).toContain('android.permission.RECORD_AUDIO');
+    expect(config.android.blockedPermissions).not.toContain('android.permission.RECORD_AUDIO');
+    for (const name of ['CAMERA', 'READ_CONTACTS', 'ACCESS_FINE_LOCATION']) {
+      expect(config.android.blockedPermissions).toContain('android.permission.' + name);
+    }
     expect(config.ios?.infoPlist?.NSMicrophoneUsageDescription).toBeUndefined();
   });
 
   it('keeps the app private and excludes unrelated backend and voice SDKs', () => {
     expect(manifest.private).toBe(true);
     expect(manifest.main).toBe('expo-router/entry');
-    for (const name of ['@lovable.dev/mcp-js', 'expo-audio', 'expo-av']) {
+    for (const name of ['@lovable.dev/mcp-js', 'expo-av']) {
       expect(manifest.dependencies).not.toHaveProperty(name);
     }
   });

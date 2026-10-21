@@ -129,7 +129,7 @@ export function storyProjectsUrl(baseUrl: string): string {
   return `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-projects?limit=50&offset=0`;
 }
 
-function validDate(value: unknown): value is string {
+export function validDate(value: unknown): value is string {
   if (typeof value !== 'string') return false;
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.exec(value);
   if (!match || !Number.isFinite(Date.parse(value))) return false;
@@ -165,6 +165,9 @@ interface StoryRequest {
   input?: CreateStoryProjectInput | UpdateStoryProjectInput | Record<string, never>;
   child?: 'continue' | 'sessions';
   expectedStatus?: 200;
+  audio?: { sessionId: string; action: 'transcribe' | 'transcripts'; body?: FormData;
+    idempotencyKey?: string; onHttpError: (status: number, code?: string) => StoryProjectsError;
+    onProgress?: (stage: 'authentication' | 'fetch-invoked' | 'http-response' | 'response-body', status?: number) => void };
 }
 
 /** One transport for project and session actions, without SDK or native storage. */
@@ -173,13 +176,17 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
   endpoint: StoryRequest, decode: (value: unknown) => T): Promise<T> {
   const writing = endpoint.method !== 'GET';
   const resource = `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-projects`;
-  const url = endpoint.projectId ? `${resource}/${endpoint.projectId}${endpoint.child
+  const url = endpoint.audio ? `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-sessions/${endpoint.audio.sessionId}/${endpoint.audio.action}${endpoint.audio.action === 'transcripts' ? '?limit=50&offset=0' : ''}`
+    : endpoint.projectId ? `${resource}/${endpoint.projectId}${endpoint.child
     ? `/${endpoint.child}${endpoint.child === 'sessions' ? '?limit=50&offset=0' : ''}` : ''}`
     : writing ? resource : storyProjectsUrl(baseUrl);
   if (typeof getAccessToken !== 'function' || typeof request !== 'function' ||
     !Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) throw new StoryProjectsError('configuration');
   const controller = new AbortController();
   let dispatched = false;
+  const progress = (stage: 'authentication' | 'fetch-invoked' | 'http-response' | 'response-body', status?: number) => {
+    try { endpoint.audio?.onProgress?.(stage, status); } catch { /* diagnostics cannot affect requests */ }
+  };
   const failure = (kind: StoryProjectsErrorKind, status?: number, ambiguous = false) =>
     new StoryProjectsError(kind, status, writing && dispatched && ambiguous);
   let interruption: 'cancelled' | 'timeout' | null = null;
@@ -199,6 +206,7 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
   const timer = setTimeout(() => stop('timeout'), timeoutMs);
   const operation = (async () => {
     check();
+    progress('authentication');
     let token: string | null;
     try { token = await getAccessToken(); } catch { check(); throw new StoryProjectsError('authentication'); }
     check();
@@ -207,14 +215,42 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
     let response: Response;
     try {
       dispatched = true;
+      progress('fetch-invoked');
       response = await request(url, {
         method: endpoint.method,
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(writing ? { 'Content-Type': 'application/json' } : {}) },
-        ...(writing ? { body: JSON.stringify(endpoint.input) } : {}),
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json',
+          ...(writing && !endpoint.audio ? { 'Content-Type': 'application/json' } : {}),
+          ...(endpoint.audio?.idempotencyKey ? { 'Idempotency-Key': endpoint.audio.idempotencyKey } : {}) },
+        ...(writing ? { body: endpoint.audio?.body ?? JSON.stringify(endpoint.input) } : {}),
         credentials: 'omit', cache: 'no-store', redirect: 'error', signal: controller.signal,
       });
-    } catch { check(); throw failure('network', undefined, true); }
+    } catch (error) {
+      check();
+      // A validated local audio-file read can fail during Expo's body conversion,
+      // before HTTP starts. Preserve its safe classification, never native text.
+      if (endpoint.audio && error instanceof StoryProjectsError) throw error;
+      throw failure('network', undefined, true);
+    }
     check();
+    progress('http-response', response.status);
+    if (!response.ok && endpoint.audio) {
+      // Audio may interpret only an allowlisted code. Metadata errors continue
+      // to ignore upstream bodies, including human-readable private messages.
+      let code: string | undefined;
+      if (response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() === 'application/json') {
+        try {
+          progress('response-body', response.status);
+          const text = await response.text();
+          check();
+          if (text.length <= 4096) {
+            const error = JSON.parse(text)?.error;
+            if (error && typeof error.code === 'string') code = error.code;
+          }
+        } catch { check(); }
+      }
+      check();
+      throw endpoint.audio.onHttpError(response.status, code);
+    }
     if (response.status === 401) throw new StoryProjectsError('authentication', 401);
     if (response.status === 403) throw new StoryProjectsError('forbidden', 403);
     if (response.status === 404) throw new StoryProjectsError('not-found', 404);
@@ -228,6 +264,7 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
       throw failure('invalid-response', undefined, true);
     }
     let text: string;
+    progress('response-body', response.status);
     try { text = await response.text(); } catch { check(); throw failure('network', undefined, true); }
     check();
     if (text.length > 1_048_576) throw failure('invalid-response', undefined, true);
@@ -251,6 +288,21 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
     signal?.removeEventListener('abort', abort);
     controller.abort();
   }
+}
+
+/** Only fixed, validated session-audio paths enter the shared transport. */
+export function executeSessionAudioRequest<T>(options: ListStoryProjectsOptions,
+  endpoint: NonNullable<StoryRequest['audio']>, decode: (value: unknown) => T): Promise<T> {
+  const sessionId = validateStoryProjectId(endpoint.sessionId);
+  if ((endpoint.action !== 'transcribe' && endpoint.action !== 'transcripts') ||
+    typeof endpoint.onHttpError !== 'function' ||
+    (endpoint.action === 'transcribe' && (!endpoint.body || typeof endpoint.idempotencyKey !== 'string' ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(endpoint.idempotencyKey))) ||
+    (endpoint.action === 'transcripts' && (endpoint.body !== undefined || endpoint.idempotencyKey !== undefined))) {
+    throw new StoryProjectsError('validation');
+  }
+  return executeStoryRequest(options, { method: endpoint.action === 'transcribe' ? 'POST' : 'GET',
+    expectedStatus: 200, audio: { ...endpoint, sessionId } }, decode);
 }
 
 export function listStoryProjects(options: ListStoryProjectsOptions): Promise<StoryProject[]> {

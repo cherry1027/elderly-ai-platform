@@ -10,7 +10,16 @@
       "ios"
     ],
     "plugins": [
-      "expo-router"
+      "expo-router",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Memy uses the microphone only when you choose to record a fictional test sample. Memy använder mikrofonen bara när du väljer att spela in ett fiktivt test.",
+          "recordAudioAndroid": true,
+          "enableBackgroundRecording": false,
+          "enableBackgroundPlayback": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
@@ -18,7 +27,6 @@
     "android": {
       "permissions": [],
       "blockedPermissions": [
-        "android.permission.RECORD_AUDIO",
         "android.permission.CAMERA",
         "android.permission.READ_CONTACTS",
         "android.permission.ACCESS_FINE_LOCATION"

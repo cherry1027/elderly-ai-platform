@@ -9,6 +9,8 @@ import {
 } from '../src/api/story-projects';
 import { conversationCopy } from '../src/conversation-copy';
 
+jest.mock('../src/audio/SessionRecording', () => ({ SessionRecording: () => null }));
+
 jest.mock('../src/api/config', () => ({ readMobileApiConfig: jest.fn() }));
 jest.mock('../src/api/story-projects', () => ({ ...jest.requireActual('../src/api/story-projects'),
   listStorySessions: jest.fn(), continueStoryProject: jest.fn() }));

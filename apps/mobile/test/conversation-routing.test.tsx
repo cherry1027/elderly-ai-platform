@@ -1,8 +1,12 @@
+import { listSessionTranscripts } from '../src/api/audio-transcripts';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { renderRouter } from 'expo-router/testing-library';
 import { router } from 'expo-router';
-import { Text } from 'react-native';
+import { AppState, Text } from 'react-native';
+import * as nativeRecorder from '../src/audio/native-recorder';
+import type { RecordingDriver } from '../src/audio/native-recorder';
+import { audioCopy } from '../src/audio/audio-copy';
 import { createMobileAuth, type AuthSnapshot, type MobileAuth } from '../src/auth/client';
 import { readMobileAuthConfig } from '../src/auth/config';
 import { readMobileApiConfig } from '../src/api/config';
@@ -25,6 +29,9 @@ import { storiesCopy } from '../src/stories-copy';
 import { storyDetailsCopy } from '../src/story-details-copy';
 import { conversationCopy } from '../src/conversation-copy';
 import { copy, type Language as Locale } from '../src/i18n';
+
+jest.mock('../src/api/audio-transcripts', () => ({ ...jest.requireActual('../src/api/audio-transcripts'),
+  listSessionTranscripts: jest.fn(async () => []) }));
 
 jest.mock('../src/auth/client', () => ({ createMobileAuth: jest.fn() }));
 jest.mock('../src/auth/config', () => ({ readMobileAuthConfig: jest.fn() }));
@@ -90,12 +97,14 @@ async function openConversation(language: Locale = 'en') {
 it.each<Locale>(['en', 'sv'])('requires an intentional details action before opening the %s session landing', async language => {
   await openDetails(language);
   expect(listStorySessions).not.toHaveBeenCalled(); expect(continueStoryProject).not.toHaveBeenCalled();
+  expect(listSessionTranscripts).not.toHaveBeenCalled();
   fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy[language].conversation }));
   await screen.findByText(conversationCopy[language].ready);
   expect(screen.getByRole('header', { name: conversationCopy[language].title })).toBeOnTheScreen();
   expect(screen.getByText(conversationCopy[language].started)).toBeOnTheScreen();
   expect(screen.getByText(conversationCopy[language].scope)).toBeOnTheScreen();
   expect(continueStoryProject).toHaveBeenCalledTimes(1); expect(listStorySessions).toHaveBeenCalledTimes(1);
+  expect(listSessionTranscripts).toHaveBeenCalledWith(expect.objectContaining({ sessionId, expectedLanguage: language }));
   const call = jest.mocked(continueStoryProject).mock.calls[0][0];
   expect(call.projectId).toBe(id); expect(call.expectedLanguage).toBe(language);
   await call.getAccessToken(); expect(auth.getAccessToken).toHaveBeenCalledWith('account-a');
@@ -204,4 +213,59 @@ it('keeps SAMPLE STORIES navigation separate from real authentication and contin
   expect(createMobileAuth).not.toHaveBeenCalled(); expect(getStoryProject).not.toHaveBeenCalled();
   expect(listStorySessions).not.toHaveBeenCalled(); expect(continueStoryProject).not.toHaveBeenCalled();
   expect(globalThis.fetch).not.toHaveBeenCalled();
+});
+
+it('preserves auth/onboarding while a first iOS permission popup unmounts the conversation, then records on a fresh explicit attempt', async () => {
+  const activeListeners = new Set<(value: string) => void>();
+  const originalState = AppState.currentState;
+  const changes = jest.spyOn(AppState, 'addEventListener').mockImplementation((event, callback) => {
+    const listener = callback as (value: string) => void;
+    if (event === 'change') activeListeners.add(listener);
+    return { remove: () => { activeListeners.delete(listener); } };
+  });
+  const publishState = (value: 'active' | 'inactive') => {
+    AppState.currentState = value;
+    act(() => { [...activeListeners].forEach(listener => listener(value)); });
+  };
+  let grant!: (value: boolean) => void;
+  const permission = new Promise<boolean>(resolve => { grant = resolve; });
+  const first: RecordingDriver = {
+    requestPermission: jest.fn(() => permission), start: jest.fn(async () => {}),
+    stop: jest.fn(async () => { throw new Error('Synthetic test does not stop a file.'); }),
+    getStatus: () => ({ isRecording: true, durationMs: 1000, interrupted: false }),
+    discard: jest.fn(async () => {}), dispose: jest.fn(async () => {}),
+  };
+  const next: RecordingDriver = { ...first, requestPermission: jest.fn(async () => true),
+    start: jest.fn(async () => {}), dispose: jest.fn(async () => {}) };
+  const create = jest.spyOn(nativeRecorder, 'createNativeRecorder').mockReturnValueOnce(first).mockReturnValue(next);
+  try {
+    AppState.currentState = 'active';
+    await openConversation(); await screen.findByText(conversationCopy.en.ready);
+    const preferencesBefore = await AsyncStorage.getItem(PREFERENCES_KEY);
+    fireEvent.press(screen.getByRole('button', { name: audioCopy.en.start }));
+    await waitFor(() => expect(first.requestPermission).toHaveBeenCalledTimes(1));
+    expect(first.start).not.toHaveBeenCalled();
+    publishState('inactive');
+    expect(first.dispose).toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: audioCopy.en.stop })).toBeNull();
+    await act(async () => grant(true));
+    expect(first.start).not.toHaveBeenCalled();
+    jest.mocked(listStorySessions).mockResolvedValueOnce([session()]);
+    publishState('active');
+    await screen.findByText('Fictional selected story');
+    expect(next.start).not.toHaveBeenCalled();
+    fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.openStory + ': Fictional selected story' }));
+    await screen.findByRole('button', { name: storyDetailsCopy.en.conversation });
+    fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.conversation }));
+    await screen.findByText(conversationCopy.en.resumed);
+    fireEvent.press(screen.getByRole('button', { name: audioCopy.en.start }));
+    await screen.findByRole('button', { name: audioCopy.en.stop });
+    expect(first.start).not.toHaveBeenCalled(); expect(next.start).toHaveBeenCalledTimes(1);
+    expect(auth.signOut).not.toHaveBeenCalled();
+    expect(await AsyncStorage.getItem(PREFERENCES_KEY)).toBe(preferencesBefore);
+    expect(continueStoryProject).toHaveBeenCalledTimes(1);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  } finally {
+    changes.mockRestore(); create.mockRestore(); AppState.currentState = originalState;
+  }
 });

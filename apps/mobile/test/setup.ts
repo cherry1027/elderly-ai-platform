@@ -13,3 +13,20 @@ const rejectNetwork = () => {
 globalThis.fetch = jest.fn(rejectNetwork);
 globalThis.XMLHttpRequest = jest.fn(rejectNetwork) as unknown as typeof XMLHttpRequest;
 globalThis.WebSocket = jest.fn(rejectNetwork) as unknown as typeof WebSocket;
+
+jest.mock('expo-audio', () => ({
+  AudioModule: {
+    requestRecordingPermissionsAsync: jest.fn(async () => ({ granted: false })),
+    AudioRecorder: jest.fn(() => { throw new Error('Native recording is blocked in tests.'); }),
+  },
+  RecordingPresets: { HIGH_QUALITY: { extension: '.m4a', sampleRate: 44100,
+    numberOfChannels: 2, bitRate: 128000, ios: {}, android: {} } },
+  setAudioModeAsync: jest.fn(async () => { throw new Error('Native audio is blocked in tests.'); }),
+}));
+jest.mock('expo-file-system', () => ({
+  Paths: { cache: { uri: 'file:///blocked-test-cache/' } },
+  File: jest.fn(() => { throw new Error('Native recording files are blocked in tests.'); }),
+}));
+jest.mock('expo-crypto', () => ({
+  randomUUID: jest.fn(() => { throw new Error('Native randomness must be mocked in tests.'); }),
+}));

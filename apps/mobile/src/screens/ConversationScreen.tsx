@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { AccessibilityInfo, Platform, StyleSheet, Text, View } from 'react-native';
 import type { StoryProject, StoryProjectsErrorKind } from '../api/story-projects';
 import { MemyBrand } from '../components/BrandArtwork';
@@ -20,10 +20,11 @@ interface Props {
   onCheck: () => void;
   onBack: () => void;
   onSignOut: () => void;
+  recordingPanel?: ReactNode;
 }
 
-/** A verified-session landing screen, without simulated speech or conversation content. */
-export function ConversationScreen({ language, state, onCheck, onBack, onSignOut }: Props) {
+/** A verified-session landing screen, with an optional authenticated audio panel. */
+export function ConversationScreen({ language, state, onCheck, onBack, onSignOut, recordingPanel }: Props) {
   const text = conversationCopy[language];
   const locale = accessibilityLanguages[language];
   const message = state.status === 'error' ? [text.errors[state.error], state.reconcile && text.uncertain].filter(Boolean).join(' ')
@@ -56,6 +57,7 @@ export function ConversationScreen({ language, state, onCheck, onBack, onSignOut
           {text.language}: {state.session.language === 'sv' ? text.swedish : text.english}
         </Text>
         <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.scope}</Text>
+        {recordingPanel}
       </>}
       <LargeButton label={text.back} language={language} variant="secondary" onPress={onBack} />
       <LargeButton label={text.signOut} language={language} variant="secondary" onPress={onSignOut} />

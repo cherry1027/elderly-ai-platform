@@ -6,6 +6,7 @@ import { StoryProjectsError } from '../api/story-projects';
 import { readStoryPreviewEnabled } from '../development/story-preview-config';
 import type { Language } from '../i18n';
 import { createNativeRecorder, createRecordingId, RecordingFailure, type RecordingDriver } from './native-recorder';
+import { TranscriptConversation } from '../conversation/TranscriptConversation';
 import { RecordingPanel, type AudioPanelState, type AudioUIError } from './RecordingPanel';
 
 export interface SessionRecordingHandle { requestLeave: (proceed: () => void) => void }
@@ -60,7 +61,7 @@ export const SessionRecording = forwardRef<SessionRecordingHandle, Props>(functi
 });
 
 const RecordingScope = forwardRef<SessionRecordingHandle, Props>(function RecordingScope({
-  language, ownerId, sessionId, sessionLanguage, baseUrl, getAccessToken,
+  language, ownerId, projectId, sessionId, sessionLanguage, baseUrl, getAccessToken,
 }, ref) {
   const [state, setState] = useState<AudioPanelState>(initial);
   const stateRef = useRef(state);
@@ -283,8 +284,12 @@ const RecordingScope = forwardRef<SessionRecordingHandle, Props>(function Record
           { text: language === 'sv' ? 'Lämna' : 'Leave', style: 'destructive', onPress: leave }]);
     },
   }));
-  return <RecordingPanel language={language} state={state} onStart={() => { void start(); }}
+  return <><RecordingPanel language={language} state={state} onStart={() => { void start(); }}
     onStop={() => { void stop(); }} onConsentChange={consent => {
       if (alive.current && pending.current && ['ready', 'error', 'uncertain'].includes(stateRef.current.phase)) update({ consent });
-    }} onUpload={() => { void send(); }} onDiscard={discard} onRetryHistory={loadHistory} />;
+    }} onUpload={() => { void send(); }} onDiscard={discard} onRetryHistory={loadHistory} />
+    {enabled && <TranscriptConversation language={language} ownerId={ownerId} projectId={projectId}
+      sessionId={sessionId} sessionLanguage={sessionLanguage} baseUrl={baseUrl}
+      getAccessToken={getAccessToken} transcripts={state.transcripts} />}
+  </>;
 });

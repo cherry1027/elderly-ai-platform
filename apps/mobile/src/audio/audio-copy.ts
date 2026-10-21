@@ -2,7 +2,7 @@ export const audioCopy = {
   en: {
     title: 'Record a fictional memory',
     introduction: 'Use a short, made-up memory for this development test. Recording starts only when you choose Start recording.',
-    simulation: 'SIMULATION — this service returns fixed fictional text. It does not recognize what you said. No AI reply is generated.',
+    simulation: 'SIMULATION — this service returns fixed fictional text. It does not recognize what you said. A separate action below can request an AI simulation from the saved text.',
     start: 'Start recording', stop: 'Stop recording', discard: 'Discard recording', upload: 'Upload recording',
     retry: 'Retry the same upload', consent: 'I agree to upload this recording for this development test.',
     consentHint: 'Choose this before uploading. Recording alone does not upload your voice.',
@@ -50,7 +50,7 @@ export const audioCopy = {
   sv: {
     title: 'Spela in ett påhittat minne',
     introduction: 'Använd ett kort, påhittat minne för det här utvecklingstestet. Inspelningen börjar först när du väljer Starta inspelning.',
-    simulation: 'SIMULERING — tjänsten returnerar en fast, påhittad text. Den känner inte igen det du säger. Inget AI-svar skapas.',
+    simulation: 'SIMULERING — tjänsten returnerar en fast, påhittad text. Den känner inte igen det du säger. En separat åtgärd nedan kan begära en AI-simulering från den sparade texten.',
     start: 'Starta inspelning', stop: 'Stoppa inspelning', discard: 'Kasta inspelningen', upload: 'Ladda upp inspelning',
     retry: 'Försök med samma uppladdning igen', consent: 'Jag godkänner att inspelningen laddas upp för det här utvecklingstestet.',
     consentHint: 'Välj detta innan du laddar upp. En inspelning laddar inte automatiskt upp din röst.',

@@ -8,6 +8,7 @@ import { CreateStory } from './CreateStory';
 import { StoryDashboard } from './StoryDashboard';
 import { StoryDetails } from './StoryDetails';
 import { Conversation } from './Conversation';
+import { ConversationActionsProvider } from '../conversation/ConversationActions';
 
 interface Props {
   language: Language;
@@ -21,6 +22,11 @@ type View = { kind: 'list' | 'create' | 'inactive' } | { kind: 'details'; projec
 
 /** Native views stay inside the existing verified authenticated route. */
 export function StoriesHome(props: Props) {
+  return <ConversationActionsProvider key={props.user.id} ownerId={props.user.id}>
+    <StoryViews {...props} />
+  </ConversationActionsProvider>;
+}
+function StoryViews(props: Props) {
   const [view, setView] = useState<View>({ kind: 'list' });
   useFocusEffect(useCallback(() => {
     setView(current => current.kind === 'inactive' ? { kind: 'list' } : current);

@@ -162,9 +162,13 @@ export interface ListStoryProjectsOptions {
 interface StoryRequest {
   method: 'GET' | 'POST' | 'PATCH';
   projectId?: string;
-  input?: CreateStoryProjectInput | UpdateStoryProjectInput | Record<string, never>;
+  input?: CreateStoryProjectInput | UpdateStoryProjectInput | Record<string, never> |
+    { source_message_id: string; language: 'en' | 'sv' };
   child?: 'continue' | 'sessions';
-  expectedStatus?: 200;
+  conversation?: { sessionId: string; method: 'GET' | 'POST'; idempotencyKey?: string;
+    limit?: number; offset?: number; input?: { source_message_id: string; language: 'en' | 'sv' };
+    onHttpError: (status: number, code?: string) => StoryProjectsError };
+  expectedStatus?: 200 | 201;
   audio?: { sessionId: string; action: 'transcribe' | 'transcripts'; body?: FormData;
     idempotencyKey?: string; onHttpError: (status: number, code?: string) => StoryProjectsError;
     onProgress?: (stage: 'authentication' | 'fetch-invoked' | 'http-response' | 'response-body', status?: number) => void };
@@ -176,7 +180,8 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
   endpoint: StoryRequest, decode: (value: unknown) => T): Promise<T> {
   const writing = endpoint.method !== 'GET';
   const resource = `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-projects`;
-  const url = endpoint.audio ? `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-sessions/${endpoint.audio.sessionId}/${endpoint.audio.action}${endpoint.audio.action === 'transcripts' ? '?limit=50&offset=0' : ''}`
+  const url = endpoint.conversation ? `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-sessions/${endpoint.conversation.sessionId}/messages${endpoint.conversation.method === 'GET' ? `?limit=${endpoint.conversation.limit}&offset=${endpoint.conversation.offset}` : ''}`
+    : endpoint.audio ? `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-sessions/${endpoint.audio.sessionId}/${endpoint.audio.action}${endpoint.audio.action === 'transcripts' ? '?limit=50&offset=0' : ''}`
     : endpoint.projectId ? `${resource}/${endpoint.projectId}${endpoint.child
     ? `/${endpoint.child}${endpoint.child === 'sessions' ? '?limit=50&offset=0' : ''}` : ''}`
     : writing ? resource : storyProjectsUrl(baseUrl);
@@ -220,7 +225,8 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
         method: endpoint.method,
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/json',
           ...(writing && !endpoint.audio ? { 'Content-Type': 'application/json' } : {}),
-          ...(endpoint.audio?.idempotencyKey ? { 'Idempotency-Key': endpoint.audio.idempotencyKey } : {}) },
+          ...(endpoint.audio?.idempotencyKey || endpoint.conversation?.idempotencyKey
+            ? { 'Idempotency-Key': endpoint.audio?.idempotencyKey ?? endpoint.conversation!.idempotencyKey! } : {}) },
         ...(writing ? { body: endpoint.audio?.body ?? JSON.stringify(endpoint.input) } : {}),
         credentials: 'omit', cache: 'no-store', redirect: 'error', signal: controller.signal,
       });
@@ -233,8 +239,9 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
     }
     check();
     progress('http-response', response.status);
-    if (!response.ok && endpoint.audio) {
-      // Audio may interpret only an allowlisted code. Metadata errors continue
+    const onHttpError = endpoint.audio?.onHttpError ?? endpoint.conversation?.onHttpError;
+    if (!response.ok && onHttpError) {
+      // Session actions interpret only allowlisted codes. Metadata errors continue
       // to ignore upstream bodies, including human-readable private messages.
       let code: string | undefined;
       if (response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() === 'application/json') {
@@ -249,7 +256,7 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
         } catch { check(); }
       }
       check();
-      throw endpoint.audio.onHttpError(response.status, code);
+      throw onHttpError(response.status, code);
     }
     if (response.status === 401) throw new StoryProjectsError('authentication', 401);
     if (response.status === 403) throw new StoryProjectsError('forbidden', 403);
@@ -303,6 +310,30 @@ export function executeSessionAudioRequest<T>(options: ListStoryProjectsOptions,
   }
   return executeStoryRequest(options, { method: endpoint.action === 'transcribe' ? 'POST' : 'GET',
     expectedStatus: 200, audio: { ...endpoint, sessionId } }, decode);
+}
+
+/** Fixed JSON session-message paths share the existing auth/cancellation transport. */
+export function executeSessionConversationRequest<T>(options: ListStoryProjectsOptions,
+  endpoint: NonNullable<StoryRequest['conversation']>, decode: (value: unknown) => T): Promise<T> {
+  const sessionId = validateStoryProjectId(endpoint.sessionId);
+  if (typeof endpoint.onHttpError !== 'function' || (endpoint.method !== 'GET' && endpoint.method !== 'POST')) {
+    throw new StoryProjectsError('validation');
+  }
+  if (endpoint.method === 'GET') {
+    if (!Number.isSafeInteger(endpoint.limit) || endpoint.limit! < 1 || endpoint.limit! > 100 ||
+      !Number.isSafeInteger(endpoint.offset) || endpoint.offset! < 0 || endpoint.offset! > 100_000 ||
+      endpoint.input !== undefined || endpoint.idempotencyKey !== undefined) throw new StoryProjectsError('validation');
+  } else {
+    if (typeof endpoint.idempotencyKey !== 'string' ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(endpoint.idempotencyKey) ||
+      !endpoint.input || Object.keys(endpoint.input).sort().join(',') !== 'language,source_message_id' ||
+      (endpoint.input.language !== 'en' && endpoint.input.language !== 'sv') ||
+      validateStoryProjectId(endpoint.input.source_message_id) !== endpoint.input.source_message_id) {
+      throw new StoryProjectsError('validation');
+    }
+  }
+  return executeStoryRequest(options, { method: endpoint.method, expectedStatus: endpoint.method === 'POST' ? 201 : 200,
+    ...(endpoint.method === 'POST' ? { input: endpoint.input } : {}), conversation: { ...endpoint, sessionId } }, decode);
 }
 
 export function listStoryProjects(options: ListStoryProjectsOptions): Promise<StoryProject[]> {

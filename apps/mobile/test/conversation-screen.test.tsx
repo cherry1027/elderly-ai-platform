@@ -38,7 +38,11 @@ it('distinguishes a resumed session without inventing previous conversation cont
   open({ ...ready, resumed: true });
   expect(screen.getByText(conversationCopy.en.resumed)).toBeOnTheScreen();
   expect(screen.queryByText(conversationCopy.en.started)).toBeNull();
-  expect(screen.queryByText(/transcript|you said|Memy said/i)).toBeNull();
+  expect(screen.queryByText(/you said|Memy said/i)).toBeNull();
+  // The feature guidance may mention transcripts; a bare landing screen must
+  // still invent no transcript, saved history or assistant reply.
+  expect(screen.queryByRole('header', { name: /transcript|saved conversation|simulated reply/i })).toBeNull();
+  expect(globalThis.fetch).not.toHaveBeenCalled();
 });
 
 it('hides prior session data while a new request is loading', () => {

@@ -10,6 +10,8 @@ import { AudioTranscriptError, listSessionTranscripts, uploadSessionRecording,
 import { StoryProjectsError } from '../src/api/story-projects';
 import { readStoryPreviewEnabled } from '../src/development/story-preview-config';
 
+jest.mock('../src/conversation/TranscriptConversation', () => ({ TranscriptConversation: () => null }));
+
 jest.mock('../src/audio/native-recorder', () => ({ ...jest.requireActual('../src/audio/native-recorder'), createNativeRecorder: jest.fn(), createRecordingId: jest.fn() }));
 jest.mock('../src/api/audio-transcripts', () => ({ ...jest.requireActual('../src/api/audio-transcripts'),
   listSessionTranscripts: jest.fn(), uploadSessionRecording: jest.fn() }));

@@ -30,6 +30,9 @@ import { storyDetailsCopy } from '../src/story-details-copy';
 import { conversationCopy } from '../src/conversation-copy';
 import { copy, type Language as Locale } from '../src/i18n';
 
+jest.mock('../src/api/conversation-messages', () => ({ ...jest.requireActual('../src/api/conversation-messages'),
+  listConversationMessages: jest.fn(async () => ({ messages: [], complete: true })) }));
+
 jest.mock('../src/api/audio-transcripts', () => ({ ...jest.requireActual('../src/api/audio-transcripts'),
   listSessionTranscripts: jest.fn(async () => []) }));
 

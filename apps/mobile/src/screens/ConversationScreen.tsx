@@ -21,10 +21,11 @@ interface Props {
   onBack: () => void;
   onSignOut: () => void;
   recordingPanel?: ReactNode;
+  onReviewMemories?: () => void;
 }
 
 /** A verified-session landing screen, with an optional authenticated audio panel. */
-export function ConversationScreen({ language, state, onCheck, onBack, onSignOut, recordingPanel }: Props) {
+export function ConversationScreen({ language, state, onCheck, onBack, onSignOut, recordingPanel, onReviewMemories }: Props) {
   const text = conversationCopy[language];
   const locale = accessibilityLanguages[language];
   const message = state.status === 'error' ? [text.errors[state.error], state.reconcile && text.uncertain].filter(Boolean).join(' ')
@@ -57,6 +58,7 @@ export function ConversationScreen({ language, state, onCheck, onBack, onSignOut
           {text.language}: {state.session.language === 'sv' ? text.swedish : text.english}
         </Text>
         <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.scope}</Text>
+        {onReviewMemories && <LargeButton label={text.review} language={language} onPress={onReviewMemories} />}
         {recordingPanel}
       </>}
       <LargeButton label={text.back} language={language} variant="secondary" onPress={onBack} />

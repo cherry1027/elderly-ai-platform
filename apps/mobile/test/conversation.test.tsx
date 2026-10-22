@@ -8,6 +8,9 @@ import {
   type ConversationSession, type StoryContinuation, type StoryProject,
 } from '../src/api/story-projects';
 import { conversationCopy } from '../src/conversation-copy';
+import { MemoryReview } from '../src/memories/MemoryReview';
+jest.mock('../src/memories/MemoryReview', () => ({ MemoryReview: jest.fn(() => null) }));
+
 
 jest.mock('../src/audio/SessionRecording', () => ({ SessionRecording: () => null }));
 
@@ -49,7 +52,7 @@ beforeEach(() => {
   jest.mocked(listStorySessions).mockReset().mockResolvedValue([]);
   jest.mocked(continueStoryProject).mockReset().mockResolvedValue(continued());
   token.mockReset().mockResolvedValue('synthetic-account-access-token');
-  onBack.mockClear(); onSignOut.mockClear();
+  onBack.mockClear(); onSignOut.mockClear(); jest.mocked(MemoryReview).mockClear();
 });
 
 it.each(['en', 'sv'] as const)('reconciles before starting a session with the current owner and story language in %s', async language => {
@@ -252,4 +255,25 @@ it('cancels pending work and returns to the story on Android hardware Back', asy
     await act(async () => { pending.resolve([]); });
     expect(continueStoryProject).not.toHaveBeenCalled(); expect(screen.queryByText(text.ready)).toBeNull();
   } finally { BackHandler.addEventListener = original; }
+});
+
+it.each(['en', 'sv'] as const)('opens memory review intentionally for this owned session in %s and returns without creating another session', async language => {
+  jest.mocked(listStorySessions).mockResolvedValueOnce([session({ language })]);
+  open({ language, project: project({ language }) });
+  await screen.findByText(conversationCopy[language].resumed);
+  expect(MemoryReview).not.toHaveBeenCalled();
+  fireEvent.press(screen.getByRole('button', { name: conversationCopy[language].review }));
+  const review = screen.UNSAFE_getByType(MemoryReview).props;
+  expect(review).toMatchObject({ language, projectId: id, ownerId: user.id, sessionId, sessionLanguage: language });
+  act(() => review.onBack());
+  await screen.findByText(conversationCopy[language].resumed);
+  expect(listStorySessions).toHaveBeenCalledTimes(1); expect(continueStoryProject).not.toHaveBeenCalled();
+});
+
+it('signs out from review through the existing private-data cleanup path', async () => {
+  jest.mocked(listStorySessions).mockResolvedValueOnce([session()]);
+  open(); await screen.findByText(text.resumed);
+  fireEvent.press(screen.getByRole('button', { name: text.review }));
+  act(() => screen.UNSAFE_getByType(MemoryReview).props.onSignOut());
+  expect(onSignOut).toHaveBeenCalledTimes(1); expect(screen.UNSAFE_queryByType(MemoryReview)).toBeNull();
 });

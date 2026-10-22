@@ -159,12 +159,23 @@ export interface ListStoryProjectsOptions {
   timeoutMs?: number;
 }
 
+type MemoryReviewRequest = {
+  method: 'GET'; sessionId: string; action: 'memories' | 'clarifications'; limit: number; offset: number;
+  onHttpError: (status: number, code?: string) => StoryProjectsError;
+} | {
+  method: 'PATCH'; memoryId: string;
+  input: { status: 'confirmed' | 'rejected'; expected_version: number; corrected_value?: string };
+  onHttpError: (status: number, code?: string) => StoryProjectsError;
+};
+
 interface StoryRequest {
   method: 'GET' | 'POST' | 'PATCH';
   projectId?: string;
   input?: CreateStoryProjectInput | UpdateStoryProjectInput | Record<string, never> |
-    { source_message_id: string; language: 'en' | 'sv' };
+    { source_message_id: string; language: 'en' | 'sv' } |
+    { status: 'confirmed' | 'rejected'; expected_version: number; corrected_value?: string };
   child?: 'continue' | 'sessions';
+  memoryReview?: MemoryReviewRequest;
   conversation?: { sessionId: string; method: 'GET' | 'POST'; idempotencyKey?: string;
     limit?: number; offset?: number; input?: { source_message_id: string; language: 'en' | 'sv' };
     onHttpError: (status: number, code?: string) => StoryProjectsError };
@@ -180,7 +191,10 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
   endpoint: StoryRequest, decode: (value: unknown) => T): Promise<T> {
   const writing = endpoint.method !== 'GET';
   const resource = `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-projects`;
-  const url = endpoint.conversation ? `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-sessions/${endpoint.conversation.sessionId}/messages${endpoint.conversation.method === 'GET' ? `?limit=${endpoint.conversation.limit}&offset=${endpoint.conversation.offset}` : ''}`
+  const url = endpoint.memoryReview ? (endpoint.memoryReview.method === 'PATCH'
+    ? `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/memories/${endpoint.memoryReview.memoryId}`
+    : `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-sessions/${endpoint.memoryReview.sessionId}/${endpoint.memoryReview.action}?limit=${endpoint.memoryReview.limit}&offset=${endpoint.memoryReview.offset}`)
+    : endpoint.conversation ? `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-sessions/${endpoint.conversation.sessionId}/messages${endpoint.conversation.method === 'GET' ? `?limit=${endpoint.conversation.limit}&offset=${endpoint.conversation.offset}` : ''}`
     : endpoint.audio ? `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-sessions/${endpoint.audio.sessionId}/${endpoint.audio.action}${endpoint.audio.action === 'transcripts' ? '?limit=50&offset=0' : ''}`
     : endpoint.projectId ? `${resource}/${endpoint.projectId}${endpoint.child
     ? `/${endpoint.child}${endpoint.child === 'sessions' ? '?limit=50&offset=0' : ''}` : ''}`
@@ -239,7 +253,7 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
     }
     check();
     progress('http-response', response.status);
-    const onHttpError = endpoint.audio?.onHttpError ?? endpoint.conversation?.onHttpError;
+    const onHttpError = endpoint.audio?.onHttpError ?? endpoint.conversation?.onHttpError ?? endpoint.memoryReview?.onHttpError;
     if (!response.ok && onHttpError) {
       // Session actions interpret only allowlisted codes. Metadata errors continue
       // to ignore upstream bodies, including human-readable private messages.
@@ -334,6 +348,25 @@ export function executeSessionConversationRequest<T>(options: ListStoryProjectsO
   }
   return executeStoryRequest(options, { method: endpoint.method, expectedStatus: endpoint.method === 'POST' ? 201 : 200,
     ...(endpoint.method === 'POST' ? { input: endpoint.input } : {}), conversation: { ...endpoint, sessionId } }, decode);
+}
+
+/** Fixed memory-review JSON resources use the same verified-user transport. */
+export function executeMemoryReviewRequest<T>(options: ListStoryProjectsOptions,
+  endpoint: MemoryReviewRequest, decode: (value: unknown) => T): Promise<T> {
+  if (typeof endpoint.onHttpError !== 'function') throw new StoryProjectsError('validation');
+  if (endpoint.method === 'GET') {
+    const sessionId = validateStoryProjectId(endpoint.sessionId);
+    if ((endpoint.action !== 'memories' && endpoint.action !== 'clarifications') ||
+      !Number.isSafeInteger(endpoint.limit) || endpoint.limit < 1 || endpoint.limit > 100 ||
+      !Number.isSafeInteger(endpoint.offset) || endpoint.offset < 0 || endpoint.offset > 100_000) {
+      throw new StoryProjectsError('validation');
+    }
+    return executeStoryRequest(options, { method: 'GET', expectedStatus: 200, memoryReview: { ...endpoint, sessionId } }, decode);
+  }
+  if (endpoint.method !== 'PATCH') throw new StoryProjectsError('validation');
+  const memoryId = validateStoryProjectId(endpoint.memoryId);
+  return executeStoryRequest(options, { method: 'PATCH', expectedStatus: 200, input: endpoint.input,
+    memoryReview: { ...endpoint, memoryId } }, decode);
 }
 
 export function listStoryProjects(options: ListStoryProjectsOptions): Promise<StoryProject[]> {

@@ -5,6 +5,7 @@ import type { AuthUser } from '../auth/client';
 import { readMobileApiConfig } from '../api/config';
 import { continueStoryProject, listStorySessions, StoryProjectsError, type StoryProject } from '../api/story-projects';
 import type { Language } from '../i18n';
+import { MemoryReview } from '../memories/MemoryReview';
 import { ConversationScreen, type ConversationState } from '../screens/ConversationScreen';
 
 interface Props {
@@ -20,6 +21,7 @@ interface Props {
 export function Conversation({ language, user, project, getAccessToken, onBack, onSignOut }: Props) {
   const [config] = useState(readMobileApiConfig);
   const recording = useRef<SessionRecordingHandle | null>(null);
+  const [reviewIdentity, setReviewIdentity] = useState<string | null>(null);
   const selected = useMemo(() => ({ id: project.id, title: project.title, language: project.language }),
     [project.id, project.title, project.language]);
   const identity = `${user.id}:${selected.id}:${selected.language}`;
@@ -114,12 +116,29 @@ export function Conversation({ language, user, project, getAccessToken, onBack, 
     else proceed();
   }, [cancel]);
   useEffect(() => {
-    const listener = BackHandler.addEventListener('hardwareBackPress', () => { leave(onBack); return true; });
+    const listener = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (reviewIdentity === identity) setReviewIdentity(null);
+      else leave(onBack);
+      return true;
+    });
     return () => listener.remove();
-  }, [leave, onBack]);
+  }, [leave, onBack, reviewIdentity, identity]);
   const state: ConversationState = frame.identity === identity && frame.revision === revision
     ? frame.state : { status: 'loading' };
-  return <ConversationScreen language={language} state={state} onCheck={retry}
+  if (state.status === 'ready' && reviewIdentity === identity) {
+    return <MemoryReview language={language} title={selected.title} ownerId={user.id} projectId={selected.id}
+      sessionId={state.session.id} sessionLanguage={state.session.language} baseUrl={config?.baseUrl ?? null}
+      getAccessToken={getAccessToken} onBack={() => setReviewIdentity(null)} onSignOut={() => leave(onSignOut)} />;
+  }
+  const openReview = () => {
+    if (state.status !== 'ready' || phase.current !== 'ready' || latest.current !== identity) return;
+    const proceed = () => {
+      if (alive.current && phase.current === 'ready' && latest.current === identity) setReviewIdentity(identity);
+    };
+    if (recording.current) recording.current.requestLeave(proceed);
+    else proceed();
+  };
+  return <ConversationScreen language={language} state={state} onCheck={retry} onReviewMemories={openReview}
     recordingPanel={state.status === 'ready' ? <SessionRecording ref={recording} language={language}
       ownerId={user.id} projectId={selected.id} sessionId={state.session.id} sessionLanguage={state.session.language}
       baseUrl={config?.baseUrl ?? null} getAccessToken={getAccessToken} /> : undefined}

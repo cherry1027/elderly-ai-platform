@@ -3,7 +3,7 @@ import { createStoryCopy } from './create-story-copy';
 export const storyDetailsCopy = {
   en: {
     title: 'My Story', editTitle: 'Edit Story', edit: 'Edit Story',
-    conversation: 'Start / Continue Conversation',
+    conversation: 'Start / Continue Conversation', generate: 'Generate My Story',
     loading: 'Opening your story…', refresh: 'Reload story', back: 'Back to My Stories',
     cancel: 'Cancel changes', signOut: 'Sign Out', save: 'Save Changes', saving: 'Saving…',
     saved: 'Your changes were saved.', descriptionLabel: 'Description (optional)',
@@ -33,7 +33,7 @@ export const storyDetailsCopy = {
   },
   sv: {
     title: 'Min berättelse', editTitle: 'Redigera berättelse', edit: 'Redigera berättelse',
-    conversation: 'Starta / Fortsätt samtal',
+    conversation: 'Starta / Fortsätt samtal', generate: 'Skapa mitt berättelseutkast',
     loading: 'Öppnar din berättelse…', refresh: 'Ladda om berättelsen', back: 'Tillbaka till Mina berättelser',
     cancel: 'Avbryt ändringar', signOut: 'Logga ut', save: 'Spara ändringar', saving: 'Sparar…',
     saved: 'Dina ändringar har sparats.', descriptionLabel: 'Beskrivning (valfritt)',

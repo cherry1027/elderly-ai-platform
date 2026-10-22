@@ -2,6 +2,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { LanguageProvider } from '../language';
+import { GenerationActionsProvider } from '../generation/GenerationActions';
 import { AuthProvider } from '../auth/AuthProvider';
 import { LoginNavigationProvider } from '../navigation/LoginNavigation';
 import { RegistrationProvider } from '../auth/RegistrationProvider';
@@ -14,6 +15,7 @@ export default function RootLayout() {
   return <SafeAreaProvider>
     <LanguageProvider>
       <AuthProvider>
+        <GenerationActionsProvider>
         <RegistrationProvider>
           <LoginNavigationProvider>
             <StatusBar style="dark" />
@@ -29,6 +31,7 @@ export default function RootLayout() {
             </Stack>
           </LoginNavigationProvider>
         </RegistrationProvider>
+        </GenerationActionsProvider>
       </AuthProvider>
     </LanguageProvider>
   </SafeAreaProvider>;

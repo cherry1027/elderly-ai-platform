@@ -21,9 +21,10 @@ interface Props {
   onBack: () => void;
   onSignOut: () => void;
   onConversation?: () => void;
+  onGenerate?: () => void;
 }
 
-export function StoryDetailsScreen({ language, state, onEdit, onRefresh, onBack, onSignOut, onConversation }: Props) {
+export function StoryDetailsScreen({ language, state, onEdit, onRefresh, onBack, onSignOut, onConversation, onGenerate }: Props) {
   const text = storyDetailsCopy[language];
   const message = state.status === 'error' ? text.errors[state.error]
     : state.status === 'ready' && state.saved ? text.saved : null;
@@ -54,8 +55,9 @@ export function StoryDetailsScreen({ language, state, onEdit, onRefresh, onBack,
         <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.label}>{text.description}</Text>
         <Text accessibilityLanguage={state.project.description ? accessibilityLanguages[state.project.language] : locale}
           allowFontScaling selectable style={styles.body}>{state.project.description || text.noDescription}</Text>
-        <LargeButton label={text.edit} language={language} onPress={onEdit} />
-        {onConversation && <LargeButton label={text.conversation} language={language} onPress={onConversation} />}
+        {onGenerate && <LargeButton label={text.generate} language={language} onPress={onGenerate} />}
+        <LargeButton label={text.edit} language={language} variant={onGenerate ? 'secondary' : 'primary'} onPress={onEdit} />
+        {onConversation && <LargeButton label={text.conversation} language={language} variant={onGenerate ? 'secondary' : 'primary'} onPress={onConversation} />}
       </>}
       {state.status !== 'loading' && !(state.status === 'error' && state.error === 'authentication') &&
         <LargeButton label={text.refresh} language={language} variant="secondary" onPress={onRefresh} />}

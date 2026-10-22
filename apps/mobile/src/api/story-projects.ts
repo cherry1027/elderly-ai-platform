@@ -168,14 +168,23 @@ type MemoryReviewRequest = {
   onHttpError: (status: number, code?: string) => StoryProjectsError;
 };
 
+export type StoryDraftRequest = {
+  action: 'list' | 'read' | 'verification' | 'generate';
+  projectId: string; draftId?: string; idempotencyKey?: string;
+  input?: { language: 'en' | 'sv'; style: 'warm'; confirm_generation: true };
+  onHttpError: (status: number, code?: string) => StoryProjectsError;
+};
+
 interface StoryRequest {
   method: 'GET' | 'POST' | 'PATCH';
   projectId?: string;
   input?: CreateStoryProjectInput | UpdateStoryProjectInput | Record<string, never> |
     { source_message_id: string; language: 'en' | 'sv' } |
-    { status: 'confirmed' | 'rejected'; expected_version: number; corrected_value?: string };
+    { status: 'confirmed' | 'rejected'; expected_version: number; corrected_value?: string } |
+    { language: 'en' | 'sv'; style: 'warm'; confirm_generation: true };
   child?: 'continue' | 'sessions';
   memoryReview?: MemoryReviewRequest;
+  draft?: StoryDraftRequest;
   conversation?: { sessionId: string; method: 'GET' | 'POST'; idempotencyKey?: string;
     limit?: number; offset?: number; input?: { source_message_id: string; language: 'en' | 'sv' };
     onHttpError: (status: number, code?: string) => StoryProjectsError };
@@ -191,7 +200,11 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
   endpoint: StoryRequest, decode: (value: unknown) => T): Promise<T> {
   const writing = endpoint.method !== 'GET';
   const resource = `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-projects`;
-  const url = endpoint.memoryReview ? (endpoint.memoryReview.method === 'PATCH'
+  const url = endpoint.draft ? (endpoint.draft.action === 'read'
+    ? `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-drafts/${endpoint.draft.draftId}`
+    : `${resource}/${endpoint.draft.projectId}/${endpoint.draft.action === 'list'
+      ? 'drafts?limit=1&offset=0' : endpoint.draft.action}`)
+    : endpoint.memoryReview ? (endpoint.memoryReview.method === 'PATCH'
     ? `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/memories/${endpoint.memoryReview.memoryId}`
     : `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-sessions/${endpoint.memoryReview.sessionId}/${endpoint.memoryReview.action}?limit=${endpoint.memoryReview.limit}&offset=${endpoint.memoryReview.offset}`)
     : endpoint.conversation ? `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-sessions/${endpoint.conversation.sessionId}/messages${endpoint.conversation.method === 'GET' ? `?limit=${endpoint.conversation.limit}&offset=${endpoint.conversation.offset}` : ''}`
@@ -239,8 +252,8 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
         method: endpoint.method,
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/json',
           ...(writing && !endpoint.audio ? { 'Content-Type': 'application/json' } : {}),
-          ...(endpoint.audio?.idempotencyKey || endpoint.conversation?.idempotencyKey
-            ? { 'Idempotency-Key': endpoint.audio?.idempotencyKey ?? endpoint.conversation!.idempotencyKey! } : {}) },
+          ...(endpoint.audio?.idempotencyKey || endpoint.conversation?.idempotencyKey || endpoint.draft?.idempotencyKey
+            ? { 'Idempotency-Key': endpoint.audio?.idempotencyKey ?? endpoint.conversation?.idempotencyKey ?? endpoint.draft!.idempotencyKey! } : {}) },
         ...(writing ? { body: endpoint.audio?.body ?? JSON.stringify(endpoint.input) } : {}),
         credentials: 'omit', cache: 'no-store', redirect: 'error', signal: controller.signal,
       });
@@ -253,7 +266,7 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
     }
     check();
     progress('http-response', response.status);
-    const onHttpError = endpoint.audio?.onHttpError ?? endpoint.conversation?.onHttpError ?? endpoint.memoryReview?.onHttpError;
+    const onHttpError = endpoint.audio?.onHttpError ?? endpoint.conversation?.onHttpError ?? endpoint.memoryReview?.onHttpError ?? endpoint.draft?.onHttpError;
     if (!response.ok && onHttpError) {
       // Session actions interpret only allowlisted codes. Metadata errors continue
       // to ignore upstream bodies, including human-readable private messages.
@@ -367,6 +380,26 @@ export function executeMemoryReviewRequest<T>(options: ListStoryProjectsOptions,
   const memoryId = validateStoryProjectId(endpoint.memoryId);
   return executeStoryRequest(options, { method: 'PATCH', expectedStatus: 200, input: endpoint.input,
     memoryReview: { ...endpoint, memoryId } }, decode);
+}
+
+/** Fixed draft resources only; generation never retries in the transport. */
+export function executeStoryDraftRequest<T>(options: ListStoryProjectsOptions,
+  endpoint: StoryDraftRequest, decode: (value: unknown) => T): Promise<T> {
+  const projectId = validateStoryProjectId(endpoint.projectId);
+  if (!['list', 'read', 'verification', 'generate'].includes(endpoint.action) ||
+    typeof endpoint.onHttpError !== 'function') throw new StoryProjectsError('validation');
+  const writing = endpoint.action === 'generate';
+  let draftId: string | undefined;
+  if (endpoint.action === 'read') draftId = validateStoryProjectId(endpoint.draftId);
+  else if (endpoint.draftId !== undefined) throw new StoryProjectsError('validation');
+  if (writing) {
+    validateStoryProjectId(endpoint.idempotencyKey);
+    if (!endpoint.input || Object.keys(endpoint.input).sort().join(',') !== 'confirm_generation,language,style' ||
+      (endpoint.input.language !== 'en' && endpoint.input.language !== 'sv') ||
+      endpoint.input.style !== 'warm' || endpoint.input.confirm_generation !== true) throw new StoryProjectsError('validation');
+  } else if (endpoint.input !== undefined || endpoint.idempotencyKey !== undefined) throw new StoryProjectsError('validation');
+  return executeStoryRequest(options, { method: writing ? 'POST' : 'GET', expectedStatus: writing ? 201 : 200,
+    ...(writing ? { input: endpoint.input } : {}), draft: { ...endpoint, projectId, draftId } }, decode);
 }
 
 export function listStoryProjects(options: ListStoryProjectsOptions): Promise<StoryProject[]> {

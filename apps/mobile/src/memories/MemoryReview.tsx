@@ -17,6 +17,7 @@ interface Props {
   baseUrl: string | null;
   getAccessToken: (expectedOwnerId: string) => Promise<string | null>;
   onBack: () => void;
+  backLabel?: string;
   onSignOut: () => void;
 }
 const empty = (phase: MemoryReviewState['phase'], error?: StoryProjectsErrorKind): MemoryReviewState => ({
@@ -38,7 +39,7 @@ export function MemoryReview(props: Props) {
   return <ScopedMemoryReview key={identity} {...props} />;
 }
 function ScopedMemoryReview({ language, title, ownerId, projectId, sessionId, sessionLanguage,
-  baseUrl, getAccessToken, onBack, onSignOut }: Props) {
+  baseUrl, getAccessToken, onBack, onSignOut, backLabel }: Props) {
   const [state, setState] = useState<MemoryReviewState>(() => empty('loading'));
   const [screenRevision, setScreenRevision] = useState(0);
   const latest = useRef(state);
@@ -175,5 +176,5 @@ function ScopedMemoryReview({ language, title, ownerId, projectId, sessionId, se
   };
   return <MemoryReviewScreen resetRevision={screenRevision} language={language} storyLanguage={sessionLanguage} title={title} state={state}
     onSave={save} onRefresh={() => refresh(pendingWrite.current ? 'uncertain' : undefined)}
-    onBack={() => leave(onBack)} onSignOut={() => leave(onSignOut)} />;
+    backLabel={backLabel} onBack={() => leave(onBack)} onSignOut={() => leave(onSignOut)} />;
 }

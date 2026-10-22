@@ -5,6 +5,7 @@ import type { AuthUser } from '../auth/client';
 import { readMobileApiConfig } from '../api/config';
 import { continueStoryProject, listStorySessions, StoryProjectsError, type StoryProject } from '../api/story-projects';
 import type { Language } from '../i18n';
+import { conversationCopy } from '../conversation-copy';
 import { MemoryReview } from '../memories/MemoryReview';
 import { ConversationScreen, type ConversationState } from '../screens/ConversationScreen';
 
@@ -15,10 +16,11 @@ interface Props {
   getAccessToken: (expectedUserId: string) => Promise<string | null>;
   onBack: () => void;
   onSignOut: () => void;
+  reviewOnOpen?: boolean;
 }
 
 /** Mounted only by an intentional action on a freshly loaded, owned story. */
-export function Conversation({ language, user, project, getAccessToken, onBack, onSignOut }: Props) {
+export function Conversation({ language, user, project, getAccessToken, onBack, onSignOut, reviewOnOpen = false }: Props) {
   const [config] = useState(readMobileApiConfig);
   const recording = useRef<SessionRecordingHandle | null>(null);
   const [reviewIdentity, setReviewIdentity] = useState<string | null>(null);
@@ -79,7 +81,9 @@ export function Conversation({ language, user, project, getAccessToken, onBack, 
       if (!current()) return;
       const existing = sessions.find(session => session.status === 'active');
       let state: ConversationState;
-      if (existing) state = { status: 'ready', project: selected, session: existing, resumed: true };
+      if (!existing && reviewOnOpen && !sessions[0]) throw new StoryProjectsError('not-found');
+      const reviewSession = reviewOnOpen ? existing ?? sessions[0] : existing;
+      if (reviewSession) state = { status: 'ready', project: selected, session: reviewSession, resumed: true };
       else {
         // A first page can omit an older active session. The canonical RPC
         // searches all sessions under a project lock; absence here is not
@@ -93,9 +97,10 @@ export function Conversation({ language, user, project, getAccessToken, onBack, 
       uncertain.current = false;
       phase.current = 'ready';
       setFrame({ identity, revision, state });
+      if (reviewOnOpen) setReviewIdentity(identity);
     }).catch(fail).finally(() => { if (current()) request.current = null; });
     return () => { alive.current = false; cancel(); };
-  }, [identity, user.id, selected, config, getAccessToken, revision, cancel]);
+  }, [identity, user.id, selected, config, getAccessToken, revision, cancel, reviewOnOpen]);
 
   const retry = () => {
     if (!alive.current || phase.current !== 'error' || blocked.current ||
@@ -117,18 +122,18 @@ export function Conversation({ language, user, project, getAccessToken, onBack, 
   }, [cancel]);
   useEffect(() => {
     const listener = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (reviewIdentity === identity) setReviewIdentity(null);
+      if (reviewIdentity === identity && !reviewOnOpen) setReviewIdentity(null);
       else leave(onBack);
       return true;
     });
     return () => listener.remove();
-  }, [leave, onBack, reviewIdentity, identity]);
+  }, [leave, onBack, reviewIdentity, identity, reviewOnOpen]);
   const state: ConversationState = frame.identity === identity && frame.revision === revision
     ? frame.state : { status: 'loading' };
-  if (state.status === 'ready' && reviewIdentity === identity) {
+  if (state.status === 'ready' && (reviewIdentity === identity || reviewOnOpen)) {
     return <MemoryReview language={language} title={selected.title} ownerId={user.id} projectId={selected.id}
       sessionId={state.session.id} sessionLanguage={state.session.language} baseUrl={config?.baseUrl ?? null}
-      getAccessToken={getAccessToken} onBack={() => setReviewIdentity(null)} onSignOut={() => leave(onSignOut)} />;
+      getAccessToken={getAccessToken} backLabel={reviewOnOpen ? conversationCopy[language].back : undefined} onBack={() => { if (reviewOnOpen) leave(onBack); else setReviewIdentity(null); }} onSignOut={() => leave(onSignOut)} />;
   }
   const openReview = () => {
     if (state.status !== 'ready' || phase.current !== 'ready' || latest.current !== identity) return;

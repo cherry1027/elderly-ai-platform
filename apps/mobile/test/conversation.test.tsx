@@ -277,3 +277,20 @@ it('signs out from review through the existing private-data cleanup path', async
   act(() => screen.UNSAFE_getByType(MemoryReview).props.onSignOut());
   expect(onSignOut).toHaveBeenCalledTimes(1); expect(screen.UNSAFE_queryByType(MemoryReview)).toBeNull();
 });
+
+it('memory-review navigation opens existing saved session read-only without creating one', async () => {
+  jest.mocked(listStorySessions).mockResolvedValueOnce([session({ status: 'completed', ended_at: '2026-01-02T00:00:00Z' })]);
+  open({ reviewOnOpen: true });
+  await waitFor(() => expect(MemoryReview).toHaveBeenCalled());
+  expect(screen.UNSAFE_getByType(MemoryReview).props.sessionId).toBe(sessionId);
+  expect(continueStoryProject).not.toHaveBeenCalled();
+  act(() => screen.UNSAFE_getByType(MemoryReview).props.onBack());
+  expect(onBack).toHaveBeenCalledTimes(1);
+  expect(screen.UNSAFE_queryByType(MemoryReview)).toBeNull();
+  expect(screen.queryByText(text.ready)).toBeNull();
+});
+it('memory-review navigation with no existing session never creates a session', async () => {
+  open({ reviewOnOpen: true });
+  await screen.findByText(text.errors['not-found']);
+  expect(continueStoryProject).not.toHaveBeenCalled(); expect(MemoryReview).not.toHaveBeenCalled();
+});

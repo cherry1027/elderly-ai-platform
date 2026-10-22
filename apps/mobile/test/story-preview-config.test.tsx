@@ -9,6 +9,7 @@ import * as SecureStore from 'expo-secure-store';
 import { Platform, Text } from 'react-native';
 import { Stack } from 'expo-router';
 import RootLayout from '../src/app/_layout';
+import { GenerationActionsProvider } from '../src/generation/GenerationActions';
 import { AuthProvider } from '../src/auth/AuthProvider';
 import { RegistrationProvider } from '../src/auth/RegistrationProvider';
 import { readStoryPreviewEnabled } from '../src/development/story-preview-config';
@@ -26,6 +27,7 @@ jest.mock('expo-router', () => ({ Stack: Object.assign(jest.fn(() => {
   throw new Error('Account routing must not mount in sample preview.');
 }), { Screen: () => null }) }));
 jest.mock('../src/language', () => ({ LanguageProvider: jest.fn(() => { throw new Error('Preference provider must not mount in sample preview.'); }) }));
+jest.mock('../src/generation/GenerationActions', () => ({ GenerationActionsProvider: jest.fn(() => { throw new Error('Generation retry provider must not mount in sample preview.'); }) }));
 jest.mock('../src/auth/AuthProvider', () => ({ AuthProvider: jest.fn(() => { throw new Error('Auth provider must not mount in sample preview.'); }) }));
 jest.mock('../src/auth/RegistrationProvider', () => ({ RegistrationProvider: jest.fn(() => { throw new Error('Registration provider must not mount in sample preview.'); }) }));
 jest.mock('../src/navigation/LoginNavigation', () => ({ LoginNavigationProvider: jest.fn(() => { throw new Error('Login provider must not mount in sample preview.'); }) }));
@@ -56,7 +58,7 @@ function expectPersistentDataUntouched() {
 function renderNormalRoot(extra: unknown = normalReady, metadata: Record<string, unknown> = {}) {
   // Root selection only: real-provider session/preference behavior is covered
   // separately by the authentication and onboarding regression suites.
-  const providers = [LanguageProvider, AuthProvider, RegistrationProvider, LoginNavigationProvider];
+  const providers = [LanguageProvider, AuthProvider, GenerationActionsProvider, RegistrationProvider, LoginNavigationProvider];
   for (const provider of providers) jest.mocked(provider).mockImplementation(({ children }: PropsWithChildren) => <>{children}</>);
   const stack = Stack as unknown as jest.Mock;
   stack.mockImplementation(() => <Text>Normal application stack</Text>);
@@ -127,7 +129,7 @@ describe('explicit sample-story native configuration gate', () => {
       const view = render(<RootLayout />);
       try {
         expect(screen.getByText('SAMPLE STORIES. Nothing is saved.')).toBeOnTheScreen();
-        for (const provider of [LanguageProvider, AuthProvider, RegistrationProvider, LoginNavigationProvider]) {
+        for (const provider of [LanguageProvider, AuthProvider, GenerationActionsProvider, RegistrationProvider, LoginNavigationProvider]) {
           expect(provider).not.toHaveBeenCalled();
         }
         expect(AsyncStorage.getItem).not.toHaveBeenCalled(); expect(AsyncStorage.setItem).not.toHaveBeenCalled();
@@ -152,7 +154,7 @@ describe('explicit sample-story native configuration gate', () => {
     withExtra(enabled, () => {
       const view = render(<RootLayout />);
       expect(screen.getByText('SAMPLE STORIES. Nothing is saved.')).toBeOnTheScreen();
-      for (const provider of [LanguageProvider, AuthProvider, RegistrationProvider, LoginNavigationProvider]) {
+      for (const provider of [LanguageProvider, AuthProvider, GenerationActionsProvider, RegistrationProvider, LoginNavigationProvider]) {
         expect(provider).not.toHaveBeenCalled();
       }
       view.unmount();

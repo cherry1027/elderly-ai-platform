@@ -18,6 +18,7 @@ interface Props {
   onBack: () => void;
   onSignOut: () => void;
   onConversation?: (project: StoryProject) => void;
+  onGenerate?: (project: StoryProject) => void;
 }
 type Frame = {
   owner: string; projectId: string | null; revision: number;
@@ -25,7 +26,7 @@ type Frame = {
 };
 type Phase = 'loading' | 'details' | 'details-error' | 'editing' | 'saving' | 'edit-blocked' | 'left';
 
-export function StoryDetails({ language, user, projectId: rawId, getAccessToken, onBack, onSignOut, onConversation }: Props) {
+export function StoryDetails({ language, user, projectId: rawId, getAccessToken, onBack, onSignOut, onConversation, onGenerate }: Props) {
   const projectId = useMemo(() => { try { return validateStoryProjectId(rawId); } catch { return null; } }, [rawId]);
   const [config] = useState(readMobileApiConfig);
   const [revision, setRevision] = useState(0);
@@ -152,10 +153,17 @@ export function StoryDetails({ language, user, projectId: rawId, getAccessToken,
     leave(() => onConversation(details.project));
   }
 
+  function beginGeneration() {
+    if (!onGenerate || !alive.current || phase.current !== 'details' || !matching || details.status !== 'ready' ||
+      selection.current.owner !== user.id || selection.current.projectId !== projectId) return;
+    leave(() => onGenerate(details.project));
+  }
+
   if (editing && details.status === 'ready') return <EditStoryScreen key={`${user.id}:${projectId}`} language={language}
     project={details.project} state={frame.edit} onSubmit={save} onBack={reload} onSignOut={() => leave(onSignOut)} />;
   return <StoryDetailsScreen language={language} state={details} onEdit={beginEdit}
     onConversation={onConversation ? beginConversation : undefined}
+    onGenerate={onGenerate ? beginGeneration : undefined}
     onRefresh={() => { if (phase.current === 'details' || phase.current === 'details-error') reload(); }}
     onBack={() => leave(onBack)} onSignOut={() => leave(onSignOut)} />;
 }

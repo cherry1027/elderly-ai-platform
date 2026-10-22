@@ -29,6 +29,7 @@ export interface MemoryReviewScreenProps {
   onSave: (memory: MemoryFact, status: 'confirmed' | 'rejected', correction?: string) => void;
   onRefresh: () => void;
   onBack: () => void;
+  backLabel?: string;
   onSignOut: () => void;
 }
 
@@ -50,7 +51,7 @@ function ReviewButton({ language, label, onPress, disabled = false, primary = fa
 }
 
 /** A calm read-only view until the person explicitly chooses and saves a review. */
-export function MemoryReviewScreen({ language, storyLanguage = language, resetRevision = 0, title, state, onSave, onRefresh, onBack, onSignOut }: MemoryReviewScreenProps) {
+export function MemoryReviewScreen({ language, storyLanguage = language, resetRevision = 0, title, state, onSave, onRefresh, onBack, onSignOut, backLabel }: MemoryReviewScreenProps) {
   const text = memoryReviewCopy[language];
   const locale = accessibilityLanguages[language];
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -103,7 +104,7 @@ export function MemoryReviewScreen({ language, storyLanguage = language, resetRe
           <ReviewButton language={language} label={text.next} disabled={busy || index + 1 >= state.memories.length} onPress={() => navigate(index + 1)} />
         </>}
         <ReviewButton language={language} label={text.refresh} disabled={busy || accessFailed} onPress={() => { Keyboard.dismiss(); onRefresh(); }} />
-        <ReviewButton language={language} label={text.back} onPress={() => { Keyboard.dismiss(); onBack(); }} />
+        <ReviewButton language={language} label={backLabel ?? text.back} onPress={() => { Keyboard.dismiss(); onBack(); }} />
         <ReviewButton language={language} label={text.signOut} onPress={() => { Keyboard.dismiss(); onSignOut(); }} />
       </View>
     </Screen>

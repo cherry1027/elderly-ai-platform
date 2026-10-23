@@ -1,5 +1,10 @@
 # Memy AI
 
+Mobile integration: start with the [consolidated backend handoff](docs/mobile-backend-handoff.md),
+[API contract](docs/mobile-api-contract.md), [verification report](docs/mobile-integration-tests.md)
+and [real-voice proposal](docs/mobile-voice-contract.md). The [OpenAPI snapshot](docs/openapi.json)
+is generated from backend 0.8.0; the proposal does not enable paid services.
+
 Autobiography application with an existing React/Vite web client, Supabase, and a Python/FastAPI backend.
 
 ## Start the backend

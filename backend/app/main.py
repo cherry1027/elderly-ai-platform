@@ -16,16 +16,19 @@ from app.api.exports import router as exports_router
 from app.core.config import Settings
 from app.core.api_safety import APISafetyMiddleware
 from app.core.errors import APIError, api_error_handler, validation_error_handler
+from app.core.request_limits import UserRateLimiter
 from app.services.transcription import DisabledTranscriptionProvider, TranscriptionProvider
 from app.services.conversation_provider import (
     ConversationProvider, DisabledConversationProvider, MockConversationProvider,
 )
 from app.services.story_writer import DisabledStoryWriter, MockStoryWriter, StoryWriter
 from app.services.pdf_export import PdfRenderer
+from app.services.supabase import ReadinessProbe
 ERROR_JSON_CONTENT = {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
 API_GUARD_RESPONSES = {
     408: {"content": ERROR_JSON_CONTENT, "description": "API request body timed out."},
     413: {"content": ERROR_JSON_CONTENT, "description": "Request body exceeds its safe limit."},
+    429: {"content": ERROR_JSON_CONTENT, "description": "Authenticated user request allowance exceeded; retry after 60 seconds."},
     500: {"content": ERROR_JSON_CONTENT, "description": "Sanitized unexpected API failure."},
 }
 
@@ -56,9 +59,11 @@ def create_app(
         async with httpx.AsyncClient(
             timeout=config.request_timeout_seconds,
             follow_redirects=False,
+            trust_env=False,
             transport=transport,
         ) as client:
             application.state.http_client = client
+            application.state.readiness_probe = ReadinessProbe(config, client)
             try:
                 yield
             finally:
@@ -69,6 +74,7 @@ def create_app(
         title="Memy AI Backend", version="0.8.1", lifespan=lifespan
     )
     application.state.settings = config
+    application.state.user_rate_limiter = UserRateLimiter(config.api_requests_per_minute)
     application.state.transcription_provider = transcription_provider or DisabledTranscriptionProvider()
     application.state.conversation_provider = conversation_provider or (
         MockConversationProvider() if config.conversation_mode == "mock" else DisabledConversationProvider()
@@ -88,7 +94,7 @@ def create_app(
                 response.headers["Cache-Control"] = "no-store"
         return response
 
-    application.add_middleware(APISafetyMiddleware)
+    application.add_middleware(APISafetyMiddleware, max_concurrent_requests=config.api_max_concurrent_requests)
     application.add_middleware(
         CORSMiddleware,
         allow_origins=config.cors_origins,

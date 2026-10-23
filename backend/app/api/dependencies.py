@@ -19,14 +19,20 @@ async def get_current_user(
     request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
 ) -> AuthenticatedUser:
+    # Different proxies/frameworks select different values from duplicate
+    # credentials. Never authenticate a request whose identity is ambiguous.
+    if len(request.headers.getlist("authorization")) > 1:
+        raise invalid_token()
     if credentials is None:
         raise APIError(401, "AUTHORIZATION_REQUIRED", "Bearer authentication is required.")
     token = credentials.credentials
     if len(token) > 16384 or not re.fullmatch(r"[A-Za-z0-9._~+/=-]+", token):
         raise invalid_token()
-    return await authenticate(
+    user = await authenticate(
         request.app.state.settings, request.app.state.http_client, token
     )
+    request.app.state.user_rate_limiter.check(user.id)
+    return user
 
 
 def get_gateway(

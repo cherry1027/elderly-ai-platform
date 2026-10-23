@@ -14,7 +14,7 @@ from pathlib import Path
 
 from fastapi import Request
 from python_multipart.multipart import parse_options_header
-from starlette.datastructures import UploadFile
+from starlette.datastructures import FormData, UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
 from starlette.requests import ClientDisconnect
 
@@ -34,6 +34,23 @@ MIME_TYPES = {
 
 def invalid_upload() -> APIError:
     return APIError(422, "INVALID_RECORDING", "A valid, nonempty audio recording is required.")
+
+
+async def close_multipart_form(form: FormData) -> None:
+    """Finish spool cleanup before a cancelled request removes its temp directory."""
+    closer = asyncio.create_task(form.close())
+    cancelled = False
+    while not closer.done():
+        try:
+            await asyncio.shield(closer)
+        except asyncio.CancelledError:
+            # A rolled spool closes through a worker thread. Repeated request
+            # cancellation must not interrupt that cleanup (especially on
+            # Windows, where an open handle can prevent directory removal).
+            cancelled = True
+    closer.result()
+    if cancelled:
+        raise asyncio.CancelledError
 
 
 class BoundedMultipartParser(MultiPartParser):
@@ -68,9 +85,11 @@ class BoundedMultipartParser(MultiPartParser):
             # python-multipart.finalize() does not reject a truncated last
             # part. Such a spool is not yet present in FormData, so close the
             # parser's tracked spools as well (Starlette 1.8 parser contract).
-            await form.close()
-            for spool in self._files_to_close_on_error:
-                spool.close()
+            try:
+                await close_multipart_form(form)
+            finally:
+                for spool in self._files_to_close_on_error:
+                    spool.close()
             raise MultiPartException("Incomplete multipart document.")
         return form
 
@@ -333,7 +352,7 @@ async def read_recording(request: Request, directory: Path, session_language: st
         path = directory / ("recording" + suffix)
         digest = hashlib.sha256()
         # The directory is server-created (0700); never use a client path/name.
-        with path.open("xb") as destination:
+        with open(path, "xb", opener=lambda name, flags: os.open(name, flags, 0o600)) as destination:
             while chunk := await upload.read(64 * 1024):
                 digest.update(chunk)
                 destination.write(chunk)
@@ -345,4 +364,4 @@ async def read_recording(request: Request, directory: Path, session_language: st
         raise invalid_upload() from None
     finally:
         if form is not None:
-            await form.close()
+            await close_multipart_form(form)

@@ -1529,6 +1529,16 @@
             },
             "description": "Unprocessable Content"
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user request allowance exceeded; retry after 60 seconds."
+          },
           "500": {
             "content": {
               "application/json": {
@@ -1666,6 +1676,16 @@
               }
             },
             "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user request allowance exceeded; retry after 60 seconds."
           },
           "500": {
             "content": {
@@ -1813,6 +1833,16 @@
               }
             },
             "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user request allowance exceeded; retry after 60 seconds."
           },
           "500": {
             "content": {
@@ -1966,6 +1996,16 @@
               }
             },
             "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user request allowance exceeded; retry after 60 seconds."
           },
           "500": {
             "content": {
@@ -2133,6 +2173,16 @@
             },
             "description": "Unprocessable Content"
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user request allowance exceeded; retry after 60 seconds."
+          },
           "500": {
             "content": {
               "application/json": {
@@ -2271,6 +2321,16 @@
               }
             },
             "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user request allowance exceeded; retry after 60 seconds."
           },
           "500": {
             "content": {
@@ -2429,6 +2489,16 @@
             },
             "description": "The path, query, or request body is invalid."
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user request allowance exceeded; retry after 60 seconds."
+          },
           "500": {
             "content": {
               "application/json": {
@@ -2553,6 +2623,16 @@
               }
             },
             "description": "The path, query, or request body is invalid."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user request allowance exceeded; retry after 60 seconds."
           },
           "500": {
             "content": {
@@ -2682,6 +2762,16 @@
               }
             },
             "description": "The path, query, or request body is invalid."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user request allowance exceeded; retry after 60 seconds."
           },
           "500": {
             "content": {
@@ -2819,6 +2909,16 @@
               }
             },
             "description": "The path, query, or request body is invalid."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user request allowance exceeded; retry after 60 seconds."
           },
           "500": {
             "content": {
@@ -2958,6 +3058,16 @@
               }
             },
             "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user request allowance exceeded; retry after 60 seconds."
           },
           "500": {
             "content": {
@@ -3125,6 +3235,16 @@
             },
             "description": "Unprocessable Content"
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user request allowance exceeded; retry after 60 seconds."
+          },
           "500": {
             "content": {
               "application/json": {
@@ -3291,6 +3411,16 @@
             },
             "description": "Unprocessable Content"
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user request allowance exceeded; retry after 60 seconds."
+          },
           "500": {
             "content": {
               "application/json": {
@@ -3449,6 +3579,16 @@
               }
             },
             "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user request allowance exceeded; retry after 60 seconds."
           },
           "500": {
             "content": {
@@ -3617,6 +3757,16 @@
             },
             "description": "The path, query, or request body is invalid."
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user request allowance exceeded; retry after 60 seconds."
+          },
           "500": {
             "content": {
               "application/json": {
@@ -3754,6 +3904,16 @@
             },
             "description": "The path, query, or request body is invalid."
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user request allowance exceeded; retry after 60 seconds."
+          },
           "500": {
             "content": {
               "application/json": {
@@ -3881,6 +4041,16 @@
               }
             },
             "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user request allowance exceeded; retry after 60 seconds."
           },
           "500": {
             "content": {
@@ -4049,6 +4219,16 @@
             },
             "description": "Unprocessable Content"
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user request allowance exceeded; retry after 60 seconds."
+          },
           "500": {
             "content": {
               "application/json": {
@@ -4214,6 +4394,16 @@
               }
             },
             "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user request allowance exceeded; retry after 60 seconds."
           },
           "500": {
             "content": {
@@ -4382,6 +4572,16 @@
             },
             "description": "Unprocessable Content"
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user request allowance exceeded; retry after 60 seconds."
+          },
           "500": {
             "content": {
               "application/json": {
@@ -4538,6 +4738,16 @@
               }
             },
             "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Authenticated user request allowance exceeded; retry after 60 seconds."
           },
           "500": {
             "content": {
@@ -4997,7 +5207,7 @@
     },
     "/ready": {
       "get": {
-        "description": "Check the configured database data API without fetching personal data.",
+        "description": "Zero-row data API probe, with a two-second local probe cooldown.",
         "operationId": "readiness_ready_get",
         "responses": {
           "200": {

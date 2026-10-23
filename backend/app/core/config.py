@@ -36,6 +36,8 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173",
     ]
     request_timeout_seconds: float = Field(default=5, gt=0, le=30)
+    api_max_concurrent_requests: int = Field(default=64, ge=1, le=256)
+    api_requests_per_minute: int = Field(default=120, ge=1, le=600)
     # Public persistence still has a mock-only contract. Day 12 providers are
     # separately gated evaluation adapters; never silently relabel live output.
     conversation_mode: Literal["disabled", "mock"] = "disabled"

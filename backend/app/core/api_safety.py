@@ -5,6 +5,7 @@ import logging
 import re
 
 from starlette.responses import JSONResponse
+from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 MAX_API_BODY_BYTES = 262_144  # Fits 20k story characters even as escaped JSON.
@@ -14,13 +15,38 @@ logger = logging.getLogger("memy.api")
 
 
 class APISafetyMiddleware:
-    def __init__(self, app: ASGIApp):
+    def __init__(self, app: ASGIApp, max_concurrent_requests: int = 64):
         self.app = app
+        self.max_concurrent_requests = max_concurrent_requests
+        self._active_requests = 0
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send):
         if scope["type"] != "http" or not scope["path"].startswith("/api/v1/"):
             await self.app(scope, receive, send)
             return
+
+        async def private_send(message: Message):
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                if headers.get("Cache-Control") != "private, no-store":
+                    headers["Cache-Control"] = "no-store"
+                headers["X-Content-Type-Options"] = "nosniff"
+                headers["Referrer-Policy"] = "no-referrer"
+            await send(message)
+
+        if self._active_requests >= self.max_concurrent_requests:
+            await JSONResponse(
+                {"error": {"code": "API_BUSY", "message": "The service is busy; retry shortly."}},
+                status_code=503, headers={"Retry-After": "1"},
+            )(scope, receive, private_send)
+            return
+        self._active_requests += 1
+        try:
+            await self._handle_private(scope, receive, private_send)
+        finally:
+            self._active_requests -= 1
+
+    async def _handle_private(self, scope: Scope, receive: Receive, send: Send):
 
         async def error(status: int, code: str, message: str):
             await JSONResponse(

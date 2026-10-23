@@ -6,13 +6,23 @@ export interface GenerationAction {
   key: string;
   input: { language: 'en' | 'sv'; style: 'warm'; confirm_generation: true };
   blocked?: boolean;
+  // Owner-scoped RAM metadata only; never preserve the earlier story wording here.
+  previousDraftId?: string;
+  previousVersion?: number;
 }
 export function createGenerationStore(initialOwner: string | null = null) {
   let owner = initialOwner;
   const entries = new Map<string, GenerationAction>();
+  const selections = new Map<string, string>();
   return {
-    activate(next: string) { if (owner !== next) { entries.clear(); owner = next; } },
-    clear() { entries.clear(); owner = null; },
+    activate(next: string) { if (owner !== next) { entries.clear(); selections.clear(); owner = next; } },
+    clear() { entries.clear(); selections.clear(); owner = null; },
+    getSelection(expectedOwner: string, scope: string) { return owner === expectedOwner ? selections.get(scope) : undefined; },
+    select(expectedOwner: string, scope: string, draftId: string) {
+      if (owner !== expectedOwner || !/^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i.test(draftId)) return false;
+      if (!selections.has(scope) && selections.size >= 200) selections.delete(selections.keys().next().value!);
+      selections.set(scope, draftId.toLowerCase()); return true;
+    },
     get(expectedOwner: string, scope: string) { return owner === expectedOwner ? entries.get(scope) : undefined; },
     set(expectedOwner: string, scope: string, action: GenerationAction) {
       if (owner !== expectedOwner) return false;

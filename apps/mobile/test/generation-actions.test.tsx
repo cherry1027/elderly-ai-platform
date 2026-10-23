@@ -26,6 +26,20 @@ it('explicit removal and full cleanup retain no retry action', () => {
   store.clear(); expect(store.get('a', 'two')).toBeUndefined();
   expect(store.set('a', 'one', action)).toBe(false);
 });
+it('keeps selected UUIDs separate from pending generation actions and bounds RAM-only navigation hints', () => {
+  const store = createGenerationStore('a'), id = '10000000-0000-4000-8000-000000000001';
+  expect(store.select('b', 'project', id)).toBe(false);
+  expect(store.select('a', 'project', 'private text')).toBe(false);
+  expect(store.select('a', 'project', id)).toBe(true);
+  expect(store.getSelection('b', 'project')).toBeUndefined();
+  store.set('a', 'project', action); store.remove('a', 'project');
+  expect(store.getSelection('a', 'project')).toBe(id);
+  for (let n = 0; n < 200; n++) store.select('a', 'story-' + n, id);
+  expect(store.getSelection('a', 'project')).toBeUndefined();
+  expect(store.getSelection('a', 'story-199')).toBe(id);
+  store.activate('b'); expect(store.getSelection('b', 'story-199')).toBeUndefined();
+  store.select('b', 'new', id); store.clear(); expect(store.getSelection('b', 'new')).toBeUndefined();
+});
 it('provider survives checking/background with same verified owner, and clears when owner changes', () => {
   let store!: GenerationStore;
   const snapshot = (status: string, id?: string) => jest.mocked(useAuth).mockReturnValue({
@@ -35,13 +49,16 @@ it('provider survives checking/background with same verified owner, and clears w
   snapshot('signed-in', 'a');
   const view = render(<GenerationActionsProvider><Read owner="a" /></GenerationActionsProvider>);
   store.set('a', 'story', action);
+  store.select('a', 'story', action.key);
   snapshot('checking'); view.rerender(<GenerationActionsProvider><Read owner="a" /></GenerationActionsProvider>);
   expect(store.get('a', 'story')).toEqual(action);
+  expect(store.getSelection('a', 'story')).toBe(action.key);
   snapshot('signed-in', 'a'); view.rerender(<GenerationActionsProvider><Read owner="a" /></GenerationActionsProvider>);
   expect(store.get('a', 'story')).toEqual(action);
   snapshot('signed-in', 'b'); view.rerender(<GenerationActionsProvider><Read owner="b" /></GenerationActionsProvider>);
   expect(store.get('a', 'story')).toBeUndefined();
   expect(store.get('b', 'story')).toBeUndefined();
+  expect(store.getSelection('b', 'story')).toBeUndefined();
 });
 it.each(['signed-out', 'blocked', 'busy'])('provider clears after %s', status => {
   let store!: GenerationStore;
@@ -49,9 +66,11 @@ it.each(['signed-out', 'blocked', 'busy'])('provider clears after %s', status =>
   jest.mocked(useAuth).mockReturnValue({ status: 'signed-in', user: { id: 'a' } } as ReturnType<typeof useAuth>);
   const view = render(<GenerationActionsProvider><Read /></GenerationActionsProvider>);
   store.set('a', 'story', action);
+  store.select('a', 'story', action.key);
   jest.mocked(useAuth).mockReturnValue({ status, user: null } as ReturnType<typeof useAuth>);
   view.rerender(<GenerationActionsProvider><Read /></GenerationActionsProvider>);
   expect(store.get('a', 'story')).toBeUndefined();
+  expect(store.getSelection('a', 'story')).toBeUndefined();
 });
 it('uses native secure UUID randomness without reusing other action identities', () => {
   jest.mocked(Crypto.randomUUID).mockReturnValueOnce(action.key as ReturnType<typeof Crypto.randomUUID>);

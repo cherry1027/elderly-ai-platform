@@ -224,7 +224,7 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
     ? `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-drafts/${endpoint.draft.draftId}${endpoint.draft.action === 'history'
       ? `/history?limit=${endpoint.draft.limit}&offset=${endpoint.draft.offset}` : ''}`
     : `${resource}/${endpoint.draft.projectId}/${endpoint.draft.action === 'list'
-      ? 'drafts?limit=1&offset=0' : endpoint.draft.action}`)
+      ? `drafts?limit=${endpoint.draft.limit ?? 1}&offset=${endpoint.draft.offset ?? 0}` : endpoint.draft.action}`)
     : endpoint.memoryReview ? (endpoint.memoryReview.method === 'PATCH'
     ? `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/memories/${endpoint.memoryReview.memoryId}`
     : `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-sessions/${endpoint.memoryReview.sessionId}/${endpoint.memoryReview.action}?limit=${endpoint.memoryReview.limit}&offset=${endpoint.memoryReview.offset}`)
@@ -449,7 +449,8 @@ export function executeStoryDraftRequest<T>(options: ListStoryProjectsOptions,
       typeof endpoint.input.content !== 'string' || !Number.isSafeInteger(endpoint.input.expected_revision) ||
       endpoint.input.expected_revision < 1) throw new StoryProjectsError('validation');
   } else if (endpoint.input !== undefined || endpoint.idempotencyKey !== undefined) throw new StoryProjectsError('validation');
-  if (endpoint.action === 'history') {
+  if (endpoint.action === 'history' || (endpoint.action === 'list' &&
+    (endpoint.limit !== undefined || endpoint.offset !== undefined))) {
     if (!Number.isSafeInteger(endpoint.limit) || endpoint.limit! < 1 || endpoint.limit! > 100 ||
       !Number.isSafeInteger(endpoint.offset) || endpoint.offset! < 0 || endpoint.offset! > 100_000) {
       throw new StoryProjectsError('validation');

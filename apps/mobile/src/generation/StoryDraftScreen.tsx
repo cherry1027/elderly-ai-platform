@@ -16,6 +16,7 @@ export interface DraftScreenState {
   code?: string;
   notice?: 'saved' | 'loaded' | 'uncertain';
   canRetry: boolean;
+  previousGeneration?: { draftId: string; version: number };
 }
 export interface StoryDraftScreenProps {
   language: Language;
@@ -31,6 +32,9 @@ export interface StoryDraftScreenProps {
   onEdit?: () => void;
   onHistory?: () => void;
   onExport?: () => void;
+  onContinueStory?: () => void;
+  onGenerations?: () => void;
+  onPreviousGeneration?: () => void;
 }
 
 function DraftButton({ language, label, onPress, disabled = false, primary = false, expanded }: {
@@ -54,7 +58,7 @@ export function StoryDraftScreen(props: StoryDraftScreenProps) {
   return <StoryDraftView key={key} {...props} />;
 }
 function StoryDraftView({ language, storyLanguage, title, state, onGenerate, onRetry, onRefresh,
-  onReviewMemories, onBack, onSignOut, onEdit, onHistory, onExport }: StoryDraftScreenProps) {
+  onReviewMemories, onBack, onSignOut, onEdit, onHistory, onExport, onContinueStory, onGenerations, onPreviousGeneration }: StoryDraftScreenProps) {
   const text = storyGenerationCopy[language];
   const locale = accessibilityLanguages[language];
   const [confirming, setConfirming] = useState(false);
@@ -118,6 +122,12 @@ function StoryDraftView({ language, storyLanguage, title, state, onGenerate, onR
       {state.phase === 'ready' && !draft && <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.noDraft}</Text>}
       {draft && <SavedDraft key={draft.draft_id + ':' + draft.revision} language={language} draft={draft} report={state.verification} />}
       {draft && canGenerate && !confirming && <>
+        {onContinueStory && <DraftButton language={language} label={text.continueStory} primary onPress={onContinueStory} />}
+        {onGenerations && <DraftButton language={language} label={text.generations} onPress={onGenerations} />}
+        {state.previousGeneration && onPreviousGeneration && <>
+          <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.preservedGeneration}: {state.previousGeneration.version}</Text>
+          <DraftButton language={language} label={text.openPreviousGeneration} onPress={onPreviousGeneration} />
+        </>}
         {onEdit && <DraftButton language={language} label={text.edit} onPress={onEdit} />}
         {onHistory && <DraftButton language={language} label={text.history} onPress={onHistory} />}
         {onExport && <DraftButton language={language} label={text.export} onPress={onExport} />}
@@ -157,6 +167,8 @@ function SavedDraft({ language, draft, report }: { language: Language; draft: St
   const index = Math.min(sourceIndex, Math.max(0, draft.source_memories.length - 1));
   const source = draft.source_memories[index];
   return <View style={styles.panel}>
+    <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.subheading}>{text.generation}: {draft.version}</Text>
+    <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.revision}: {draft.revision}</Text>
     <Text accessibilityLanguage={sourceLocale} allowFontScaling selectable style={styles.draftText}>{draft.content}</Text>
     <View style={styles.card}>
       <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.subheading}>{text.verification}</Text>

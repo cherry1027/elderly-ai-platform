@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { AppState, BackHandler } from 'react-native';
 import type { AuthUser } from '../auth/client';
 import { readMobileApiConfig } from '../api/config';
@@ -10,6 +10,7 @@ import { createGenerationActionId, useGenerationActions, type GenerationAction }
 import { StoryDraftScreen, type DraftScreenState } from './StoryDraftScreen';
 import { DraftEditing } from './DraftEditing';
 import { StoryExports } from '../exports/StoryExports';
+import { GenerationBrowser } from './GenerationBrowser';
 
 interface Props {
   initialDraftId?: string;
@@ -18,7 +19,9 @@ interface Props {
   project: StoryProject;
   getAccessToken: (expectedOwner: string) => Promise<string | null>;
   onBack: () => void;
-  onReviewMemories: () => void;
+  onReviewMemories: (selectedDraftId?: string) => void;
+  onContinueStory?: (selectedDraftId: string) => void;
+  onSelectionChange?: (selectedDraftId: string) => void;
   onSignOut: () => void;
 }
 const empty = (phase: DraftScreenState['phase']): DraftScreenState => ({
@@ -31,16 +34,23 @@ export function GenerateStory(props: Props) {
   return <ScopedGeneration key={identity} {...props} baseUrl={config?.baseUrl ?? null} />;
 }
 function ScopedGeneration({ language, user, project, baseUrl, getAccessToken,
-  onBack, onReviewMemories, onSignOut, initialDraftId }: Props & { baseUrl: string | null }) {
+  onBack, onReviewMemories, onContinueStory, onSelectionChange, onSignOut, initialDraftId }: Props & { baseUrl: string | null }) {
   const actions = useGenerationActions(user.id);
   const scope = [baseUrl, project.id, project.language, 'warm'].join(':');
   const [state, setState] = useState<DraftScreenState>(() => empty('loading'));
-  const [subview, setSubview] = useState<{ mode: 'edit' | 'history' | 'export'; draftId: string } | null>(null);
+  const [subview, setSubview] = useState<{ mode: 'edit' | 'history' | 'export' | 'generations'; draftId: string; token: number } | null>(null);
   const subviewRef = useRef(false);
+  const subviewToken = useRef(0);
   const alive = useRef(false), active = useRef(true), busy = useRef(false), blocked = useRef(false);
   const epoch = useRef(0);
   const request = useRef<AbortController | null>(null);
-  const selectedDraftId = useRef<string | null>(initialDraftId ?? null);
+  const selectedDraftId = useRef<string | null>(initialDraftId ?? actions.getSelection(user.id, scope) ?? null);
+  const selectionCallback = useRef(onSelectionChange);
+  useLayoutEffect(() => { selectionCallback.current = onSelectionChange; }, [onSelectionChange]);
+  const rememberSelection = useCallback((id: string) => {
+    selectedDraftId.current = id; actions.select(user.id, scope, id); selectionCallback.current?.(id);
+  }, [actions, user.id, scope]);
+  const previousGeneration = useRef<{ draftId: string; version: number } | null>(null);
   const currentState = useRef<DraftScreenState>(empty('loading'));
   const publish = useCallback((value: DraftScreenState) => {
     currentState.current = value;
@@ -101,13 +111,16 @@ function ScopedGeneration({ language, user, project, baseUrl, getAccessToken,
     publish(empty('loading'));
     void load(controller, selectedDraftId.current).then(result => {
       if (!current()) return;
+      if (result.draft) rememberSelection(result.draft.draft_id);
       const action = actions.get(user.id, scope);
-      if (action?.blocked) publish({ ...result, phase: 'error', canRetry: false,
+      const comparison = previousGeneration.current;
+      const shown = { ...result, ...(comparison && comparison.draftId !== result.draft?.draft_id ? { previousGeneration: comparison } : {}) };
+      if (action?.blocked) publish({ ...shown, phase: 'error', canRetry: false,
         error: 'conflict', code: 'IDEMPOTENCY_CONFLICT' });
-      else publish({ ...result, phase: action ? 'uncertain' : 'ready',
+      else publish({ ...shown, phase: action ? 'uncertain' : 'ready',
         canRetry: !!action, ...(action ? { notice: 'uncertain' as const } : {}) });
     }).catch(error => { if (current()) fail(error, !!actions.get(user.id, scope)); }).finally(finish);
-  }, [begin, load, actions, user.id, scope, publish, fail]);
+  }, [begin, load, actions, user.id, scope, publish, fail, rememberSelection]);
   useEffect(() => {
     alive.current = true;
     active.current = AppState.currentState !== 'background' && AppState.currentState !== 'inactive';
@@ -140,7 +153,12 @@ function ScopedGeneration({ language, user, project, baseUrl, getAccessToken,
         throw new StoryProjectsError('invalid-response', undefined, true);
       }
       actions.remove(user.id, scope);
-      publish({ ...result, notice: 'saved' });
+      rememberSelection(actual.draft_id);
+      if (action.previousDraftId && action.previousVersion) {
+        previousGeneration.current = { draftId: action.previousDraftId, version: action.previousVersion };
+      }
+      publish({ ...result, notice: 'saved', ...(previousGeneration.current && previousGeneration.current.draftId !== actual.draft_id
+        ? { previousGeneration: previousGeneration.current } : {}) });
     } catch (error) {
       if (!current()) return;
       const safe = error instanceof StoryProjectsError ? error : new StoryProjectsError('network', undefined, true);
@@ -157,7 +175,8 @@ function ScopedGeneration({ language, user, project, baseUrl, getAccessToken,
     try {
       options(operation.controller);
       const action: GenerationAction = { key: createGenerationActionId(),
-        input: { language: project.language, style: 'warm', confirm_generation: true } };
+        input: { language: project.language, style: 'warm', confirm_generation: true },
+        ...(currentState.current.draft ? { previousDraftId: currentState.current.draft.draft_id, previousVersion: currentState.current.draft.version } : {}) };
       if (!actions.set(user.id, scope, action)) throw new StoryProjectsError('authentication');
       void send(action, operation).finally(operation.finish);
     } catch (error) { fail(error instanceof StoryProjectsError ? error : new StoryProjectsError('configuration'), false); operation.finish(); }
@@ -185,22 +204,57 @@ function ScopedGeneration({ language, user, project, baseUrl, getAccessToken,
     });
     return () => listener.remove();
   }, [leave, onBack, subview]);
-  const open = (mode: 'edit' | 'history' | 'export') => {
+  const open = (mode: 'edit' | 'history' | 'export' | 'generations') => {
     const value = currentState.current;
     if (subviewRef.current || value.phase !== 'ready' || !value.draft || value.error || value.canRetry || actions.get(user.id, scope)) return;
     cancel(); selectedDraftId.current = value.draft.draft_id;
-    subviewRef.current = true; setSubview({ mode, draftId: value.draft.draft_id });
+    subviewRef.current = true; setSubview({ mode, draftId: value.draft.draft_id, token: ++subviewToken.current });
   };
-  const closeSubview = () => { subviewRef.current = false; setSubview(null); refresh(); };
+  const ownsSubview = (token: number) => subviewRef.current && token === subviewToken.current;
+  const closeSubview = (token: number) => { if (!ownsSubview(token)) return; subviewRef.current = false; setSubview(null); refresh(); };
+  const selectGeneration = (draftId: string, token?: number) => {
+    if (token !== undefined ? !ownsSubview(token) : subviewRef.current || currentState.current.phase !== 'ready') return;
+    if (actions.get(user.id, scope)) return;
+    const op = begin(); if (!op) return;
+    const before = currentState.current.draft;
+    subviewRef.current = false; setSubview(null); publish(empty('loading'));
+    void load(op.controller, draftId).then(result => {
+      if (!op.current()) return;
+      if (result.draft?.draft_id !== draftId) throw new StoryProjectsError('invalid-response');
+      rememberSelection(draftId);
+      if (before && before.draft_id !== draftId) previousGeneration.current = { draftId: before.draft_id, version: before.version };
+      const comparison = previousGeneration.current;
+      publish({ ...result, notice: 'loaded', ...(comparison && comparison.draftId !== draftId ? { previousGeneration: comparison } : {}) });
+    }).catch(error => { if (op.current()) fail(error, false); }).finally(op.finish);
+  };
+  const continueStory = () => {
+    const shown = currentState.current;
+    if (!onContinueStory || subviewRef.current || shown.phase !== 'ready' || shown.error || !shown.draft || actions.get(user.id, scope)) return;
+    const id = shown.draft.draft_id, op = begin(); if (!op) return;
+    publish(empty('checking'));
+    // Revalidate the selected saved resource with the current owner's token.
+    // The existing Conversation controller is the only continuation writer.
+    void Promise.resolve().then(() => getStoryDraft({ ...options(op.controller), draftId: id })).then(() => {
+      if (!op.current()) return;
+      rememberSelection(id); leave(() => onContinueStory(id));
+    }).catch(error => { if (op.current()) fail(error, false); }).finally(op.finish);
+  };
+  const childSignOut = (token: number) => { if (ownsSubview(token)) leave(onSignOut, true); };
+  if (subview?.mode === 'generations') return <GenerationBrowser language={language} storyLanguage={project.language}
+    title={project.title} ownerId={user.id} projectId={project.id} selectedDraftId={subview.draftId} baseUrl={baseUrl}
+    getAccessToken={getAccessToken} onSelect={draft => selectGeneration(draft.draft_id, subview.token)}
+    onBack={() => closeSubview(subview.token)} onSignOut={() => childSignOut(subview.token)} />;
   if (subview?.mode === 'export') return <StoryExports language={language} storyLanguage={project.language}
     title={project.title} ownerId={user.id} projectId={project.id} draftId={subview.draftId} baseUrl={baseUrl}
-    getAccessToken={getAccessToken} onBack={closeSubview} onSignOut={() => leave(onSignOut, true)} />;
+    getAccessToken={getAccessToken} onBack={() => closeSubview(subview.token)} onSignOut={() => childSignOut(subview.token)} />;
   if (subview) return <DraftEditing mode={subview.mode} language={language} storyLanguage={project.language}
     title={project.title} ownerId={user.id} projectId={project.id} draftId={subview.draftId} baseUrl={baseUrl}
-    getAccessToken={getAccessToken} onBack={closeSubview}
-    onSignOut={() => leave(onSignOut, true)} />;
+    getAccessToken={getAccessToken} onBack={() => closeSubview(subview.token)}
+    onSignOut={() => childSignOut(subview.token)} />;
   return <StoryDraftScreen language={language} storyLanguage={project.language} title={project.title} state={state}
     onGenerate={generate} onRetry={retry} onRefresh={refresh} onEdit={() => open('edit')} onHistory={() => open('history')} onExport={() => open('export')}
-    onReviewMemories={() => leave(onReviewMemories)} onBack={() => leave(onBack)}
+    onGenerations={() => open('generations')} onContinueStory={onContinueStory ? continueStory : undefined}
+    onPreviousGeneration={() => { const previous = currentState.current.previousGeneration; if (previous) selectGeneration(previous.draftId); }}
+    onReviewMemories={() => { if (!subviewRef.current && alive.current && active.current && !blocked.current) leave(() => onReviewMemories(selectedDraftId.current ?? undefined)); }} onBack={() => leave(onBack)}
     onSignOut={() => leave(onSignOut, true)} />;
 }

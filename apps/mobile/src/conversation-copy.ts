@@ -8,6 +8,7 @@ export const conversationCopy = {
     scope: 'You can record a fictional test sample and select its saved transcript for an AI simulation. Real speech recognition and spoken replies are not available.',
     language: 'Conversation language', english: 'English', swedish: 'Swedish',
     review: 'Review My Memories',
+    returnAutobiography: 'Back to My Autobiography',
     back: 'Back to My Story', signOut: 'Sign Out', check: 'Try again',
     uncertain: 'We could not confirm whether your conversation started. Trying again checks your saved conversation first.',
     errors: {
@@ -33,6 +34,7 @@ export const conversationCopy = {
     scope: 'Du kan spela in ett fiktivt test och välja dess sparade transkription för en AI-simulering. Verklig taligenkänning och talade svar är inte tillgängliga.',
     language: 'Samtalets språk', english: 'Engelska', swedish: 'Svenska',
     review: 'Granska mina minnen',
+    returnAutobiography: 'Tillbaka till Min självbiografi',
     back: 'Tillbaka till Min berättelse', signOut: 'Logga ut', check: 'Försök igen',
     uncertain: 'Vi kunde inte bekräfta om ditt samtal startades. Ett nytt försök kontrollerar först ditt sparade samtal.',
     errors: {

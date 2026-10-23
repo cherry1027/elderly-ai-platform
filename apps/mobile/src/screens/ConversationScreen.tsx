@@ -22,10 +22,11 @@ interface Props {
   onSignOut: () => void;
   recordingPanel?: ReactNode;
   onReviewMemories?: () => void;
+  backLabel?: string;
 }
 
 /** A verified-session landing screen, with an optional authenticated audio panel. */
-export function ConversationScreen({ language, state, onCheck, onBack, onSignOut, recordingPanel, onReviewMemories }: Props) {
+export function ConversationScreen({ language, state, onCheck, onBack, onSignOut, recordingPanel, onReviewMemories, backLabel }: Props) {
   const text = conversationCopy[language];
   const locale = accessibilityLanguages[language];
   const message = state.status === 'error' ? [text.errors[state.error], state.reconcile && text.uncertain].filter(Boolean).join(' ')
@@ -61,7 +62,7 @@ export function ConversationScreen({ language, state, onCheck, onBack, onSignOut
         {onReviewMemories && <LargeButton label={text.review} language={language} onPress={onReviewMemories} />}
         {recordingPanel}
       </>}
-      <LargeButton label={text.back} language={language} variant="secondary" onPress={onBack} />
+      <LargeButton label={backLabel ?? text.back} language={language} variant="secondary" onPress={onBack} />
       <LargeButton label={text.signOut} language={language} variant="secondary" onPress={onSignOut} />
     </View>
   </Screen>;

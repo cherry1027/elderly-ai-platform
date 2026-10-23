@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 import type { AuthUser } from '../auth/client';
 import { PreferenceLoading } from '../components/PreferenceLoading';
@@ -12,6 +12,7 @@ import { usePdfPrivacy } from '../exports/PdfPrivacy';
 import { GenerateStory } from '../generation/GenerateStory';
 import { Conversation } from './Conversation';
 import { ConversationActionsProvider } from '../conversation/ConversationActions';
+import { conversationCopy } from '../conversation-copy';
 
 interface Props {
   language: Language;
@@ -21,7 +22,7 @@ interface Props {
 }
 
 type View = { kind: 'list' | 'create' | 'inactive' | 'returning' } | { kind: 'details'; projectId: string }
-  | { kind: 'conversation'; project: StoryProject; reviewOnOpen?: boolean }
+  | { kind: 'conversation'; project: StoryProject; reviewOnOpen?: boolean; returnDraftId?: string }
   | { kind: 'generation'; project: StoryProject; initialDraftId?: string };
 
 /** Native views stay inside the existing verified authenticated route. */
@@ -32,6 +33,9 @@ export function StoriesHome(props: Props) {
 }
 function StoryViews(props: Props) {
   const [view, setView] = useState<View>({ kind: 'list' });
+  const currentView = useRef(view);
+  const selectedGenerations = useRef(new Map<string, string>());
+  useLayoutEffect(() => { currentView.current = view; }, [view]);
   const navigationEpoch = useRef(0);
   const { consumeReturn } = usePdfPrivacy();
   const { user, getAccessToken } = props;
@@ -57,7 +61,7 @@ function StoryViews(props: Props) {
     setView(current => current.kind === 'inactive' ? { kind: 'list' } : current);
     // A stacked route can lose focus without unmounting. Drop the form/list so
     // their requests and private state cannot survive navigation elsewhere.
-    return () => { navigationEpoch.current++; setView({ kind: 'inactive' }); };
+    return () => { navigationEpoch.current++; currentView.current = { kind: 'inactive' }; setView({ kind: 'inactive' }); };
   }, []));
   const showList = useCallback(() => setView({ kind: 'list' }), []);
   const showCreate = useCallback(() => setView({ kind: 'create' }), []);
@@ -69,12 +73,35 @@ function StoryViews(props: Props) {
   if (view.kind === 'create') return <CreateStory {...props} onBack={showList} />;
   if (view.kind === 'generation') return <GenerateStory {...props} project={view.project} initialDraftId={view.initialDraftId}
     onBack={() => showDetails(view.project.id)}
-    onReviewMemories={() => setView({ kind: 'conversation', project: view.project, reviewOnOpen: true })} />;
+    onSelectionChange={draftId => {
+      // A validated saved identity is enough to reopen with fresh authenticated
+      // reads. Keep no prose, report, token or persistent navigation state here.
+      if (currentView.current !== view) return;
+      try {
+        const projectId = validateStoryProjectId(view.project.id), selectedId = validateStoryProjectId(draftId);
+        const selections = selectedGenerations.current;
+        if (!selections.has(projectId) && selections.size >= 200) {
+          const oldest = selections.keys().next().value;
+          if (oldest !== undefined) selections.delete(oldest);
+        }
+        selections.set(projectId, selectedId);
+      }
+      catch { /* Invalid or stale selections cannot replace a saved identity. */ }
+    }}
+    onContinueStory={draftId => setView({ kind: 'conversation', project: view.project, returnDraftId: draftId })}
+    onReviewMemories={draftId => setView({ kind: 'conversation', project: view.project, reviewOnOpen: true,
+      ...(draftId ? { returnDraftId: draftId } : {}) })} />;
   if (view.kind === 'conversation') return <Conversation key={view.project.id} {...props} project={view.project} reviewOnOpen={view.reviewOnOpen}
-    onBack={() => showDetails(view.project.id)} />;
+    backLabel={view.returnDraftId ? conversationCopy[props.language].returnAutobiography : undefined}
+    onBack={() => {
+      // Only the saved identity crosses views. Reopening performs typed reads;
+      // continuation never substitutes its nullable latest-draft metadata.
+      if (view.returnDraftId) setView({ kind: 'generation', project: view.project, initialDraftId: view.returnDraftId });
+      else showDetails(view.project.id);
+    }} />;
   if (view.kind === 'details') return <StoryDetails key={view.projectId} {...props} projectId={view.projectId} onBack={showList}
     onConversation={project => setView({ kind: 'conversation', project })}
-    onGenerate={project => setView({ kind: 'generation', project })} />;
+    onGenerate={project => setView({ kind: 'generation', project, initialDraftId: selectedGenerations.current.get(project.id) })} />;
   // Always ask the server for the list after leaving Create. Never insert the
   // POST response optimistically or fabricate a saved dashboard row.
   return <StoryDashboard {...props} onCreateStory={showCreate} onOpenStory={showDetails} />;

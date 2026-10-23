@@ -17,10 +17,11 @@ interface Props {
   onBack: () => void;
   onSignOut: () => void;
   reviewOnOpen?: boolean;
+  backLabel?: string;
 }
 
 /** Mounted only by an intentional action on a freshly loaded, owned story. */
-export function Conversation({ language, user, project, getAccessToken, onBack, onSignOut, reviewOnOpen = false }: Props) {
+export function Conversation({ language, user, project, getAccessToken, onBack, onSignOut, reviewOnOpen = false, backLabel }: Props) {
   const [config] = useState(readMobileApiConfig);
   const recording = useRef<SessionRecordingHandle | null>(null);
   const [reviewIdentity, setReviewIdentity] = useState<string | null>(null);
@@ -133,7 +134,7 @@ export function Conversation({ language, user, project, getAccessToken, onBack, 
   if (state.status === 'ready' && (reviewIdentity === identity || reviewOnOpen)) {
     return <MemoryReview language={language} title={selected.title} ownerId={user.id} projectId={selected.id}
       sessionId={state.session.id} sessionLanguage={state.session.language} baseUrl={config?.baseUrl ?? null}
-      getAccessToken={getAccessToken} backLabel={reviewOnOpen ? conversationCopy[language].back : undefined} onBack={() => { if (reviewOnOpen) leave(onBack); else setReviewIdentity(null); }} onSignOut={() => leave(onSignOut)} />;
+      getAccessToken={getAccessToken} backLabel={reviewOnOpen ? backLabel ?? conversationCopy[language].back : undefined} onBack={() => { if (reviewOnOpen) leave(onBack); else setReviewIdentity(null); }} onSignOut={() => leave(onSignOut)} />;
   }
   const openReview = () => {
     if (state.status !== 'ready' || phase.current !== 'ready' || latest.current !== identity) return;
@@ -143,7 +144,7 @@ export function Conversation({ language, user, project, getAccessToken, onBack, 
     if (recording.current) recording.current.requestLeave(proceed);
     else proceed();
   };
-  return <ConversationScreen language={language} state={state} onCheck={retry} onReviewMemories={openReview}
+  return <ConversationScreen language={language} state={state} onCheck={retry} onReviewMemories={openReview} backLabel={backLabel}
     recordingPanel={state.status === 'ready' ? <SessionRecording ref={recording} language={language}
       ownerId={user.id} projectId={selected.id} sessionId={state.session.id} sessionLanguage={state.session.language}
       baseUrl={config?.baseUrl ?? null} getAccessToken={getAccessToken} /> : undefined}

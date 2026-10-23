@@ -33,6 +33,8 @@ export interface StoryEdit {
 }
 export interface DraftHistoryOptions extends GetStoryDraftOptions { limit?: number; offset?: number }
 export interface DraftHistoryPage { items: StoryEdit[]; hasMore: boolean }
+export interface StoryDraftPageOptions extends StoryDraftOptions { limit?: number; offset?: number }
+export interface StoryDraftPage { items: StoryDraft[]; hasMore: boolean }
 
 const errorStatuses = {
   AUTHORIZATION_REQUIRED: 401, INVALID_ACCESS_TOKEN: 401, ACCESS_DENIED: 403,
@@ -150,12 +152,29 @@ async function safe<T>(operation: () => Promise<T>): Promise<T> {
 
 /** Latest saved generation only, never a generation request. */
 export function listStoryDrafts(options: StoryDraftOptions): Promise<StoryDraft[]> {
+  return listStoryDraftsPage({ ...options, limit: 1, offset: 0 }).then(page => page.items);
+}
+
+/** One actual generation page. A full page is only a reason to check for more;
+ * callers must validate cross-page continuity and bound the accumulated list. */
+export function listStoryDraftsPage(options: StoryDraftPageOptions): Promise<StoryDraftPage> {
   return safe(async () => {
     const selected = selection(options);
+    const limit = options.limit === undefined ? 20 : options.limit, offset = options.offset === undefined ? 0 : options.offset;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 ||
+      !Number.isSafeInteger(offset) || offset < 0 || offset > 100_000) throw new StoryDraftsError('validation');
     return executeStoryDraftRequest(options, { action: 'list', projectId: selected.projectId,
+      limit, offset,
       onHttpError: (status, code) => httpError(status, code, false) }, value => {
-      if (!Array.isArray(value) || value.length > 1) invalid();
-      return value.map(item => draft(item, selected));
+      if (!Array.isArray(value) || value.length > limit) invalid();
+      const ids = new Set<string>(); let previousVersion = Number.POSITIVE_INFINITY;
+      const items = value.map(item => {
+        const result = draft(item, selected);
+        if (ids.has(result.draft_id) || result.version >= previousVersion) invalid();
+        ids.add(result.draft_id); previousVersion = result.version;
+        return result;
+      });
+      return { items, hasMore: items.length === limit };
     });
   });
 }

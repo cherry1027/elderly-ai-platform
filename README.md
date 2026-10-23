@@ -6,6 +6,9 @@ and [real-voice proposal](docs/mobile-voice-contract.md). The [OpenAPI snapshot]
 is generated from backend 0.8.1; the proposal does not enable paid services.
 Current memory-review behavior and acceptance are in the [Day 10 guide](docs/day-10-memory-integration.md)
 and [status report](docs/day-10-status.md).
+For generation, editing, continuation and PDF integration, use the
+[Day 11 story guide](docs/day-11-story-integration.md) and
+[verification status](docs/day-11-status.md).
 
 Autobiography application with an existing React/Vite web client, Supabase, and a Python/FastAPI backend.
 

@@ -34,6 +34,9 @@ their statements about absent audio/editing UI are not current mobile status.
 
 - [Mobile API contract](mobile-api-contract.md): all 25 operations, exact headers,
   bodies, response shapes, binary PDF handling, errors and retry semantics.
+- [Day 11 story guide](day-11-story-integration.md) and
+  [current verification](day-11-status.md): explicit generation, manual revisions,
+  private binary PDF download and Continue acceptance; existing 0.8.1 APIs reused.
 - [Day 10 memory guide](day-10-memory-integration.md) and
   [current status](day-10-status.md): clarification/review/resumption fixtures,
   0.8.1 conflict handling and current evidence/pending device checks.
@@ -155,9 +158,9 @@ wording; provide a comparison/reconciliation UI. Exact requests are in the
 
 ## Verified now versus still awaiting acceptance
 
-Latest Day 10 regression: 767 backend checks and 60 isolated database checks
+Latest Day 11 regression: 776 backend checks and 65 isolated database checks
 passed; four separately gated live pytest cases were skipped. See the
-[Day 10 report](day-10-status.md). The [original handoff verification report](mobile-integration-tests.md)
+[Day 11 report](day-11-status.md). The [original handoff verification report](mobile-integration-tests.md)
 preserves the earlier 755/56 baseline and its hosted checks as historical evidence.
 
 The hosted draft and export/continuation scripts passed using two synthetic

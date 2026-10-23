@@ -92,6 +92,15 @@ FastAPI in-process with synthetic Auth/Data API fixtures:
 It requires the reviewed mobile Git object locally, opens no sockets and makes
 no cloud requests. It does not prove device networking, real login or RLS.
 
+## Day 11 story and PDF integration
+
+The [Day 11 Expo guide](../docs/day-11-story-integration.md) connects explicit
+generation, saved draft reading/editing/history, private PDF bytes and Continue
+using the existing APIs. No migration/runtime change is needed. New route and
+real-renderer tests plus the rollback-only bilingual database journey are in
+the [verification report](../docs/day-11-status.md); native PDF/share acceptance
+remains Tarun's device gate.
+
 ## Day 10 memory review
 
 The [Day 10 handoff](../docs/day-10-memory-integration.md) covers current-memory

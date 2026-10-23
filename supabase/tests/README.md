@@ -1,5 +1,13 @@
 # Isolated PostgreSQL schema tests
 
+Day 11 adds `day11-story-journey.test.mjs` / `cloud-day11-story-journey.sql`:
+the exact rollback-only EN/SV generation/edit/history/export/Continue/new-version
+journey, unsafe-generation blocks, version/audit retries, old export preservation,
+two-way ownership and immutable sources. Identity/project collision guards and
+rollback emptiness across 16 isolated relations are tested. SQL validates PDF
+metadata/revision text, not rendered bytes, real Auth login or iPhone behavior.
+See [Day 11 scope](../../docs/day-11-status.md). No migration is added.
+
 Day 10 adds `day10-memory.test.mjs` and the reusable
 `cloud-day10-memory.sql` fixture: EN/SV uncertain 1974→reviewed 1975, rejected and
 pending exclusion, old/new session continuity, stale version vectors, duplicate

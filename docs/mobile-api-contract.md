@@ -5,6 +5,10 @@ Backend snapshot: branch `codex/day-7-mobile-integration`, commit
 API prefix: `/api/v1`  
 Intended client: Tarun's Expo/React Native application
 
+Day 11 adds verified story/edit/export/Continue journey coverage without changing
+this runtime or schema. Use the [Expo story guide](day-11-story-integration.md)
+and [current acceptance report](day-11-status.md).
+
 This document describes the backend that exists at the snapshot above. The
 route implementations and strict response models are authoritative. It does
 not promise public hosting, production readiness, real speech recognition, or
@@ -904,7 +908,7 @@ hidden as `404 RESOURCE_NOT_FOUND`.
   "method": "manual_unverified",
   "checked_revision": 2,
   "checked_at": "2026-10-23T08:05:00Z",
-  "sources_current": false,
+  "sources_current": true,
   "reason": "Manual edits require review"
 }
 ```
@@ -932,7 +936,7 @@ With a draft:
     "method": "manual_unverified",
     "checked_revision": 2,
     "checked_at": "2026-10-23T08:05:00Z",
-    "sources_current": false,
+    "sources_current": true,
     "reason": "Manual edits require review"
   }
 }
@@ -957,6 +961,12 @@ Before any draft exists:
   }
 }
 ```
+
+`sources_current` describes whether the saved generation context still matches
+the project, independently of human wording review. An ordinary edit keeps it
+true until source context changes; `needs_review` never means automatically
+verified. For an edited draft whose context later changes, `needs_review` stays
+and `sources_current` becomes false with an explanatory reason.
 
 The backend may report `stale_sources` when confirmed source-memory versions no
 longer match a generated revision. Do not label `needs_review` or

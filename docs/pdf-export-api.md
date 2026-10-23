@@ -1,5 +1,10 @@
 # Day 6 PDF export and story continuation
 
+Current backend remains **0.8.1**. Day 11 reverified these existing endpoints,
+real EN/SV PDF bytes, historical selection and bounded retries without a new
+migration or API change. See [Expo integration](day-11-story-integration.md)
+and [current verification scope](day-11-status.md); native PDF/share is pending.
+
 Backend 0.6.0 adds private PDF downloads and Continue My Story. Export always uses
 a selected **saved** draft revision. Continuation never generates text or
 overwrites earlier drafts. Conversation and story writing remain deterministic
@@ -22,7 +27,8 @@ For PowerShell use the [Day 5 environment setup](story-drafts-api.md). Both mock
 flags stay disabled by default; saved-draft export and continuation do not call
 either provider. Swagger: `http://127.0.0.1:8000/docs`. On a phone, use a reachable
 developer-machine LAN address and bind Uvicorn to `0.0.0.0`; phone localhost is not
-the developer computer. No shared hosted FastAPI server has been deployed.
+the developer computer. Use only the agreed trusted personal network for LAN
+HTTP, never shared/student Wi-Fi. No shared hosted FastAPI server has been deployed.
 
 Every route requires `Authorization: Bearer <Supabase user access token>`. Ownership
 is checked against the parent project in FastAPI and the database. Never put a

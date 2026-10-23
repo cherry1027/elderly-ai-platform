@@ -1,5 +1,10 @@
 # Day 5 — Create My Story
 
+Day 11 reuses these existing backend **0.8.1** routes with no new fields or
+migration. Use the [current story/Expo guide](day-11-story-integration.md) and
+[verification report](day-11-status.md) for generation/edit/export/Continue
+acceptance. Real iPhone PDF/share remains pending.
+
 Backend 0.5.0. This is a **deterministic mock**, not a live AI writer. An explicit
 user action assembles first-person paragraphs from confirmed, supported memories.
 It does not invent scenery, emotion, relatives or dates to make the story warmer.

@@ -8,6 +8,15 @@ with the earlier `8375ada`/`73094c7` baselines; stale implicit memory confirmati
 is now rejected with the documented 409. The [full integration guide](frontend-integration.md) contains
 all 25 operations, request/response examples and error handling.
 
+**Current Day 14 pair:** backend application-code baseline `c67687e` on this
+review branch and mobile `feat/mobile-autobiography-continuation` at `1d93b74`
+(includes PDF revision `07c5c198`). The older checkpoints below are historical,
+not the latest mobile implementation. The two ignored JSON configuration files
+remain the reviewed setup. Use the [Day 14 device rehearsal](day-14-tarun-rehearsal.md)
+for the full native flow and explicit `--simulate-transcription` launcher flag.
+Real-iPhone/two-issued-user JWT acceptance remains pending; mobile admission
+backoff requires a frontend follow-up. No new public service is provided.
+
 The initial reported integration pair is backend `374b1dd` on
 `codex/day-7-mobile-integration` and mobile
 `59762f2f8413b7f328421fb158489594511a1e06` on
@@ -22,7 +31,7 @@ keeps the API paths compatible and adds explicit `--simulate-transcription` to
 the backend launcher. Use the [Day 9 audio guide](day-9-mobile-audio.md) for that
 opt-in; it does not enable real speech recognition or microphone access itself.
 
-Those are historical checkpoints. Tarun's latest reported mobile branch is
+Those are historical checkpoints. A later reported mobile branch was
 `feat/mobile-draft-editor` at `eb4eaa8`, including recording, simulated conversation,
 memory review and draft editing. See the [current consolidated handoff](mobile-backend-handoff.md)
 and [Day 10 acceptance](day-10-status.md); the full iPhone workflow was not rerun

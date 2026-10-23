@@ -1,0 +1,61 @@
+{
+  "observed_on": "2026-10-23",
+  "environment": "memy-ai-dev",
+  "project_ref": "edbkuunyeyxnyenmmqud",
+  "source": "operator_observed_development_https_and_dashboard_sql",
+  "https_probe": {
+    "key_sha256_12": "7dbc1add8497",
+    "head_status": 200,
+    "health_status": 200,
+    "ready_status": 200,
+    "missing_token_status": 401,
+    "invalid_unissued_token_status": 401,
+    "valid_two_user_jwt": "NOT_RUN"
+  },
+  "sql": {
+    "day14_readonly_security": "PASS",
+    "identity_scope": "SQL_ROLE_NOT_JWT",
+    "own_write_test": "NOT_RUN",
+    "two_real_users_test": "NOT_RUN",
+    "physical_iphone_test": "NOT_RUN",
+    "data_scope": "READ_ONLY_NO_FIXTURE_WRITES",
+    "rls_tables_checked": 16,
+    "invoker_views_checked": 3,
+    "guarded_core_rpcs_checked": 19,
+    "existing_row_counts": {
+      "projects": 2,
+      "sessions": 2,
+      "source_messages": 6,
+      "memories": 6,
+      "drafts": 1,
+      "edit_history": 1,
+      "exports": 1
+    },
+    "bucket_metadata": {
+      "legacy_bucket_count": 3,
+      "legacy_public_bucket_count": 1,
+      "private_audio_pdf_bucket_count": 2
+    },
+    "database_function_catalog": {
+      "public_database_definer_count": 23,
+      "anon_executable_database_definer_count": 4,
+      "scope": "NOT_EDGE_DEPLOYMENT_EVIDENCE"
+    }
+  },
+  "edge_dashboard_observation": {
+    "listed_functions": 0,
+    "state": "DEPLOY_YOUR_FIRST_EDGE_FUNCTION",
+    "platform_incident_banner_visible": true,
+    "independent_management_api_inventory": "NOT_RUN",
+    "function_invocations": 0
+  },
+  "mutations": {
+    "auth_settings_changed": false,
+    "anonymous_signin_enabled": false,
+    "users_created": 0,
+    "stored_rows_changed": 0,
+    "paid_calls": 0
+  },
+  "pilot_approved": false,
+  "privacy_release_gate": "PENDING"
+}

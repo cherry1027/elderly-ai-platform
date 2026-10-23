@@ -1,9 +1,17 @@
 # Memy mobile API contract
 
 Backend snapshot: branch `codex/day-7-mobile-integration`, commit
-`c2decb430be46e9e2d1c1f332e65315a18c9945b`, FastAPI `0.8.1`
+`c67687ec4b392dbf0e4f73fc8451ac6f0da05560`, FastAPI `0.8.1`
 API prefix: `/api/v1`  
 Intended client: Tarun's Expo/React Native application
+
+Day 14 leaves all paths, success schemas and the version unchanged. It exposes
+`Retry-After` through existing allowed-origin CORS so browser clients can read
+admission backoff. The latest reviewed native revision `1d93b74` still needs
+explicit rate/busy error handling; it currently fails safely with generic
+feedback. Follow the [source review](day-14-mobile-code-review.md) and
+[device checklist](day-14-tarun-rehearsal.md). Backend/SQL automation is not
+actual-iPhone or two-issued-user JWT acceptance.
 
 Day 11 adds verified story/edit/export/Continue journey coverage without changing
 this runtime or schema. Use the [Expo story guide](day-11-story-integration.md)
@@ -22,8 +30,8 @@ Default user allowance is 120/minute across business routes, after online Auth.
 Do not log tokens or blindly retry non-idempotent creation. See
 [Day 13 handoff and release gates](day-13-status.md). `/ready` may use a locally
 cached result for two seconds or reject a concurrent cold probe as unavailable.
-The header pin includes Day 13 runtime hardening and audit tooling; later
-documentation commits do not change its runtime. Record `git rev-parse HEAD`.
+The header pin includes Day 13 hardening and the Day 14 CORS addition; later
+evidence/documentation commits do not change its runtime. Record `git rev-parse HEAD`.
 
 This document describes the backend that exists at the snapshot above. The
 route implementations and strict response models are authoritative. It does

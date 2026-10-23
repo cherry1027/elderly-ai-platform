@@ -16,6 +16,11 @@ The [Day 13 security report](docs/day-13-status.md),
 [privacy/deletion workflow](docs/day-13-privacy-retention.md) and
 [deployment gates](docs/day-13-deployment-readiness.md) cover current hardening
 and unresolved pilot requirements. This is not production/privacy sign-off.
+The [Day 14 acceptance report](docs/day-14-status.md) separates the 142-assertion
+offline M4A/story/PDF rehearsal and fresh read-only hosted checks from pending
+two-user JWT and actual-iPhone acceptance. Tarun's
+[device checklist](docs/day-14-tarun-rehearsal.md) is ready for his later run;
+anonymous Auth stayed off and no hosted rows were changed.
 
 Autobiography application with an existing React/Vite web client, Supabase, and a Python/FastAPI backend.
 

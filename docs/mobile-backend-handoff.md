@@ -8,6 +8,11 @@ handoff includes the Day 10 stale-confirmation safety patch, a reproducible
 OpenAPI snapshot and regression checks. Paths, payloads and success schemas
 are unchanged; stale implicit review intent is rejected with the existing 409.
 Day 13 adds documented 429 throttling and 503 admission handling below.
+Day 14 rehearses the cumulative mock journey and exposes `Retry-After` through
+allowed-origin CORS; no path, version or success schema changes. The
+[current acceptance report](day-14-status.md) and
+[real-iPhone checklist](day-14-tarun-rehearsal.md) are authoritative for current
+evidence. Physical iPhone and fresh two-issued-user JWT checks are pending.
 
 ## Start here: the stable pins
 
@@ -15,9 +20,9 @@ Day 13 adds documented 429 throttling and 503 admission handling below.
 | --- | --- |
 | Backend repository | [cherry1027/elderly-ai-platform](https://github.com/cherry1027/elderly-ai-platform) |
 | Shared backend branch | `codex/day-7-mobile-integration` |
-| Stable runtime/tooling commit | `c2decb430be46e9e2d1c1f332e65315a18c9945b` (`c2decb4`) |
-| Latest mobile branch reported by Tarun and confirmed on GitHub | `feat/mobile-draft-editor` |
-| Mobile commit | `eb4eaa8caa38e1cbf1e519831283d269eaeb9252` (`eb4eaa8`) |
+| Application-code baseline | `c67687ec4b392dbf0e4f73fc8451ac6f0da05560` (`c67687e`); later docs/evidence-only commits may follow |
+| Latest reviewed mobile branch | `feat/mobile-autobiography-continuation` |
+| Mobile commit | `1d93b74ac9de75c3bdd778d1ad0f9a8ce4449e7e` (`1d93b74`), includes PDF revision `07c5c198` |
 
 The earlier integration pin was `73094c7`; `a629760` added the consolidated
 handoff without changing that runtime. Day 10's `a00df98` is the small 0.8.1
@@ -30,13 +35,23 @@ documentation-only commits do not activate live providers; record
 `git rev-parse HEAD` after obtaining them. Do not equate a changing branch name
 with an immutable version. No merge into `main` is part of this work.
 
-The mobile package/configuration files were inspected at `eb4eaa8`. Tarun reports
+The latest mobile package/flow source was inspected read-only at `1d93b74`;
+see [the source-to-contract review](day-14-mobile-code-review.md). It includes
+native PDF and continuation code, but their full actual-device acceptance was
+not rerun here. The client still needs `RATE_LIMITED` / `API_BUSY` and bounded
+`Retry-After` handling without automatic writes. Earlier, at `eb4eaa8`, Tarun reported
 2,825 tests in 67 suites, TypeScript/lint/Expo checks and major real-iPhone flows.
 Those mobile tests and device actions were **not independently rerun in this
 backend handoff**. Historical Day 8/9 documents describe older mobile commits;
 their statements about absent audio/editing UI are not current mobile status.
 
 ## The handoff package
+
+- [Day 14 report](day-14-status.md), [native source review](day-14-mobile-code-review.md)
+  and [iPhone rehearsal](day-14-tarun-rehearsal.md): 1,231 Python and 86 isolated
+  PostgreSQL tests, 142 offline journey assertions and fresh read-only hosted
+  checks. Anonymous sign-in remained off; no hosted account/data changes or
+  paid calls. Actual device and valid-two-user JWT results remain pending.
 
 - [Day 13 security report](day-13-status.md),
   [privacy/retention workflow](day-13-privacy-retention.md) and
@@ -74,15 +89,15 @@ writer into a real AI service, and SQL role checks do not prove a phone login.
 
 | Capability | Status / evidence | Important boundary |
 | --- | --- | --- |
-| Health/readiness, user-token validation, project CRUD and owned sessions | Implemented and tested; local regression, historical hosted API checks, fresh hosted ownership checks | No public HTTPS FastAPI deployment |
+| Health/readiness, user-token validation, project CRUD and owned sessions | Implemented and tested; historical hosted API checks; Day 14 readiness/missing-invalid-token and read-only SQL-role checks | Fresh two-issued-user JWT/owner-write acceptance pending; no public HTTPS FastAPI deployment |
 | Audio upload/decoding/limits, immutable originals and source-ID processing | Implemented and tested; real local audio bytes, hosted persistence history | No real speech recognition |
 | Development transcription | **Mock only**, opt-in launcher flag; permanent bilingual fictional notice | Fixed fixture independent of speech; default disabled |
 | Conversation and memory extraction | **Mock only**, deterministic EN/SV rules; real ownership/provenance/versioned review | Not an open-ended model; uncertain/conflicting candidates require review |
 | Generate My Story | **Mock only writer**, real saved drafts/source snapshots/versioning | `passed` means deterministic mock verification, not an LLM accuracy guarantee |
-| Manual draft editing and history | Implemented and tested; fresh hosted persistence, revisions and stale-edit denial | Manual content is `needs_review`, not auto-verified |
-| Private PDF export/history/download | Implemented real renderer + real saved metadata, not simulated PDF bytes | Fresh hosted SQL checks metadata/historical text; native PDF/share acceptance is pending |
-| Continue and explicit new generation | Implemented and tested; fresh hosted continuation/version preservation | Continue never generates; manual prose is not auto-merged into the next generation |
-| Current mobile UI through editing/history | Tarun reports implemented and iPhone-tested at `eb4eaa8` | Not independently certified by this backend audit |
+| Manual draft editing and history | Implemented and tested; historical hosted SQL persistence/revision/conflict checks; Day 14 offline rehearsal | Manual content is `needs_review`, not auto-verified; current hosted check is read-only |
+| Private PDF export/history/download | Implemented real renderer + real saved metadata, not simulated PDF bytes | Historical hosted SQL checked metadata/text; Day 14 checks real bytes offline; native PDF/share acceptance is pending |
+| Continue and explicit new generation | Implemented and tested; historical hosted SQL and Day 14 offline continuation/version preservation | Continue never generates; manual prose is not auto-merged; current hosted check is read-only |
+| Current mobile UI through PDF/continuation | Source reviewed at `1d93b74`; earlier features have Tarun-reported device evidence | Full latest actual-iPhone journey not independently rerun; explicit admission backoff remains a frontend follow-up |
 | Real STT, general AI conversation, TTS and streaming | **Public activation planned; STT/text evaluation adapters implemented** | Funding approval is reported; no active evaluation allowance, public activation/persistence or new voice route was configured by this work |
 | Guest quota, subscriptions, private photo pipeline and template gallery | **Planned for this FastAPI/mobile workflow** | Legacy Lovable code is not a reviewed implementation of these contracts |
 | HTTPS staging and public pilot | **Planned** | Requires approved hosting, mobile URL-guard update and security/privacy gates |

@@ -1,5 +1,23 @@
 # Isolated PostgreSQL schema tests
 
+Day 14 adds `day14-security.test.mjs` and two deliberately separate fixtures:
+
+- `cloud-day14-readonly-security.sql` uses `BEGIN READ ONLY`, no fixture writes
+  and collision-checked nonexistent/empty SQL identities. The exact batch passed
+  in `memy-ai-dev` on 23 October: 16 core RLS tables, three invoker views and 19
+  guarded core RPCs. This is SQL-role read/catalog evidence, not issued JWTs,
+  owner writes, two existing users, Edge deployment or actual-device acceptance.
+- `cloud-day14-security.sql` prepares a broader rollback-only EN/SV synthetic
+  correction/draft/history/export/ownership exercise. It passed in local PGlite
+  only and **was not run hosted**. Do not run without appropriate separate
+  authorization and trigger review; transaction rollback cannot undo external
+  trigger effects or sequence advancement. No anonymous Auth toggle is needed
+  by either SQL file, and no permission to run the broader batch is implied.
+
+The 13 Day 14 tests include unchanged-data checks, collision protection and
+intentional privilege/policy drift detection, inside disposable engines only.
+The full suite now has 86 passing checks. See [Day 14 evidence and limits](../../docs/day-14-status.md).
+
 Day 11 adds `day11-story-journey.test.mjs` / `cloud-day11-story-journey.sql`:
 the exact rollback-only EN/SV generation/edit/history/export/Continue/new-version
 journey, unsafe-generation blocks, version/audit retries, old export preservation,

@@ -14,6 +14,27 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 Swagger: http://127.0.0.1:8000/docs
 
+## Current mobile acceptance — Day 14
+
+Use the [Day 14 report](../docs/day-14-status.md),
+[pinned native source review](../docs/day-14-mobile-code-review.md) and
+[Tarun's iPhone checklist](../docs/day-14-tarun-rehearsal.md). Runtime baseline
+is `c67687e` on the existing cumulative review branch; version/25 operations and
+success schemas remain 0.8.1. The small CORS fix exposes `Retry-After` for allowed
+browser origins. Explicit backoff is still a mobile-client follow-up.
+
+```sh
+.venv/bin/python scripts/verify_day14.py
+.venv/bin/python scripts/validate_day14_evidence.py
+```
+
+The first is an offline 142-assertion bilingual rehearsal with real local M4A
+decoding/PDF rendering but explicit Auth/Data API doubles; developer dependencies
+are required. It is not a hosted or phone test. The second validates a bounded,
+content-free self-report and defaults to `PENDING`; exit 0 is not a device pass.
+Fresh read-only hosted checks passed; two issued-user JWTs and actual iPhone
+acceptance remain pending. No Auth setting or stored row changed.
+
 Backend version 0.8.1 includes [Day 5 Create My Story](../docs/story-drafts-api.md):
 explicit generation, confirmed-memory evidence, immutable originals, versioned
 drafts, manual editing/history and conservative verification. For the free local

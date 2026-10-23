@@ -5,8 +5,9 @@
 **Tarun can implement Task 3D-8A/B against the existing backend.** PDF export,
 historical downloads and non-generating story continuation already exist. This
 handoff includes the Day 10 stale-confirmation safety patch, a reproducible
-OpenAPI snapshot and regression checks. Paths, payloads and response schemas
+OpenAPI snapshot and regression checks. Paths, payloads and success schemas
 are unchanged; stale implicit review intent is rejected with the existing 409.
+Day 13 adds documented 429 throttling and 503 admission handling below.
 
 ## Start here: the stable pins
 
@@ -14,7 +15,7 @@ are unchanged; stale implicit review intent is rejected with the existing 409.
 | --- | --- |
 | Backend repository | [cherry1027/elderly-ai-platform](https://github.com/cherry1027/elderly-ai-platform) |
 | Shared backend branch | `codex/day-7-mobile-integration` |
-| Stable runtime commit | `b16955502c1e397d82b6997dfb5f75bf5ca38a69` (`b169555`) |
+| Stable runtime/tooling commit | `c2decb430be46e9e2d1c1f332e65315a18c9945b` (`c2decb4`) |
 | Latest mobile branch reported by Tarun and confirmed on GitHub | `feat/mobile-draft-editor` |
 | Mobile commit | `eb4eaa8caa38e1cbf1e519831283d269eaeb9252` (`eb4eaa8`) |
 
@@ -22,7 +23,10 @@ The earlier integration pin was `73094c7`; `a629760` added the consolidated
 handoff without changing that runtime. Day 10's `a00df98` is the small 0.8.1
 memory-review patch. Day 12's `b169555` adds separately gated OpenAI evaluation
 and explicit public release guards without changing the 0.8.1 mobile contract.
-Later package commits add documentation; record
+Day 13's `a2dd846` hardens Auth/audio, admission limits and readiness; `c2decb4`
+adds non-destructive privacy/audit tools and SQL regression coverage. It adds
+documented rate/admission errors but leaves success fields intact. Later
+documentation-only commits do not activate live providers; record
 `git rev-parse HEAD` after obtaining them. Do not equate a changing branch name
 with an immutable version. No merge into `main` is part of this work.
 
@@ -33,6 +37,12 @@ backend handoff**. Historical Day 8/9 documents describe older mobile commits;
 their statements about absent audio/editing UI are not current mobile status.
 
 ## The handoff package
+
+- [Day 13 security report](day-13-status.md),
+  [privacy/retention workflow](day-13-privacy-retention.md) and
+  [deployment gates](day-13-deployment-readiness.md): current security patch,
+  additive429/503 admission handling and unresolved pilot approvals. No new
+  routes/success fields and no real-provider activation.
 
 - [Mobile API contract](mobile-api-contract.md): all 25 operations, exact headers,
   bodies, response shapes, binary PDF handling, errors and retry semantics.
@@ -73,7 +83,7 @@ writer into a real AI service, and SQL role checks do not prove a phone login.
 | Private PDF export/history/download | Implemented real renderer + real saved metadata, not simulated PDF bytes | Fresh hosted SQL checks metadata/historical text; native PDF/share acceptance is pending |
 | Continue and explicit new generation | Implemented and tested; fresh hosted continuation/version preservation | Continue never generates; manual prose is not auto-merged into the next generation |
 | Current mobile UI through editing/history | Tarun reports implemented and iPhone-tested at `eb4eaa8` | Not independently certified by this backend audit |
-| Real STT, general AI conversation, TTS and streaming | **Public activation planned; STT/text evaluation adapters implemented** | Day 12 OpenAI adapters are evaluation-only; spending approval, public activation/persistence and new voice routes remain absent |
+| Real STT, general AI conversation, TTS and streaming | **Public activation planned; STT/text evaluation adapters implemented** | Funding approval is reported; no active evaluation allowance, public activation/persistence or new voice route was configured by this work |
 | Guest quota, subscriptions, private photo pipeline and template gallery | **Planned for this FastAPI/mobile workflow** | Legacy Lovable code is not a reviewed implementation of these contracts |
 | HTTPS staging and public pilot | **Planned** | Requires approved hosting, mobile URL-guard update and security/privacy gates |
 
@@ -163,9 +173,10 @@ wording; provide a comparison/reconciliation UI. Exact requests are in the
 
 ## Verified now versus still awaiting acceptance
 
-Latest Day 12 regression: 961 backend checks and 65 isolated database checks
+Latest Day 13 regression: 1,154 backend checks and 73 isolated database checks
 passed; four separately gated live pytest cases were skipped. See the
-[Day 12 report](day-12-status.md). The [original handoff verification report](mobile-integration-tests.md)
+[Day 13 report](day-13-status.md). The [Day 12 report](day-12-status.md) and
+[original handoff verification report](mobile-integration-tests.md)
 preserves the earlier 755/56 baseline and its hosted checks as historical evidence.
 
 The hosted draft and export/continuation scripts passed using two synthetic

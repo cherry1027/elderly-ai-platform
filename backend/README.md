@@ -92,6 +92,29 @@ FastAPI in-process with synthetic Auth/Data API fixtures:
 It requires the reviewed mobile Git object locally, opens no sockets and makes
 no cloud requests. It does not prove device networking, real login or RLS.
 
+## Day 13 security and privacy
+
+See the [security report](../docs/day-13-status.md),
+[retention/deletion workflow](../docs/day-13-privacy-retention.md) and
+[deployment gates](../docs/day-13-deployment-readiness.md).
+Business routes add per-process admission/rate controls: default 64 simultaneous
+requests and 120 requests/minute per online-verified user, configured by
+`API_MAX_CONCURRENT_REQUESTS` and `API_REQUESTS_PER_MINUTE`. `429 RATE_LIMITED`
+includes `Retry-After:60`; `503 API_BUSY` includes `Retry-After:1`. These are not
+distributed/edge protections. APIs use no-store/no-sniff/no-referrer, including
+early errors. Supabase ignores ambient proxies and follows no redirects.
+`/ready` permits one in-flight upstream probe with a two-second local cooldown.
+
+```sh
+.venv/bin/python scripts/privacy_inventory.py
+.venv/bin/python scripts/benchmark_security.py --iterations 40 --concurrency 4
+```
+
+These default commands make no external request. The first only explains the
+separately opt-in read-only inventory; the second uses fake Auth/Data API and
+real fictional in-memory PDFs. No deletion API or retention TTL is invented.
+Do not deploy legacy Edge Functions with the old Supabase configuration.
+
 ## Day 12 gated provider evaluation
 
 See the [OpenAI adapter guide](../docs/day-12-ai-integration.md) and

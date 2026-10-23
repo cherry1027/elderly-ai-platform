@@ -12,6 +12,10 @@ For generation, editing, continuation and PDF integration, use the
 The [Day 12 OpenAI adapter/evaluation guide](docs/day-12-ai-integration.md) and
 [pre-approval status](docs/day-12-status.md) cover disabled-by-default real
 providers. Paid calls and public live-AI persistence are not enabled.
+The [Day 13 security report](docs/day-13-status.md),
+[privacy/deletion workflow](docs/day-13-privacy-retention.md) and
+[deployment gates](docs/day-13-deployment-readiness.md) cover current hardening
+and unresolved pilot requirements. This is not production/privacy sign-off.
 
 Autobiography application with an existing React/Vite web client, Supabase, and a Python/FastAPI backend.
 

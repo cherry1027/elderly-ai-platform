@@ -1,7 +1,7 @@
 # Memy mobile API contract
 
 Backend snapshot: branch `codex/day-7-mobile-integration`, commit
-`b16955502c1e397d82b6997dfb5f75bf5ca38a69`, FastAPI `0.8.1`
+`c2decb430be46e9e2d1c1f332e65315a18c9945b`, FastAPI `0.8.1`
 API prefix: `/api/v1`  
 Intended client: Tarun's Expo/React Native application
 
@@ -13,6 +13,17 @@ Day 12 adds [gated OpenAI evaluation adapters](day-12-ai-integration.md) and
 [release safeguards](day-12-status.md), not live mobile endpoints. No paths or
 response fields change. Keep the current mock setup; public FastAPI refuses
 OpenAI evaluation mode until a reviewed live provenance/persistence contract exists.
+
+Day 13 adds security guards without changing paths, success bodies or version:
+all 23 private operations document `429 RATE_LIMITED` with `Retry-After:60`.
+Per-worker admission can return `503 API_BUSY` with `Retry-After:1` before
+reading a body; no-store/no-sniff/no-referrer headers apply to API failures.
+Default user allowance is 120/minute across business routes, after online Auth.
+Do not log tokens or blindly retry non-idempotent creation. See
+[Day 13 handoff and release gates](day-13-status.md). `/ready` may use a locally
+cached result for two seconds or reject a concurrent cold probe as unavailable.
+The header pin includes Day 13 runtime hardening and audit tooling; later
+documentation commits do not change its runtime. Record `git rev-parse HEAD`.
 
 This document describes the backend that exists at the snapshot above. The
 route implementations and strict response models are authoritative. It does
@@ -138,7 +149,9 @@ Common errors are:
 | 415 | audio media/format error | Re-encode or select a supported recording. |
 | 422 | `VALIDATION_ERROR` or a specific validation code | Correct the request; do not blind-retry. |
 | 429 | `AUDIO_BUSY` | Back off and retry the same transcription key. |
+| 429 | `RATE_LIMITED` | Honor `Retry-After:60`; preserve mutation state and follow the operation's retry rules. |
 | 500 | `INTERNAL_ERROR` | Treat the result as unknown; reconcile before retrying a non-idempotent mutation. |
+| 503 | `API_BUSY` | Honor `Retry-After:1`; preserve local state and follow the operation's retry rules. |
 | 503 | feature disabled, busy, or dependency unavailable | Preserve local UI state and retry later only when appropriate. |
 | 504 | provider/render timeout | Reconcile idempotent operations before retrying. |
 

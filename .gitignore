@@ -34,3 +34,5 @@ htmlcov/
 .env.*
 !.env.example
 backend/.env
+# Private written approvals and durable AI usage ledgers (never tracked).
+backend/.private/

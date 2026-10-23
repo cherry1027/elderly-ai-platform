@@ -1,0 +1,36 @@
+{
+  "fixture_version": 1,
+  "fictional": true,
+  "simulation_label": "AI simulation / AI-simulering",
+  "notice": "Typed fictional memory-review fixtures. No cloud session is pre-seeded. Use returned project, session, message and memory IDs, current versions and one new UUID per logical message/generation action.",
+  "scenarios": [
+    {
+      "project": {"title": "Day 10 memory review (fictional)", "language": "en"},
+      "initial_text": "I think we moved in 1974.",
+      "correction_text": "Actually, it was 1975.",
+      "rejected_text": "My name is Ada.",
+      "bare_confirmation_text": "Yes.",
+      "code_switch_text": "Jag flyttade till Lund 1978.",
+      "review_steps": [
+        {"target": "original_move", "patch": {"status": "confirmed", "corrected_value": "1975", "expected_version": 1}},
+        {"target": "correction_candidate", "patch": {"status": "rejected", "expected_version": 1}},
+        {"target": "rejected_person", "patch": {"status": "rejected", "expected_version": 1}}
+      ],
+      "expected_story": "I moved in 1975."
+    },
+    {
+      "project": {"title": "Dag 10 minnesgranskning (fiktivt)", "language": "sv"},
+      "initial_text": "Jag tror att vi flyttade 1974.",
+      "correction_text": "Egentligen var det 1975.",
+      "rejected_text": "Jag heter Ada.",
+      "bare_confirmation_text": "Ja.",
+      "code_switch_text": "I moved to Lund in 1978.",
+      "review_steps": [
+        {"target": "original_move", "patch": {"status": "confirmed", "corrected_value": "1975", "expected_version": 1}},
+        {"target": "correction_candidate", "patch": {"status": "rejected", "expected_version": 1}},
+        {"target": "rejected_person", "patch": {"status": "rejected", "expected_version": 1}}
+      ],
+      "expected_story": "Jag flyttade år 1975."
+    }
+  ]
+}

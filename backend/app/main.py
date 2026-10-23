@@ -40,6 +40,13 @@ def create_app(
     pdf_renderer: PdfRenderer | None = None,
 ) -> FastAPI:
     config = settings if settings is not None else Settings()
+    if config.ai_provider_mode == "openai" or any(
+        getattr(provider, "mode", None) == "openai"
+        for provider in (transcription_provider, conversation_provider, story_writer)
+    ):
+        # Public SQL/Expo contracts explicitly say mock. Paid evaluation is a
+        # separate opt-in; do not persist real outputs under those false labels.
+        raise ValueError("OpenAI evaluation mode cannot start the mock-only public API.")
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):

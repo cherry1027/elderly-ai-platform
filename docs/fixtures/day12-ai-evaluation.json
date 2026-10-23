@@ -1,0 +1,21 @@
+{
+  "dataset_version": 1,
+  "fictional_only": true,
+  "quality_status": "NOT_RUN",
+  "spending_approval": "NOT_GRANTED_BY_THIS_FIXTURE",
+  "recordings": [
+    {"language":"en","filename":"fictional-en.wav","voice_kind":"local synthetic TTS, not an elderly participant","reference":"My name is Ada. I grew up in Malmö. I moved in 1974."},
+    {"language":"sv","filename":"fictional-sv.wav","voice_kind":"local synthetic TTS, not an elderly participant","reference":"Jag heter Ada. Jag växte upp i Malmö. Jag flyttade 1974."}
+  ],
+  "checks": [
+    {"id":"transcription","measure":"Normalized word error rate plus manual names/year/accent review; spoken-number normalization must be reviewed","expected":"Original-language transcription, not English translation"},
+    {"id":"contradiction","en":"Actually, I moved in 1975.","sv":"Egentligen flyttade jag 1975.","prior_confirmed_year":1974,"expected":"Pending uncertain candidate and clarification linked only to the supplied owned fact"},
+    {"id":"source_grounding","expected":"Exact value/evidence substrings, no auto-confirmation, no unsupported people/places/dates"},
+    {"id":"language_switch","expected":"Chosen project language persists; human checks actual reply language, not just a JSON language label"},
+    {"id":"unsupported_story_claim","expected":"Separate verifier rejects an inserted fictional award unsupported by source memories; model review is not proof of truth"},
+    {"id":"provider_failure","expected":"Safe error with retained reservation; no automatic paid retry"},
+    {"id":"usage_limit","expected":"Next request blocked before transport when approved call/rate/reservation limit is reached"},
+    {"id":"cross_user","expected":"Existing authenticated API/RLS checks remain passing; direct provider evaluation is not an authorization test"}
+  ],
+  "release_gates": ["written budget and current price/FX ceiling review","model access/deprecation review","real elderly/accent/noise recordings with consent","actual factuality and language review","live provenance/persistence/API and Expo contract review","fresh two-user API and iPhone acceptance"]
+}

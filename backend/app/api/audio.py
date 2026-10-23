@@ -53,6 +53,8 @@ async def transcribe_recording(
             # Ordinary startup stays disabled. The explicit development launcher
             # can inject permanently labelled fictional fixtures, not recognition.
             provider = request.app.state.transcription_provider
+            if getattr(provider, "mode", None) == "openai":
+                raise APIError(503, "LIVE_AI_RELEASE_BLOCKED", "Live AI is evaluation-only pending release review.")
             if not provider.enabled:
                 raise APIError(503, "TRANSCRIPTION_DISABLED", "Live speech transcription is not enabled.")
             claim = await gateway.claim_transcription(

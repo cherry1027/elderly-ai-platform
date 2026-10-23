@@ -1,7 +1,7 @@
 # Memy mobile API contract
 
 Backend snapshot: branch `codex/day-7-mobile-integration`, commit
-`73094c77c9c9d04a9a4c6b213b05112eb675c130`, FastAPI `0.8.0`  
+`a00df98eb97a3528cd83dff91c36bbda3a09323a`, FastAPI `0.8.1`
 API prefix: `/api/v1`  
 Intended client: Tarun's Expo/React Native application
 
@@ -716,6 +716,9 @@ Reject:
 - `corrected_value` is trimmed, non-null, 1..1000, and allowed only with
   `confirmed`
 - omitting a correction while re-confirming preserves an existing correction
+  only at its current observed version; a mismatched version with a stored
+  correction returns `409 CONVERSATION_CHANGED` in 0.8.1 rather than inheriting
+  unseen newer wording
 - rejecting clears an existing correction
 - success is `200` with the full memory and its incremented/current `version`
 - an exact immediate replay using the prior version and same desired state is

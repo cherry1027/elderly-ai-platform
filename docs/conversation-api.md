@@ -1,5 +1,10 @@
 # Day 4 simulated conversation API
 
+Current Day 10 patch: backend **0.8.1**. Existing routes and schemas are unchanged;
+see [memory integration](day-10-memory-integration.md) and [verification](day-10-status.md).
+The required migrations are already deployed in the dedicated development
+project; this patch adds no migration and is not an instruction to reapply them.
+
 This development API lets Tarun build conversation history and memory review
 without a paid AI service. Replies and extraction are deterministic simulations,
 not a general language model. Unsupported wording can produce no extracted facts;
@@ -7,8 +12,8 @@ it must not be treated as an accurate real-AI autobiography engine.
 
 ## Enable the free demonstration
 
-Apply the Day 4 repository migration to the dedicated development project, then
-start FastAPI with `CONVERSATION_MODE=mock`. The default is `disabled`; only those
+Use the already deployed Day 4 foundation in the dedicated development project,
+then start FastAPI with `CONVERSATION_MODE=mock`. The default is `disabled`; only those
 two values are accepted. No OpenAI adapter, API key or external AI call exists.
 Day 3 speech transcription remains separately disabled.
 
@@ -162,8 +167,11 @@ metadata, not a parsed corrected date. Review related conflicting facts separate
 confirming one does not silently erase or reject another statement.
 
 Confirming an already corrected memory without a new `corrected_value` preserves
-that correction. Rejection clears the active correction, while the audit revision
-retains it.
+that correction only when `expected_version` matches the current version. A stale
+implicit confirmation of newer corrected wording returns `409 CONVERSATION_CHANGED`
+in 0.8.1; reload before asking the user again. Explicit identical correction
+retries still use the existing SQL replay rule. Rejection clears the active
+correction, while the audit revision retains it.
 
 Clarifications expose `id`, `fact_id`, `session_id`,
 `conflicts_with_fact_id`, `question`, `status`, `resolution`, `created_at` and

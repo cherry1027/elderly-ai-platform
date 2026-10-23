@@ -14,7 +14,7 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 Swagger: http://127.0.0.1:8000/docs
 
-Backend version 0.8.0 includes [Day 5 Create My Story](../docs/story-drafts-api.md):
+Backend version 0.8.1 includes [Day 5 Create My Story](../docs/story-drafts-api.md):
 explicit generation, confirmed-memory evidence, immutable originals, versioned
 drafts, manual editing/history and conservative verification. For the free local
 simulation, set `CONVERSATION_MODE=mock STORY_GENERATION_MODE=mock` before the
@@ -91,6 +91,15 @@ FastAPI in-process with synthetic Auth/Data API fixtures:
 
 It requires the reviewed mobile Git object locally, opens no sockets and makes
 no cloud requests. It does not prove device networking, real login or RLS.
+
+## Day 10 memory review
+
+The [Day 10 handoff](../docs/day-10-memory-integration.md) covers current-memory
+versions, explicit correction/rejection and project-scoped structured continuity.
+Patch 0.8.1 rejects a stale implicit confirmation of a newer corrected value with
+409 rather than reporting an unseen correction as approved. Existing valid
+replays remain safe; no new database migration or API fields are needed.
+See [verification scope and pending device checks](../docs/day-10-status.md).
 
 ## Day 9 native audio simulation
 

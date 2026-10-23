@@ -3,7 +3,9 @@
 Mobile integration: start with the [consolidated backend handoff](docs/mobile-backend-handoff.md),
 [API contract](docs/mobile-api-contract.md), [verification report](docs/mobile-integration-tests.md)
 and [real-voice proposal](docs/mobile-voice-contract.md). The [OpenAPI snapshot](docs/openapi.json)
-is generated from backend 0.8.0; the proposal does not enable paid services.
+is generated from backend 0.8.1; the proposal does not enable paid services.
+Current memory-review behavior and acceptance are in the [Day 10 guide](docs/day-10-memory-integration.md)
+and [status report](docs/day-10-status.md).
 
 Autobiography application with an existing React/Vite web client, Supabase, and a Python/FastAPI backend.
 
@@ -19,7 +21,7 @@ python -m pytest -q -m 'not integration'
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-API: http://127.0.0.1:8000 · Swagger: http://127.0.0.1:8000/docs · Version: 0.8.0
+API: http://127.0.0.1:8000 · Swagger: http://127.0.0.1:8000/docs · Version: 0.8.1
 
 - GET /health: public process liveness.
 - GET /ready: public Supabase Data API connectivity, without fetching records.

@@ -1,10 +1,11 @@
 # Memy backend handoff for mobile integration
 
-Use this setup to connect Tarun's Expo app to backend 0.8.0 without public hosting or
+Use this setup to connect Tarun's Expo app to backend 0.8.1 without public hosting or
 paid AI. The backend code and API contract are on
 [`codex/day-7-mobile-integration`](https://github.com/cherry1027/elderly-ai-platform/tree/codex/day-7-mobile-integration).
-The validated API baseline is commit `8375ada`; subsequent handoff changes do not
-change its routes. The [full integration guide](frontend-integration.md) contains
+The Day 10 runtime patch is `a00df98` (0.8.1). Paths and schemas remain compatible
+with the earlier `8375ada`/`73094c7` baselines; stale implicit memory confirmation
+is now rejected with the documented 409. The [full integration guide](frontend-integration.md) contains
 all 25 operations, request/response examples and error handling.
 
 The initial reported integration pair is backend `374b1dd` on
@@ -20,6 +21,13 @@ it adds native Start/Continue but no recorder/upload/conversation messages. Day 
 keeps the API paths compatible and adds explicit `--simulate-transcription` to
 the backend launcher. Use the [Day 9 audio guide](day-9-mobile-audio.md) for that
 opt-in; it does not enable real speech recognition or microphone access itself.
+
+Those are historical checkpoints. Tarun's latest reported mobile branch is
+`feat/mobile-draft-editor` at `eb4eaa8`, including recording, simulated conversation,
+memory review and draft editing. See the [current consolidated handoff](mobile-backend-handoff.md)
+and [Day 10 acceptance](day-10-status.md); the full iPhone workflow was not rerun
+by this backend audit. Restart the backend after updating and check version
+0.8.1 at `/openapi.json`, not an invented version field on `/health`.
 
 This handoff requires an iPhone and a Windows backend on the same **trusted,
 privately controlled network**. The old Mac address `192.168.0.21` is stale;
@@ -290,7 +298,7 @@ device evidence for the entire create-to-dashboard flow. On the trusted network,
 use this acceptance sequence after updating either checkout:
 
 1. `/health` and `/ready` are reachable. The backend version in `/openapi.json`
-   is 0.8.0; Swagger is at `/docs`.
+   is 0.8.1; Swagger is at `/docs`.
 2. The existing account signs in through the development Supabase project.
 3. A project-list request without a Bearer token is rejected with 401; the
    signed-in request returns 200 and owned projects only.
@@ -305,9 +313,11 @@ use this acceptance sequence after updating either checkout:
    Reuse the returned `session.id`; repeated direct session POSTs create separate
    sessions. Tarun reports this step passed on iPhone.
 
-The following is **later integration work**, not already available in the pinned
-mobile UI. Backend endpoints exist, but Tarun still needs to connect recording,
-messages/memory, draft and PDF screens/transports before a full phone demo:
+At the historical `59762f2`/`ed05ebd` mobile checkpoints, the following was later
+integration work. Tarun now reports recording, conversation, memory review,
+generation and draft editing implemented at `eb4eaa8`; those device results were
+not independently rerun here. PDF/share integration and full workflow acceptance
+remain pending, so use these as acceptance steps rather than a current UI gap list:
 
 6. Follow the [Day 9 audio guide](day-9-mobile-audio.md) for explicitly simulated
    native uploads and source-linked messages. Confirm/review sourced facts, then tap

@@ -1,11 +1,12 @@
 # Memy Mobile Backend Handoff
 
-23 October 2026 · backend 0.8.0 · development only.
+23 October 2026 · backend 0.8.1 · development only.
 
 **Tarun can implement Task 3D-8A/B against the existing backend.** PDF export,
 historical downloads and non-generating story continuation already exist. This
-handoff adds documentation, a reproducible OpenAPI snapshot and offline contract
-checks; it does not change the working runtime, database schema or API responses.
+handoff includes the Day 10 stale-confirmation safety patch, a reproducible
+OpenAPI snapshot and regression checks. Paths, payloads and response schemas
+are unchanged; stale implicit review intent is rejected with the existing 409.
 
 ## Start here: the stable pins
 
@@ -13,15 +14,15 @@ checks; it does not change the working runtime, database schema or API responses
 | --- | --- |
 | Backend repository | [cherry1027/elderly-ai-platform](https://github.com/cherry1027/elderly-ai-platform) |
 | Shared backend branch | `codex/day-7-mobile-integration` |
-| Stable runtime commit | `73094c77c9c9d04a9a4c6b213b05112eb675c130` (`73094c7`) |
+| Stable runtime commit | `a00df98eb97a3528cd83dff91c36bbda3a09323a` (`a00df98`) |
 | Latest mobile branch reported by Tarun and confirmed on GitHub | `feat/mobile-draft-editor` |
 | Mobile commit | `eb4eaa8caa38e1cbf1e519831283d269eaeb9252` (`eb4eaa8`) |
 
-The backend remote reference was rechecked for this handoff and still pointed to
-`73094c7` before these documentation/tooling additions. There is no newer runtime
-contract to migrate to. The handoff package's commit is a descendant of that
-baseline; record `git rev-parse HEAD` after obtaining it. Do not equate a changing
-branch name with an immutable version. No merge into `main` is part of this work.
+The earlier integration pin was `73094c7`; `a629760` added the consolidated
+handoff without changing that runtime. Day 10's `a00df98` is the small 0.8.1
+memory-review patch. Later package commits add tests/documentation; record
+`git rev-parse HEAD` after obtaining them. Do not equate a changing branch name
+with an immutable version. No merge into `main` is part of this work.
 
 The mobile package/configuration files were inspected at `eb4eaa8`. Tarun reports
 2,825 tests in 67 suites, TypeScript/lint/Expo checks and major real-iPhone flows.
@@ -33,6 +34,9 @@ their statements about absent audio/editing UI are not current mobile status.
 
 - [Mobile API contract](mobile-api-contract.md): all 25 operations, exact headers,
   bodies, response shapes, binary PDF handling, errors and retry semantics.
+- [Day 10 memory guide](day-10-memory-integration.md) and
+  [current status](day-10-status.md): clarification/review/resumption fixtures,
+  0.8.1 conflict handling and current evidence/pending device checks.
 - [Real voice proposal](mobile-voice-contract.md): current limitations, proposed
   turn lifecycle, providers/cost assumptions and approval gates. Not a live API.
 - [Verification report](mobile-integration-tests.md): fresh local and hosted
@@ -151,11 +155,10 @@ wording; provide a comparison/reconciliation UI. Exact requests are in the
 
 ## Verified now versus still awaiting acceptance
 
-Fresh complete regression: 752 runtime-baseline backend checks and 56 isolated
-database checks passed; four separately gated live pytest cases were skipped.
-The handoff additionally adds three offline snapshot/exporter checks. The final combined
-result and fresh hosted rollback-only results are recorded in the
-[verification report](mobile-integration-tests.md).
+Latest Day 10 regression: 767 backend checks and 60 isolated database checks
+passed; four separately gated live pytest cases were skipped. See the
+[Day 10 report](day-10-status.md). The [original handoff verification report](mobile-integration-tests.md)
+preserves the earlier 755/56 baseline and its hosted checks as historical evidence.
 
 The hosted draft and export/continuation scripts passed using two synthetic
 database subjects with transaction-local authenticated-role claims. They do not

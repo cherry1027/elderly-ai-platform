@@ -1,10 +1,21 @@
 # Frontend integration handoff for Tarun
 
-Updated for backend 0.8.0 on 21 October 2026. This is the shared contract for
+Updated for backend 0.8.1 on 23 October 2026. This is the shared contract for
 Tarun's Expo mobile app and the development web preview. The backend supports
 the fictional autobiography workflow through private PDF export and continuation.
 Real Expo/device acceptance still needs Tarun's confirmation; backend harness
 checks are not evidence of a successful iPhone integration.
+
+Day 10 adds one narrow intent-safety fix without new fields/routes: stale memory
+confirmation omitting correction text returns `409 CONVERSATION_CHANGED` when a
+newer corrected value exists. Read the [memory-review handoff](day-10-memory-integration.md)
+and [current verification status](day-10-status.md) before handling that retry.
+
+Latest mobile status is Tarun's reported `feat/mobile-draft-editor` / `eb4eaa8`,
+including recording, simulated conversation, memory review, draft generation and
+editing. Older pinned-branch descriptions below are historical, not a claim that
+those features are still missing. This backend audit did not rerun his iPhone;
+native PDF/share and current end-to-end acceptance remain separate.
 
 Day 9 adds an explicit development-only `--simulate-transcription` launcher
 flag, permanent simulation notices and native-format/source-linkage checks.

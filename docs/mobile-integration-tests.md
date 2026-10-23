@@ -1,5 +1,10 @@
 # Mobile backend verification and acceptance
 
+This is the original consolidated handoff snapshot at `a629760`. For current
+backend 0.8.1 behavior and Day 10 results, use [Day 10 status](day-10-status.md)
+and [memory integration](day-10-memory-integration.md); the counts below remain
+the dated evidence for the earlier runtime baseline.
+
 This report is for backend **0.8.0**, runtime baseline
 `73094c77c9c9d04a9a4c6b213b05112eb675c130` on
 `codex/day-7-mobile-integration`. It supports Tarun's reported mobile

@@ -1,5 +1,14 @@
 # Isolated PostgreSQL schema tests
 
+Day 10 adds `day10-memory.test.mjs` and the reusable
+`cloud-day10-memory.sql` fixture: EN/SV uncertain 1974→reviewed 1975, rejected and
+pending exclusion, old/new session continuity, stale version vectors, duplicate
+audit prevention, source immutability and two-way ownership. The exact SQL file
+is exercised locally, its rollback leaves 14 isolated relations empty, and its
+collision guard preserves a pre-existing fixture identity. Opposing same-version
+reviews are sequential optimistic tests, not a multi-connection race benchmark.
+See [current Day 10 evidence](../../docs/day-10-status.md). No migration is added.
+
 From the repository root (Node.js 24 verified):
 
 ```sh

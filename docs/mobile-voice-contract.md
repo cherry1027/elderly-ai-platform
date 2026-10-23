@@ -2,7 +2,8 @@
 
 23 October 2026 · **proposal only, not implemented or enabled**.
 
-Keep Task 3D-8 on stable backend `73094c7`. No paid account, key, deployment,
+The compatible Day 10 runtime patch is 0.8.1 at `a00df98`; it changes only stale
+implicit memory confirmation, not the proposed voice functionality. No paid account, key, deployment,
 model call or new voice endpoint is created by this document. The current
 [OpenAPI snapshot](openapi.json) contains only existing v1 routes. Model access,
 price, region and processing terms must be rechecked at approval time.

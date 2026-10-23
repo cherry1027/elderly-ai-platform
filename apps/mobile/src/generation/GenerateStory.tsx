@@ -8,6 +8,7 @@ import { readStoryPreviewEnabled } from '../development/story-preview-config';
 import type { Language } from '../i18n';
 import { createGenerationActionId, useGenerationActions, type GenerationAction } from './GenerationActions';
 import { StoryDraftScreen, type DraftScreenState } from './StoryDraftScreen';
+import { DraftEditing } from './DraftEditing';
 
 interface Props {
   language: Language;
@@ -32,6 +33,7 @@ function ScopedGeneration({ language, user, project, baseUrl, getAccessToken,
   const actions = useGenerationActions(user.id);
   const scope = [baseUrl, project.id, project.language, 'warm'].join(':');
   const [state, setState] = useState<DraftScreenState>(() => empty('loading'));
+  const [subview, setSubview] = useState<{ mode: 'edit' | 'history'; draftId: string } | null>(null);
   const alive = useRef(false), active = useRef(true), busy = useRef(false), blocked = useRef(false);
   const epoch = useRef(0);
   const request = useRef<AbortController | null>(null);
@@ -109,7 +111,7 @@ function ScopedGeneration({ language, user, project, baseUrl, getAccessToken,
     void Promise.resolve().then(() => { if (alive.current && epoch.current === initialEpoch) refresh(); });
     const changes = AppState.addEventListener('change', next => {
       if (next !== 'active') {
-        active.current = false; cancel(); publish(empty('loading'));
+        active.current = false; cancel(); publish(empty('loading')); setSubview(null);
       } else if (!active.current) { active.current = true; refresh(); }
     });
     return () => { alive.current = false; cancel(); changes.remove(); };
@@ -172,11 +174,24 @@ function ScopedGeneration({ language, user, project, baseUrl, getAccessToken,
     destination();
   }, [cancel, publish, actions]);
   useEffect(() => {
-    const listener = BackHandler.addEventListener('hardwareBackPress', () => { leave(onBack); return true; });
+    const listener = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (subview) return false; // The editor owns its unsaved-wording warning.
+      leave(onBack); return true;
+    });
     return () => listener.remove();
-  }, [leave, onBack]);
+  }, [leave, onBack, subview]);
+  const open = (mode: 'edit' | 'history') => {
+    const value = currentState.current;
+    if (value.phase !== 'ready' || !value.draft || value.error || value.canRetry || actions.get(user.id, scope)) return;
+    cancel(); selectedDraftId.current = value.draft.draft_id;
+    setSubview({ mode, draftId: value.draft.draft_id });
+  };
+  if (subview) return <DraftEditing mode={subview.mode} language={language} storyLanguage={project.language}
+    title={project.title} ownerId={user.id} projectId={project.id} draftId={subview.draftId} baseUrl={baseUrl}
+    getAccessToken={getAccessToken} onBack={() => { setSubview(null); refresh(); }}
+    onSignOut={() => leave(onSignOut, true)} />;
   return <StoryDraftScreen language={language} storyLanguage={project.language} title={project.title} state={state}
-    onGenerate={generate} onRetry={retry} onRefresh={refresh}
+    onGenerate={generate} onRetry={retry} onRefresh={refresh} onEdit={() => open('edit')} onHistory={() => open('history')}
     onReviewMemories={() => leave(onReviewMemories)} onBack={() => leave(onBack)}
     onSignOut={() => leave(onSignOut, true)} />;
 }

@@ -26,6 +26,13 @@ export interface StoryDraftOptions extends ListStoryProjectsOptions { projectId:
 export interface GetStoryDraftOptions extends StoryDraftOptions { draftId: string }
 export interface StoryGenerationInput { language: 'en' | 'sv'; style: 'warm'; confirm_generation: true }
 export interface GenerateStoryDraftOptions extends StoryDraftOptions { idempotencyKey: string; input: StoryGenerationInput }
+export interface DraftEditInput { content: string; expected_revision: number }
+export interface EditStoryDraftOptions extends StoryDraftOptions { baseline: StoryDraft; input: DraftEditInput }
+export interface StoryEdit {
+  id: string; draft_id: string; revision: number; previous_content: string; content: string; created_at: string;
+}
+export interface DraftHistoryOptions extends GetStoryDraftOptions { limit?: number; offset?: number }
+export interface DraftHistoryPage { items: StoryEdit[]; hasMore: boolean }
 
 const errorStatuses = {
   AUTHORIZATION_REQUIRED: 401, INVALID_ACCESS_TOKEN: 401, ACCESS_DENIED: 403,
@@ -191,5 +198,78 @@ export function generateStoryDraft(options: GenerateStoryDraftOptions): Promise<
       input: { language: selected.language, style: 'warm', confirm_generation: true },
       onHttpError: (status, code) => httpError(status, code, true),
     }, value => draft(value, selected));
+  });
+}
+
+/** Normalize outer Python whitespace once; preserve all meaningful internal prose. */
+export function validateDraftEditInput(value: unknown): DraftEditInput {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value) ||
+      Object.keys(value).sort().join(',') !== 'content,expected_revision') throw new Error();
+    const row = value as Record<string, unknown>;
+    if (typeof row.content !== 'string' || !positive(row.expected_revision)) throw new Error();
+    const content = row.content.replace(/^[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/gu, '');
+    if (!text(content, 20_000) ||
+      !/[^\p{White_Space}\p{Default_Ignorable_Code_Point}\p{Cc}\p{Cf}\p{M}\u2800]/u.test(content)) throw new Error();
+    return { content, expected_revision: row.expected_revision };
+  } catch { throw new StoryDraftsError('validation'); }
+}
+
+/** Original generation identity and evidence never change when wording is edited. */
+export function sameDraftOriginal(a: StoryDraft, b: StoryDraft): boolean {
+  try {
+    if (a.language !== 'en' && a.language !== 'sv') return false;
+    const selected = { projectId: validateStoryProjectId(a.project_id), language: a.language };
+    const first = draft(a, selected), second = draft(b, selected, first.draft_id);
+    return first.version === second.version && first.language === second.language && first.style === second.style &&
+      first.mode === second.mode && first.original_content === second.original_content &&
+      first.created_at === second.created_at && JSON.stringify(first.source_memories) === JSON.stringify(second.source_memories);
+  } catch { return false; }
+}
+
+/** Optimistic revision only: never generate a UUID or automatically retry a PATCH. */
+export function editStoryDraft(options: EditStoryDraftOptions): Promise<StoryDraft> {
+  return safe(async () => {
+    const selected = selection(options), input = validateDraftEditInput(options.input);
+    let before: StoryDraft;
+    try { before = draft(options.baseline, selected); }
+    catch { throw new StoryDraftsError('validation'); }
+    if (input.expected_revision !== before.revision) throw new StoryDraftsError('validation');
+    const unchanged = input.content === before.content;
+    return executeStoryDraftRequest(options, { action: 'edit', projectId: selected.projectId,
+      draftId: before.draft_id, input, onHttpError: (status, code) => httpError(status, code, true) }, value => {
+      const after = draft(value, selected, before.draft_id);
+      if (!sameDraftOriginal(before, after) || after.content !== input.content ||
+        (unchanged ? after.revision !== before.revision : after.revision !== before.revision + 1) ||
+        (!unchanged && (after.status !== 'edited' || after.verification.status !== 'needs_review' ||
+          after.verification.method !== 'manual_unverified'))) invalid();
+      return after;
+    });
+  });
+}
+
+/** Read one bounded actual-history page; a full page does not prove completion. */
+export function listDraftHistory(options: DraftHistoryOptions): Promise<DraftHistoryPage> {
+  return safe(async () => {
+    const selected = selection(options), draftId = validateStoryProjectId(options.draftId);
+    const limit = options.limit === undefined ? 50 : options.limit, offset = options.offset === undefined ? 0 : options.offset;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 ||
+      !Number.isSafeInteger(offset) || offset < 0 || offset > 100_000) throw new StoryDraftsError('validation');
+    return executeStoryDraftRequest(options, { action: 'history', projectId: selected.projectId,
+      draftId, limit, offset, onHttpError: (status, code) => httpError(status, code, false) }, value => {
+      if (!Array.isArray(value) || value.length > limit) invalid();
+      const ids = new Set<string>(); let previousRevision = Number.POSITIVE_INFINITY;
+      const items = value.map(item => {
+        const row = object(item, ['id', 'draft_id', 'revision', 'previous_content', 'content', 'created_at']);
+        if (!uuid(row.id) || !uuid(row.draft_id) || row.draft_id.toLowerCase() !== draftId ||
+          !positive(row.revision) || row.revision < 2 || row.revision >= previousRevision ||
+          ids.has(row.id.toLowerCase()) || !text(row.previous_content, 20_000) || !text(row.content, 20_000) ||
+          row.previous_content === row.content || !validDate(row.created_at)) invalid();
+        ids.add(row.id.toLowerCase()); previousRevision = row.revision;
+        return { id: row.id.toLowerCase(), draft_id: draftId, revision: row.revision,
+          previous_content: row.previous_content, content: row.content, created_at: row.created_at };
+      });
+      return { items, hasMore: items.length === limit };
+    });
   });
 }

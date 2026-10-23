@@ -169,9 +169,11 @@ type MemoryReviewRequest = {
 };
 
 export type StoryDraftRequest = {
-  action: 'list' | 'read' | 'verification' | 'generate';
+  action: 'list' | 'read' | 'verification' | 'generate' | 'edit' | 'history';
   projectId: string; draftId?: string; idempotencyKey?: string;
-  input?: { language: 'en' | 'sv'; style: 'warm'; confirm_generation: true };
+  input?: { language: 'en' | 'sv'; style: 'warm'; confirm_generation: true } |
+    { content: string; expected_revision: number };
+  limit?: number; offset?: number;
   onHttpError: (status: number, code?: string) => StoryProjectsError;
 };
 
@@ -181,7 +183,8 @@ interface StoryRequest {
   input?: CreateStoryProjectInput | UpdateStoryProjectInput | Record<string, never> |
     { source_message_id: string; language: 'en' | 'sv' } |
     { status: 'confirmed' | 'rejected'; expected_version: number; corrected_value?: string } |
-    { language: 'en' | 'sv'; style: 'warm'; confirm_generation: true };
+    { language: 'en' | 'sv'; style: 'warm'; confirm_generation: true } |
+    { content: string; expected_revision: number };
   child?: 'continue' | 'sessions';
   memoryReview?: MemoryReviewRequest;
   draft?: StoryDraftRequest;
@@ -200,8 +203,9 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
   endpoint: StoryRequest, decode: (value: unknown) => T): Promise<T> {
   const writing = endpoint.method !== 'GET';
   const resource = `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-projects`;
-  const url = endpoint.draft ? (endpoint.draft.action === 'read'
-    ? `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-drafts/${endpoint.draft.draftId}`
+  const url = endpoint.draft ? (['read', 'edit', 'history'].includes(endpoint.draft.action)
+    ? `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-drafts/${endpoint.draft.draftId}${endpoint.draft.action === 'history'
+      ? `/history?limit=${endpoint.draft.limit}&offset=${endpoint.draft.offset}` : ''}`
     : `${resource}/${endpoint.draft.projectId}/${endpoint.draft.action === 'list'
       ? 'drafts?limit=1&offset=0' : endpoint.draft.action}`)
     : endpoint.memoryReview ? (endpoint.memoryReview.method === 'PATCH'
@@ -386,19 +390,32 @@ export function executeMemoryReviewRequest<T>(options: ListStoryProjectsOptions,
 export function executeStoryDraftRequest<T>(options: ListStoryProjectsOptions,
   endpoint: StoryDraftRequest, decode: (value: unknown) => T): Promise<T> {
   const projectId = validateStoryProjectId(endpoint.projectId);
-  if (!['list', 'read', 'verification', 'generate'].includes(endpoint.action) ||
+  if (!['list', 'read', 'verification', 'generate', 'edit', 'history'].includes(endpoint.action) ||
     typeof endpoint.onHttpError !== 'function') throw new StoryProjectsError('validation');
-  const writing = endpoint.action === 'generate';
+  const writing = endpoint.action === 'generate' || endpoint.action === 'edit';
   let draftId: string | undefined;
-  if (endpoint.action === 'read') draftId = validateStoryProjectId(endpoint.draftId);
+  if (['read', 'edit', 'history'].includes(endpoint.action)) draftId = validateStoryProjectId(endpoint.draftId);
   else if (endpoint.draftId !== undefined) throw new StoryProjectsError('validation');
-  if (writing) {
+  if (endpoint.action === 'generate') {
     validateStoryProjectId(endpoint.idempotencyKey);
     if (!endpoint.input || Object.keys(endpoint.input).sort().join(',') !== 'confirm_generation,language,style' ||
+      !('language' in endpoint.input) ||
       (endpoint.input.language !== 'en' && endpoint.input.language !== 'sv') ||
       endpoint.input.style !== 'warm' || endpoint.input.confirm_generation !== true) throw new StoryProjectsError('validation');
+  } else if (endpoint.action === 'edit') {
+    if (endpoint.idempotencyKey !== undefined || !endpoint.input ||
+      Object.keys(endpoint.input).sort().join(',') !== 'content,expected_revision' || !('content' in endpoint.input) ||
+      typeof endpoint.input.content !== 'string' || !Number.isSafeInteger(endpoint.input.expected_revision) ||
+      endpoint.input.expected_revision < 1) throw new StoryProjectsError('validation');
   } else if (endpoint.input !== undefined || endpoint.idempotencyKey !== undefined) throw new StoryProjectsError('validation');
-  return executeStoryRequest(options, { method: writing ? 'POST' : 'GET', expectedStatus: writing ? 201 : 200,
+  if (endpoint.action === 'history') {
+    if (!Number.isSafeInteger(endpoint.limit) || endpoint.limit! < 1 || endpoint.limit! > 100 ||
+      !Number.isSafeInteger(endpoint.offset) || endpoint.offset! < 0 || endpoint.offset! > 100_000) {
+      throw new StoryProjectsError('validation');
+    }
+  } else if (endpoint.limit !== undefined || endpoint.offset !== undefined) throw new StoryProjectsError('validation');
+  return executeStoryRequest(options, { method: endpoint.action === 'edit' ? 'PATCH' : writing ? 'POST' : 'GET',
+    expectedStatus: endpoint.action === 'generate' ? 201 : 200,
     ...(writing ? { input: endpoint.input } : {}), draft: { ...endpoint, projectId, draftId } }, decode);
 }
 

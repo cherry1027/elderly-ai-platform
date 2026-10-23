@@ -28,6 +28,8 @@ export interface StoryDraftScreenProps {
   onReviewMemories: () => void;
   onBack: () => void;
   onSignOut: () => void;
+  onEdit?: () => void;
+  onHistory?: () => void;
 }
 
 function DraftButton({ language, label, onPress, disabled = false, primary = false, expanded }: {
@@ -51,7 +53,7 @@ export function StoryDraftScreen(props: StoryDraftScreenProps) {
   return <StoryDraftView key={key} {...props} />;
 }
 function StoryDraftView({ language, storyLanguage, title, state, onGenerate, onRetry, onRefresh,
-  onReviewMemories, onBack, onSignOut }: StoryDraftScreenProps) {
+  onReviewMemories, onBack, onSignOut, onEdit, onHistory }: StoryDraftScreenProps) {
   const text = storyGenerationCopy[language];
   const locale = accessibilityLanguages[language];
   const [confirming, setConfirming] = useState(false);
@@ -114,6 +116,10 @@ function StoryDraftView({ language, storyLanguage, title, state, onGenerate, onR
       {state.error && state.phase === 'uncertain' && <Text accessibilityLanguage={locale} allowFontScaling style={styles.notice}>{text.uncertain}</Text>}
       {state.phase === 'ready' && !draft && <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.noDraft}</Text>}
       {draft && <SavedDraft key={draft.draft_id + ':' + draft.revision} language={language} draft={draft} report={state.verification} />}
+      {draft && canGenerate && !confirming && <>
+        {onEdit && <DraftButton language={language} label={text.edit} onPress={onEdit} />}
+        {onHistory && <DraftButton language={language} label={text.history} onPress={onHistory} />}
+      </>}
       {confirming && canGenerate ? <View style={styles.confirmation}>
         <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.subheading}>{text.confirmTitle}</Text>
         <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.confirmation}</Text>

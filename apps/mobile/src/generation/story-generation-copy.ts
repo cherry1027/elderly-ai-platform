@@ -1,5 +1,6 @@
 export const storyGenerationCopy = {
   en: {
+    edit: 'Edit My Story', history: 'Earlier Versions',
     title: 'My Story Draft', introduction: 'Read your saved draft, or choose to generate one from memories you have reviewed.',
     simulation: 'AI simulation: this development writer uses supported, confirmed memories. This is a draft for your review, not a finished autobiography.',
     language: 'Story language', english: 'English', swedish: 'Swedish',
@@ -54,6 +55,7 @@ export const storyGenerationCopy = {
     },
   },
   sv: {
+    edit: 'Redigera min berättelse', history: 'Tidigare versioner',
     title: 'Mitt berättelseutkast', introduction: 'Läs ditt sparade utkast, eller välj att skapa ett från minnen som du har granskat.',
     simulation: 'AI-simulering: den här utvecklingsversionen använder bekräftade minnen med källstöd. Det här är ett utkast att granska, inte en färdig självbiografi.',
     language: 'Berättelsens språk', english: 'Engelska', swedish: 'Svenska',

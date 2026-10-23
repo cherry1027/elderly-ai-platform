@@ -860,6 +860,59 @@ def test_confirm_without_correction_preserves_existing_corrected_value():
     }]
 
 
+@pytest.mark.parametrize("correction", ["Malmo stad", "1975"])
+def test_implicit_confirmation_cannot_adopt_an_unseen_corrected_version(correction):
+    scenario = Scenario()
+    current = memory_row(status="confirmed", corrected_value=correction, version=2)
+    scenario.memory_rows = [current]
+    scenario.resolve_turn = current
+    with TestClient(make_app(scenario)) as client:
+        response = client.patch(
+            f"/api/v1/memories/{FACT_ID}", headers=auth_headers(),
+            json={"status": "confirmed", "expected_version": 1},
+        )
+
+    assert_error(response, 409, "CONVERSATION_CHANGED")
+    assert scenario.rpc_payloads["resolve_memory_fact"] == []
+    assert scenario.memory_rows == [current]
+    assert correction not in response.text
+
+
+def test_explicit_identical_correction_retry_is_still_delegated_to_atomic_rpc():
+    scenario = Scenario()
+    current = memory_row(status="confirmed", corrected_value="Malmo stad", version=2)
+    scenario.memory_rows = [current]
+    scenario.resolve_turn = current
+    with TestClient(make_app(scenario)) as client:
+        response = client.patch(
+            f"/api/v1/memories/{FACT_ID}", headers=auth_headers(),
+            json={"status": "confirmed", "corrected_value": "Malmo stad", "expected_version": 1},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == current
+    assert scenario.rpc_payloads["resolve_memory_fact"] == [{
+        "p_fact_id": FACT_ID, "p_status": "confirmed",
+        "p_corrected_value": "Malmo stad", "p_expected_version": 1,
+    }]
+
+
+def test_identical_uncorrected_confirmation_retry_keeps_its_original_semantics():
+    scenario = Scenario()
+    current = memory_row(status="confirmed", corrected_value=None, version=2)
+    scenario.memory_rows = [current]
+    scenario.resolve_turn = current
+    with TestClient(make_app(scenario)) as client:
+        response = client.patch(
+            f"/api/v1/memories/{FACT_ID}", headers=auth_headers(),
+            json={"status": "confirmed", "expected_version": 1},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == current
+    assert scenario.rpc_payloads["resolve_memory_fact"][0]["p_corrected_value"] is None
+
+
 @pytest.mark.parametrize(
     "payload",
     [

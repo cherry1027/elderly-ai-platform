@@ -207,6 +207,12 @@ class ConversationGateway(AudioGateway):
         self.memory(rows[0], session)
         correction = payload.get("corrected_value")
         if payload["status"] == "confirmed" and "corrected_value" not in payload:
+            # Omission preserves a correction the caller has actually read.
+            # Do not derive a stale request's intent from a newer GET result:
+            # the SQL replay rule could otherwise mistake that inherited value
+            # for an explicitly repeated correction and report success.
+            if before.corrected_value is not None and payload["expected_version"] != before.version:
+                raise APIError(409, "CONVERSATION_CHANGED", "The conversation changed; reload and retry.")
             correction = before.corrected_value
         row = await self.conversation_rpc("resolve_memory_fact", {
             "p_fact_id": str(fact_id), "p_status": payload["status"],

@@ -30,6 +30,7 @@ export interface StoryDraftScreenProps {
   onSignOut: () => void;
   onEdit?: () => void;
   onHistory?: () => void;
+  onExport?: () => void;
 }
 
 function DraftButton({ language, label, onPress, disabled = false, primary = false, expanded }: {
@@ -53,7 +54,7 @@ export function StoryDraftScreen(props: StoryDraftScreenProps) {
   return <StoryDraftView key={key} {...props} />;
 }
 function StoryDraftView({ language, storyLanguage, title, state, onGenerate, onRetry, onRefresh,
-  onReviewMemories, onBack, onSignOut, onEdit, onHistory }: StoryDraftScreenProps) {
+  onReviewMemories, onBack, onSignOut, onEdit, onHistory, onExport }: StoryDraftScreenProps) {
   const text = storyGenerationCopy[language];
   const locale = accessibilityLanguages[language];
   const [confirming, setConfirming] = useState(false);
@@ -119,6 +120,7 @@ function StoryDraftView({ language, storyLanguage, title, state, onGenerate, onR
       {draft && canGenerate && !confirming && <>
         {onEdit && <DraftButton language={language} label={text.edit} onPress={onEdit} />}
         {onHistory && <DraftButton language={language} label={text.history} onPress={onHistory} />}
+        {onExport && <DraftButton language={language} label={text.export} onPress={onExport} />}
       </>}
       {confirming && canGenerate ? <View style={styles.confirmation}>
         <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.subheading}>{text.confirmTitle}</Text>

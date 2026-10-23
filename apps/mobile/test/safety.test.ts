@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import ts from 'typescript';
 
 const appRoot = path.resolve(__dirname, '..');
 function sourceFiles(directory: string): string[] {
@@ -18,6 +19,21 @@ const presentationSource = sources.filter((file) => !authSources.includes(file) 
 const manifest = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
 const config = JSON.parse(fs.readFileSync(path.join(appRoot, 'app.json'), 'utf8')).expo;
 
+// Inspect executable identifiers, so friendly "sharing window" wording and
+// comments about PDF documents cannot be confused with browser globals.
+function browserStateReferences(text: string): string[] {
+  const references: string[] = [];
+  const parsed = ts.createSourceFile('mobile.tsx', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const visit = (node: ts.Node) => {
+    if (ts.isIdentifier(node) && ['window', 'document', 'localStorage', 'sessionStorage'].includes(node.text)) references.push(node.text);
+    if (ts.isElementAccessExpression(node) && ts.isStringLiteral(node.argumentExpression) &&
+      ['window', 'document', 'localStorage', 'sessionStorage'].includes(node.argumentExpression.text)) references.push(node.argumentExpression.text);
+    ts.forEachChild(node, visit);
+  };
+  visit(parsed);
+  return references;
+}
+
 describe('development-only mobile application boundaries', () => {
   it('imports only local native UI, Router and platform modules', () => {
     // Expo Router's published navigation types describe the existing native stack;
@@ -32,7 +48,18 @@ describe('development-only mobile application boundaries', () => {
     // The only runtime environment lookup is the test-only registration seam.
     // It cannot enable native registration or read any credential setting.
     expect(source.replaceAll('process.env.NODE_ENV', "'runtime-mode'"))
-      .not.toMatch(/process\.env|import\.meta|localStorage|sessionStorage|\bwindow\b|\bdocument\b/);
+      .not.toMatch(/process\.env|import\.meta/);
+    expect(browserStateReferences(source)).toEqual([]);
+  });
+
+  it.each(['window.location', 'document.cookie', 'localStorage.getItem("key")', 'sessionStorage.clear()',
+    'globalThis["window"].location', 'globalThis["document"].cookie'])
+    ('detects actual browser state access: %s', code => {
+      expect(browserStateReferences(code)).not.toEqual([]);
+    });
+
+  it('permits ordinary interface wording without allowing browser globals', () => {
+    expect(browserStateReferences('const label = "The sharing window has closed"; // private document\n')).toEqual([]);
   });
 
   it('keeps transports outside presentation and confines microphone operations to the approved adapter', () => {

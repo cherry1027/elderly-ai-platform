@@ -26,9 +26,15 @@ jest.mock('expo-secure-store', () => ({
 jest.mock('expo-router', () => ({ Stack: Object.assign(jest.fn(() => {
   throw new Error('Account routing must not mount in sample preview.');
 }), { Screen: () => null }) }));
-jest.mock('../src/language', () => ({ LanguageProvider: jest.fn(() => { throw new Error('Preference provider must not mount in sample preview.'); }) }));
+jest.mock('../src/language', () => ({
+  LanguageProvider: jest.fn(() => { throw new Error('Preference provider must not mount in sample preview.'); }),
+  useLanguage: jest.fn(() => ({ language: 'en' })),
+}));
 jest.mock('../src/generation/GenerationActions', () => ({ GenerationActionsProvider: jest.fn(() => { throw new Error('Generation retry provider must not mount in sample preview.'); }) }));
-jest.mock('../src/auth/AuthProvider', () => ({ AuthProvider: jest.fn(() => { throw new Error('Auth provider must not mount in sample preview.'); }) }));
+jest.mock('../src/auth/AuthProvider', () => ({
+  AuthProvider: jest.fn(() => { throw new Error('Auth provider must not mount in sample preview.'); }),
+  useAuth: jest.fn(() => ({ status: 'signed-out', user: null, appActive: true })),
+}));
 jest.mock('../src/auth/RegistrationProvider', () => ({ RegistrationProvider: jest.fn(() => { throw new Error('Registration provider must not mount in sample preview.'); }) }));
 jest.mock('../src/navigation/LoginNavigation', () => ({ LoginNavigationProvider: jest.fn(() => { throw new Error('Login provider must not mount in sample preview.'); }) }));
 

@@ -28,5 +28,19 @@ jest.mock('expo-file-system', () => ({
   File: jest.fn(() => { throw new Error('Native recording files are blocked in tests.'); }),
 }));
 jest.mock('expo-crypto', () => ({
+  CryptoDigestAlgorithm: { SHA256: 'SHA-256' },
+  digestStringAsync: jest.fn(() => { throw new Error('Native digest must be explicitly mocked in tests.'); }),
   randomUUID: jest.fn(() => { throw new Error('Native randomness must be mocked in tests.'); }),
+}));
+
+// Default foundation tests have an empty synthetic PDF cache. Real native
+// storage/sharing stays blocked; dedicated adapter tests unmock and inject it.
+jest.mock('expo-sharing', () => ({
+  isAvailableAsync: jest.fn(async () => false),
+  shareAsync: jest.fn(async () => { throw new Error('Native sharing is blocked in tests.'); }),
+}));
+jest.mock('../src/exports/native-pdf', () => ({
+  ...jest.requireActual('../src/exports/native-pdf'),
+  purgeOwnedPdfCache: jest.fn(async () => {}),
+  createPrivatePdfStore: jest.fn(() => { throw new Error('Native PDF storage must be explicitly mocked.'); }),
 }));

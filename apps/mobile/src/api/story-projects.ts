@@ -177,6 +177,16 @@ export type StoryDraftRequest = {
   onHttpError: (status: number, code?: string) => StoryProjectsError;
 };
 
+export interface StoryPdfResponse {
+  bytes: Uint8Array;
+  headers: Record<string, string | null>;
+}
+export type StoryExportRequest = {
+  action: 'create' | 'list' | 'download'; projectId: string;
+  draftId?: string; exportId?: string; limit?: number; offset?: number;
+  onHttpError: (status: number, code?: string) => StoryProjectsError;
+};
+
 interface StoryRequest {
   method: 'GET' | 'POST' | 'PATCH';
   projectId?: string;
@@ -184,10 +194,12 @@ interface StoryRequest {
     { source_message_id: string; language: 'en' | 'sv' } |
     { status: 'confirmed' | 'rejected'; expected_version: number; corrected_value?: string } |
     { language: 'en' | 'sv'; style: 'warm'; confirm_generation: true } |
-    { content: string; expected_revision: number };
+    { content: string; expected_revision: number } |
+    { format: 'pdf'; include_title_page: true; include_page_numbers: true };
   child?: 'continue' | 'sessions';
   memoryReview?: MemoryReviewRequest;
   draft?: StoryDraftRequest;
+  pdf?: StoryExportRequest;
   conversation?: { sessionId: string; method: 'GET' | 'POST'; idempotencyKey?: string;
     limit?: number; offset?: number; input?: { source_message_id: string; language: 'en' | 'sv' };
     onHttpError: (status: number, code?: string) => StoryProjectsError };
@@ -203,7 +215,12 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
   endpoint: StoryRequest, decode: (value: unknown) => T): Promise<T> {
   const writing = endpoint.method !== 'GET';
   const resource = `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-projects`;
-  const url = endpoint.draft ? (['read', 'edit', 'history'].includes(endpoint.draft.action)
+  const url = endpoint.pdf ? (endpoint.pdf.action === 'create'
+    ? normalizeMobileApiBaseUrl(baseUrl) + '/api/v1/story-drafts/' + endpoint.pdf.draftId + '/export'
+    : endpoint.pdf.action === 'download'
+      ? normalizeMobileApiBaseUrl(baseUrl) + '/api/v1/story-exports/' + endpoint.pdf.exportId + '/download'
+      : resource + '/' + endpoint.pdf.projectId + '/exports?limit=' + endpoint.pdf.limit + '&offset=' + endpoint.pdf.offset)
+    : endpoint.draft ? (['read', 'edit', 'history'].includes(endpoint.draft.action)
     ? `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-drafts/${endpoint.draft.draftId}${endpoint.draft.action === 'history'
       ? `/history?limit=${endpoint.draft.limit}&offset=${endpoint.draft.offset}` : ''}`
     : `${resource}/${endpoint.draft.projectId}/${endpoint.draft.action === 'list'
@@ -254,7 +271,7 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
       progress('fetch-invoked');
       response = await request(url, {
         method: endpoint.method,
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json',
+        headers: { Authorization: `Bearer ${token}`, Accept: endpoint.pdf && endpoint.pdf.action !== 'list' ? 'application/pdf' : 'application/json',
           ...(writing && !endpoint.audio ? { 'Content-Type': 'application/json' } : {}),
           ...(endpoint.audio?.idempotencyKey || endpoint.conversation?.idempotencyKey || endpoint.draft?.idempotencyKey
             ? { 'Idempotency-Key': endpoint.audio?.idempotencyKey ?? endpoint.conversation?.idempotencyKey ?? endpoint.draft!.idempotencyKey! } : {}) },
@@ -270,7 +287,7 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
     }
     check();
     progress('http-response', response.status);
-    const onHttpError = endpoint.audio?.onHttpError ?? endpoint.conversation?.onHttpError ?? endpoint.memoryReview?.onHttpError ?? endpoint.draft?.onHttpError;
+    const onHttpError = endpoint.pdf?.onHttpError ?? endpoint.audio?.onHttpError ?? endpoint.conversation?.onHttpError ?? endpoint.memoryReview?.onHttpError ?? endpoint.draft?.onHttpError;
     if (!response.ok && onHttpError) {
       // Session actions interpret only allowlisted codes. Metadata errors continue
       // to ignore upstream bodies, including human-readable private messages.
@@ -298,8 +315,32 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
       if (response.status >= 400) throw failure('unavailable', response.status, response.status >= 500);
       throw failure('invalid-response', undefined, true);
     }
-    if (response.status !== (endpoint.expectedStatus ?? (endpoint.method === 'POST' ? 201 : 200)) || response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json') {
+    const binary = !!endpoint.pdf && endpoint.pdf.action !== 'list';
+    if (response.status !== (endpoint.expectedStatus ?? (endpoint.method === 'POST' ? 201 : 200)) ||
+      response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== (binary ? 'application/pdf' : 'application/json')) {
       throw failure('invalid-response', undefined, true);
+    }
+    if (binary) {
+      // Native fetch buffers response bodies. Bound declared length before reading,
+      // then check actual bytes; no document is passed to storage before decoding.
+      const length = response.headers.get('content-length');
+      if (!length || !/^[1-9][0-9]{0,6}$/.test(length) || Number(length) < 20 || Number(length) > 2_000_000) {
+        throw failure('invalid-response', undefined, true);
+      }
+      const headers: Record<string, string | null> = {};
+      for (const name of ['content-disposition', 'cache-control', 'pragma', 'expires', 'x-content-type-options',
+        'x-memy-export-id', 'x-memy-draft-version', 'x-memy-draft-revision', 'x-memy-page-count']) {
+        headers[name] = response.headers.get(name);
+      }
+      let buffer: ArrayBuffer;
+      try { buffer = await response.arrayBuffer(); } catch { check(); throw failure('network', undefined, true); }
+      check();
+      const bytes = new Uint8Array(buffer);
+      if (bytes.byteLength !== Number(length) || bytes.byteLength > 2_000_000) {
+        throw failure('invalid-response', undefined, true);
+      }
+      const result = decode({ bytes, headers } satisfies StoryPdfResponse);
+      check(); return result;
     }
     let text: string;
     progress('response-body', response.status);
@@ -417,6 +458,37 @@ export function executeStoryDraftRequest<T>(options: ListStoryProjectsOptions,
   return executeStoryRequest(options, { method: endpoint.action === 'edit' ? 'PATCH' : writing ? 'POST' : 'GET',
     expectedStatus: endpoint.action === 'generate' ? 201 : 200,
     ...(writing ? { input: endpoint.input } : {}), draft: { ...endpoint, projectId, draftId } }, decode);
+}
+
+/** PDF endpoints share auth, bounded cancellation and safe error decoding. */
+export function executeStoryExportRequest<T>(options: ListStoryProjectsOptions,
+  endpoint: StoryExportRequest, decode: (value: unknown) => T): Promise<T> {
+  const projectId = validateStoryProjectId(endpoint.projectId);
+  if (!['create', 'list', 'download'].includes(endpoint.action) || typeof endpoint.onHttpError !== 'function') {
+    throw new StoryProjectsError('validation');
+  }
+  if (endpoint.action === 'create') {
+    const draftId = validateStoryProjectId(endpoint.draftId);
+    if (endpoint.exportId !== undefined || endpoint.limit !== undefined || endpoint.offset !== undefined) {
+      throw new StoryProjectsError('validation');
+    }
+    return executeStoryRequest(options, { method: 'POST', expectedStatus: 201,
+      input: { format: 'pdf', include_title_page: true, include_page_numbers: true },
+      pdf: { ...endpoint, projectId, draftId } }, decode);
+  }
+  if (endpoint.action === 'download') {
+    const exportId = validateStoryProjectId(endpoint.exportId);
+    if (endpoint.draftId !== undefined || endpoint.limit !== undefined || endpoint.offset !== undefined) {
+      throw new StoryProjectsError('validation');
+    }
+    return executeStoryRequest(options, { method: 'GET', expectedStatus: 200, pdf: { ...endpoint, projectId, exportId } }, decode);
+  }
+  if (endpoint.draftId !== undefined || endpoint.exportId !== undefined ||
+    !Number.isSafeInteger(endpoint.limit) || endpoint.limit! < 1 || endpoint.limit! > 100 ||
+    !Number.isSafeInteger(endpoint.offset) || endpoint.offset! < 0 || endpoint.offset! > 100_000) {
+    throw new StoryProjectsError('validation');
+  }
+  return executeStoryRequest(options, { method: 'GET', expectedStatus: 200, pdf: { ...endpoint, projectId } }, decode);
 }
 
 export function listStoryProjects(options: ListStoryProjectsOptions): Promise<StoryProject[]> {

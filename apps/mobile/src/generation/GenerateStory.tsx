@@ -9,8 +9,10 @@ import type { Language } from '../i18n';
 import { createGenerationActionId, useGenerationActions, type GenerationAction } from './GenerationActions';
 import { StoryDraftScreen, type DraftScreenState } from './StoryDraftScreen';
 import { DraftEditing } from './DraftEditing';
+import { StoryExports } from '../exports/StoryExports';
 
 interface Props {
+  initialDraftId?: string;
   language: Language;
   user: AuthUser;
   project: StoryProject;
@@ -25,19 +27,20 @@ const empty = (phase: DraftScreenState['phase']): DraftScreenState => ({
 const accessFailure = (error: StoryProjectsError) => ['authentication', 'forbidden', 'not-found'].includes(error.kind);
 export function GenerateStory(props: Props) {
   const [config] = useState(readMobileApiConfig);
-  const identity = [props.user.id, props.project.id, props.project.language, config?.baseUrl].join(':');
+  const identity = [props.user.id, props.project.id, props.project.language, config?.baseUrl, props.initialDraftId].join(':');
   return <ScopedGeneration key={identity} {...props} baseUrl={config?.baseUrl ?? null} />;
 }
 function ScopedGeneration({ language, user, project, baseUrl, getAccessToken,
-  onBack, onReviewMemories, onSignOut }: Props & { baseUrl: string | null }) {
+  onBack, onReviewMemories, onSignOut, initialDraftId }: Props & { baseUrl: string | null }) {
   const actions = useGenerationActions(user.id);
   const scope = [baseUrl, project.id, project.language, 'warm'].join(':');
   const [state, setState] = useState<DraftScreenState>(() => empty('loading'));
-  const [subview, setSubview] = useState<{ mode: 'edit' | 'history'; draftId: string } | null>(null);
+  const [subview, setSubview] = useState<{ mode: 'edit' | 'history' | 'export'; draftId: string } | null>(null);
+  const subviewRef = useRef(false);
   const alive = useRef(false), active = useRef(true), busy = useRef(false), blocked = useRef(false);
   const epoch = useRef(0);
   const request = useRef<AbortController | null>(null);
-  const selectedDraftId = useRef<string | null>(null);
+  const selectedDraftId = useRef<string | null>(initialDraftId ?? null);
   const currentState = useRef<DraftScreenState>(empty('loading'));
   const publish = useCallback((value: DraftScreenState) => {
     currentState.current = value;
@@ -92,6 +95,7 @@ function ScopedGeneration({ language, user, project, baseUrl, getAccessToken,
       ...(safe instanceof StoryDraftsError && safe.code ? { code: safe.code } : {}) });
   }, [publish]);
   const refresh = useCallback(() => {
+    if (subviewRef.current) return;
     const operation = begin(); if (!operation) return;
     const { controller, current, finish } = operation;
     publish(empty('loading'));
@@ -111,7 +115,7 @@ function ScopedGeneration({ language, user, project, baseUrl, getAccessToken,
     void Promise.resolve().then(() => { if (alive.current && epoch.current === initialEpoch) refresh(); });
     const changes = AppState.addEventListener('change', next => {
       if (next !== 'active') {
-        active.current = false; cancel(); publish(empty('loading')); setSubview(null);
+        active.current = false; cancel(); publish(empty('loading')); subviewRef.current = false; setSubview(null);
       } else if (!active.current) { active.current = true; refresh(); }
     });
     return () => { alive.current = false; cancel(); changes.remove(); };
@@ -148,7 +152,7 @@ function ScopedGeneration({ language, user, project, baseUrl, getAccessToken,
     }
   };
   const generate = () => {
-    if (currentState.current.phase !== 'ready' || actions.get(user.id, scope)) return;
+    if (subviewRef.current || currentState.current.phase !== 'ready' || actions.get(user.id, scope)) return;
     const operation = begin(); if (!operation) return;
     try {
       options(operation.controller);
@@ -159,6 +163,7 @@ function ScopedGeneration({ language, user, project, baseUrl, getAccessToken,
     } catch (error) { fail(error instanceof StoryProjectsError ? error : new StoryProjectsError('configuration'), false); operation.finish(); }
   };
   const retry = () => {
+    if (subviewRef.current) return;
     const action = actions.get(user.id, scope);
     if (!action || action.blocked || !currentState.current.canRetry) return;
     const operation = begin(); if (!operation) return;
@@ -180,18 +185,22 @@ function ScopedGeneration({ language, user, project, baseUrl, getAccessToken,
     });
     return () => listener.remove();
   }, [leave, onBack, subview]);
-  const open = (mode: 'edit' | 'history') => {
+  const open = (mode: 'edit' | 'history' | 'export') => {
     const value = currentState.current;
-    if (value.phase !== 'ready' || !value.draft || value.error || value.canRetry || actions.get(user.id, scope)) return;
+    if (subviewRef.current || value.phase !== 'ready' || !value.draft || value.error || value.canRetry || actions.get(user.id, scope)) return;
     cancel(); selectedDraftId.current = value.draft.draft_id;
-    setSubview({ mode, draftId: value.draft.draft_id });
+    subviewRef.current = true; setSubview({ mode, draftId: value.draft.draft_id });
   };
+  const closeSubview = () => { subviewRef.current = false; setSubview(null); refresh(); };
+  if (subview?.mode === 'export') return <StoryExports language={language} storyLanguage={project.language}
+    title={project.title} ownerId={user.id} projectId={project.id} draftId={subview.draftId} baseUrl={baseUrl}
+    getAccessToken={getAccessToken} onBack={closeSubview} onSignOut={() => leave(onSignOut, true)} />;
   if (subview) return <DraftEditing mode={subview.mode} language={language} storyLanguage={project.language}
     title={project.title} ownerId={user.id} projectId={project.id} draftId={subview.draftId} baseUrl={baseUrl}
-    getAccessToken={getAccessToken} onBack={() => { setSubview(null); refresh(); }}
+    getAccessToken={getAccessToken} onBack={closeSubview}
     onSignOut={() => leave(onSignOut, true)} />;
   return <StoryDraftScreen language={language} storyLanguage={project.language} title={project.title} state={state}
-    onGenerate={generate} onRetry={retry} onRefresh={refresh} onEdit={() => open('edit')} onHistory={() => open('history')}
+    onGenerate={generate} onRetry={retry} onRefresh={refresh} onEdit={() => open('edit')} onHistory={() => open('history')} onExport={() => open('export')}
     onReviewMemories={() => leave(onReviewMemories)} onBack={() => leave(onBack)}
     onSignOut={() => leave(onSignOut, true)} />;
 }

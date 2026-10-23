@@ -9,6 +9,9 @@ and [status report](docs/day-10-status.md).
 For generation, editing, continuation and PDF integration, use the
 [Day 11 story guide](docs/day-11-story-integration.md) and
 [verification status](docs/day-11-status.md).
+The [Day 12 OpenAI adapter/evaluation guide](docs/day-12-ai-integration.md) and
+[pre-approval status](docs/day-12-status.md) cover disabled-by-default real
+providers. Paid calls and public live-AI persistence are not enabled.
 
 Autobiography application with an existing React/Vite web client, Supabase, and a Python/FastAPI backend.
 
@@ -43,8 +46,9 @@ API: http://127.0.0.1:8000 · Swagger: http://127.0.0.1:8000/docs · Version: 0.
 - /api/v1/story-projects/{project_id}/exports and /continue: export audit and safe resumption.
 - /api/v1/story-exports/{export_id}/download: authenticated historical PDF retrieval.
 
-Live speech recognition is deliberately disabled: no paid provider is wired or
-called. Day 9 adds `--simulate-transcription` to the dedicated development
+Live speech recognition remains disabled in the public API. Day 12 adds separate
+approval-gated OpenAI evaluation adapters; no paid provider call has been made.
+Day 9 adds `--simulate-transcription` to the dedicated development
 launcher: valid audio returns a fixed fictional transcript with a permanent
 simulation notice, not recognized speech. Ordinary startup remains disabled.
 See [the audio API](docs/audio-api.md) and [native audio handoff](docs/day-9-mobile-audio.md).

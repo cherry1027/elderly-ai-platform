@@ -1,13 +1,18 @@
 # Memy mobile API contract
 
 Backend snapshot: branch `codex/day-7-mobile-integration`, commit
-`a00df98eb97a3528cd83dff91c36bbda3a09323a`, FastAPI `0.8.1`
+`b16955502c1e397d82b6997dfb5f75bf5ca38a69`, FastAPI `0.8.1`
 API prefix: `/api/v1`  
 Intended client: Tarun's Expo/React Native application
 
 Day 11 adds verified story/edit/export/Continue journey coverage without changing
 this runtime or schema. Use the [Expo story guide](day-11-story-integration.md)
 and [current acceptance report](day-11-status.md).
+
+Day 12 adds [gated OpenAI evaluation adapters](day-12-ai-integration.md) and
+[release safeguards](day-12-status.md), not live mobile endpoints. No paths or
+response fields change. Keep the current mock setup; public FastAPI refuses
+OpenAI evaluation mode until a reviewed live provenance/persistence contract exists.
 
 This document describes the backend that exists at the snapshot above. The
 route implementations and strict response models are authoritative. It does

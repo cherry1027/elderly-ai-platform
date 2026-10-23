@@ -14,13 +14,15 @@ are unchanged; stale implicit review intent is rejected with the existing 409.
 | --- | --- |
 | Backend repository | [cherry1027/elderly-ai-platform](https://github.com/cherry1027/elderly-ai-platform) |
 | Shared backend branch | `codex/day-7-mobile-integration` |
-| Stable runtime commit | `a00df98eb97a3528cd83dff91c36bbda3a09323a` (`a00df98`) |
+| Stable runtime commit | `b16955502c1e397d82b6997dfb5f75bf5ca38a69` (`b169555`) |
 | Latest mobile branch reported by Tarun and confirmed on GitHub | `feat/mobile-draft-editor` |
 | Mobile commit | `eb4eaa8caa38e1cbf1e519831283d269eaeb9252` (`eb4eaa8`) |
 
 The earlier integration pin was `73094c7`; `a629760` added the consolidated
 handoff without changing that runtime. Day 10's `a00df98` is the small 0.8.1
-memory-review patch. Later package commits add tests/documentation; record
+memory-review patch. Day 12's `b169555` adds separately gated OpenAI evaluation
+and explicit public release guards without changing the 0.8.1 mobile contract.
+Later package commits add documentation; record
 `git rev-parse HEAD` after obtaining them. Do not equate a changing branch name
 with an immutable version. No merge into `main` is part of this work.
 
@@ -34,6 +36,9 @@ their statements about absent audio/editing UI are not current mobile status.
 
 - [Mobile API contract](mobile-api-contract.md): all 25 operations, exact headers,
   bodies, response shapes, binary PDF handling, errors and retry semantics.
+- [Day 12 provider guide](day-12-ai-integration.md) and
+  [pre-approval status](day-12-status.md): offline-tested OpenAI adapters and
+  usage gates; public live AI and spending remain disabled. No Expo change yet.
 - [Day 11 story guide](day-11-story-integration.md) and
   [current verification](day-11-status.md): explicit generation, manual revisions,
   private binary PDF download and Continue acceptance; existing 0.8.1 APIs reused.
@@ -68,7 +73,7 @@ writer into a real AI service, and SQL role checks do not prove a phone login.
 | Private PDF export/history/download | Implemented real renderer + real saved metadata, not simulated PDF bytes | Fresh hosted SQL checks metadata/historical text; native PDF/share acceptance is pending |
 | Continue and explicit new generation | Implemented and tested; fresh hosted continuation/version preservation | Continue never generates; manual prose is not auto-merged into the next generation |
 | Current mobile UI through editing/history | Tarun reports implemented and iPhone-tested at `eb4eaa8` | Not independently certified by this backend audit |
-| Real STT, general AI conversation, TTS and streaming | **Planned** | No provider adapter, approved spending or new voice route enabled |
+| Real STT, general AI conversation, TTS and streaming | **Public activation planned; STT/text evaluation adapters implemented** | Day 12 OpenAI adapters are evaluation-only; spending approval, public activation/persistence and new voice routes remain absent |
 | Guest quota, subscriptions, private photo pipeline and template gallery | **Planned for this FastAPI/mobile workflow** | Legacy Lovable code is not a reviewed implementation of these contracts |
 | HTTPS staging and public pilot | **Planned** | Requires approved hosting, mobile URL-guard update and security/privacy gates |
 
@@ -158,9 +163,9 @@ wording; provide a comparison/reconciliation UI. Exact requests are in the
 
 ## Verified now versus still awaiting acceptance
 
-Latest Day 11 regression: 776 backend checks and 65 isolated database checks
+Latest Day 12 regression: 961 backend checks and 65 isolated database checks
 passed; four separately gated live pytest cases were skipped. See the
-[Day 11 report](day-11-status.md). The [original handoff verification report](mobile-integration-tests.md)
+[Day 12 report](day-12-status.md). The [original handoff verification report](mobile-integration-tests.md)
 preserves the earlier 755/56 baseline and its hosted checks as historical evidence.
 
 The hosted draft and export/continuation scripts passed using two synthetic

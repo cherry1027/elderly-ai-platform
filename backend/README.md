@@ -92,6 +92,23 @@ FastAPI in-process with synthetic Auth/Data API fixtures:
 It requires the reviewed mobile Git object locally, opens no sockets and makes
 no cloud requests. It does not prove device networking, real login or RLS.
 
+## Day 12 gated provider evaluation
+
+See the [OpenAI adapter guide](../docs/day-12-ai-integration.md) and
+[pre-approval status](../docs/day-12-status.md). Real transcription, structured
+conversation/extraction and separately verified writing adapters are implemented
+for approved evaluation only. Key presence never enables spending. Default
+`AI_PROVIDER_MODE=disabled`; normal public FastAPI rejects `openai` mode rather
+than saving live outputs under mock-only contracts. No migration is applied.
+
+```sh
+.venv/bin/python scripts/evaluate_ai.py
+```
+
+This default inspection makes no paid call and reports quality `NOT_RUN`.
+Keep Tarun's working mock launcher unchanged. Do not use a Windows live mode or
+distributed workers with the single-host POSIX reservation ledger.
+
 ## Day 11 story and PDF integration
 
 The [Day 11 Expo guide](../docs/day-11-story-integration.md) connects explicit
@@ -337,8 +354,9 @@ them. PostgreSQL owns atomic writes, retry replay and cross-user isolation.
 
 `CONVERSATION_MODE` accepts only `disabled` (default) or `mock`. For the free
 development demonstration, set `CONVERSATION_MODE=mock` when starting Uvicorn.
-There is no live AI adapter, API key requirement or paid provider call. Mock
-extraction recognizes limited explicit en/sv patterns; unsupported wording can
+This Day 4 public route has no live AI adapter or API key requirement and makes
+no paid provider call. Day 12 adds separate approval-gated evaluation adapters,
+not public activation. Mock extraction recognizes limited explicit en/sv patterns; unsupported wording can
 produce no facts. It does not establish real-model accuracy.
 
 The [Day 4 conversation contract](../docs/conversation-api.md) includes all five

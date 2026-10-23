@@ -2,9 +2,15 @@
 
 23 October 2026 · **proposal only, not implemented or enabled**.
 
+Day 12 now implements separate [approval-gated provider evaluation](day-12-ai-integration.md).
+That is not a live voice/mobile release or persisted real-AI contract; the
+remaining proposal/release design below is still not enabled.
+
 The compatible Day 10 runtime patch is 0.8.1 at `a00df98`; it changes only stale
-implicit memory confirmation, not the proposed voice functionality. No paid account, key, deployment,
-model call or new voice endpoint is created by this document. The current
+implicit memory confirmation, not the proposed voice functionality. Day 12's
+server-only key is securely configured for separately gated evaluation, not
+spending approval. This proposal creates no deployment, model call or new voice
+endpoint. The current
 [OpenAPI snapshot](openapi.json) contains only existing v1 routes. Model access,
 price, region and processing terms must be rechecked at approval time.
 
@@ -13,7 +19,7 @@ price, region and processing terms must be rechecked at approval time.
 | Layer | Implemented now | Still needed for real voice |
 | --- | --- | --- |
 | Recording | Tarun reports native iPhone recording/upload at `eb4eaa8` | Measured real-speech language/permission/interruption acceptance |
-| Upload | Owned active session, consent, byte decoding, 25 MB/90 s limits, hash-bound UUID retries, temporary files | Approved provider adapter, content-quality/empty-speech handling, hosted limits and usage accounting |
+| Upload | Owned active session, consent, byte decoding, 25 MB/90 s limits, hash-bound UUID retries, temporary files | Approved public provider activation/provenance integration, content-quality/empty-speech handling, hosted limits and usage accounting |
 | Transcript | Immutable original, language, source/session ID; explicit fixed fictional simulation | Real recognized text, durable structured provenance/model/mode and correction records |
 | Conversation | Ordered persisted messages and atomic source-linked mock turns | Real bounded context, structured extraction, reliable contradiction handling and model evaluations |
 | Memories/drafts | Pending→reviewed sourced facts; version checks; mock canonical draft generation | Real-model evidence checks, supported paraphrase policy and independent factuality review |

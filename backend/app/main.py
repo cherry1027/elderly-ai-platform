@@ -101,7 +101,7 @@ def create_app(
         allow_credentials=False,
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "Accept-Language", "Idempotency-Key"],
-        expose_headers=["Content-Disposition", "Content-Length", "X-Memy-Export-Id",
+        expose_headers=["Retry-After", "Content-Disposition", "Content-Length", "X-Memy-Export-Id",
                         "X-Memy-Draft-Version", "X-Memy-Draft-Revision", "X-Memy-Page-Count"],
     )
     application.include_router(health_router)

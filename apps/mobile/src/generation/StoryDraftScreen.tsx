@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AccessibilityInfo, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { StoryDraft, StoryProjectVerification } from '../api/story-drafts';
+import { useApiBackoff } from '../api/ApiBackoff';
 import type { StoryProjectsErrorKind } from '../api/story-projects';
 import { MemyBrand } from '../components/BrandArtwork';
 import { Screen, screenStyles } from '../components/Screen';
@@ -44,7 +45,7 @@ function DraftButton({ language, label, onPress, disabled = false, primary = fal
   return <Pressable accessibilityRole="button" accessibilityLabel={label}
     accessibilityLanguage={accessibilityLanguages[language]}
     accessibilityState={{ disabled, ...(expanded === undefined ? {} : { expanded }) }}
-    disabled={disabled} onPress={onPress} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+    disabled={disabled} onPress={() => { if (!disabled) onPress(); }} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
     style={({ pressed }) => [styles.button, primary ? styles.primary : styles.secondary,
       disabled && styles.disabled, primary && disabled && styles.disabledPrimary, focused && styles.focused, pressed && !disabled && styles.pressed]}>
     <Text allowFontScaling style={[styles.buttonText, primary && styles.primaryText]}>{label}</Text>
@@ -60,6 +61,7 @@ export function StoryDraftScreen(props: StoryDraftScreenProps) {
 function StoryDraftView({ language, storyLanguage, title, state, onGenerate, onRetry, onRefresh,
   onReviewMemories, onBack, onSignOut, onEdit, onHistory, onExport, onContinueStory, onGenerations, onPreviousGeneration }: StoryDraftScreenProps) {
   const text = storyGenerationCopy[language];
+  const { waiting } = useApiBackoff();
   const locale = accessibilityLanguages[language];
   const [confirming, setConfirming] = useState(false);
   const submitted = useRef(false);
@@ -89,20 +91,20 @@ function StoryDraftView({ language, storyLanguage, title, state, onGenerate, onR
   }, [message, state.error, state.phase]);
 
   const prepare = () => {
-    if (!canGenerate || submitted.current) return;
+    if (waiting || !canGenerate || submitted.current) return;
     setConfirming(true);
     if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(text.confirmTitle);
   };
   const confirm = () => {
-    if (!confirming || !canGenerate || submitted.current) return;
+    if (waiting || !confirming || !canGenerate || submitted.current) return;
     submitted.current = true; setConfirming(false); onGenerate();
   };
   const refresh = () => {
-    if (busy || accessFailed) return;
+    if (waiting || busy || accessFailed) return;
     setConfirming(false); submitted.current = false; onRefresh();
   };
   const retry = () => {
-    if (!canRetry || submitted.current) return;
+    if (waiting || !canRetry || submitted.current) return;
     submitted.current = true; onRetry();
   };
   return <Screen scrollViewRef={scroll} onContentLayout={event => { contentY.current = event.nativeEvent.layout.y; }}>
@@ -135,17 +137,17 @@ function StoryDraftView({ language, storyLanguage, title, state, onGenerate, onR
       {confirming && canGenerate ? <View style={styles.confirmation}>
         <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.subheading}>{text.confirmTitle}</Text>
         <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.confirmation}</Text>
-        <DraftButton language={language} label={text.confirm} primary onPress={confirm} />
+        <DraftButton language={language} label={text.confirm} primary disabled={waiting} onPress={confirm} />
         <DraftButton language={language} label={text.cancel} onPress={() => { setConfirming(false); }} />
       </View> : <>
-        {canGenerate && <DraftButton language={language} label={draft ? text.generateAgain : text.generate} primary onPress={prepare} />}
+        {canGenerate && <DraftButton language={language} label={draft ? text.generateAgain : text.generate} primary disabled={waiting} onPress={prepare} />}
         {canRetry && <>
           <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.retryHelp}</Text>
-          <DraftButton language={language} label={text.retry} primary onPress={retry} />
+          <DraftButton language={language} label={text.retry} primary disabled={waiting} onPress={retry} />
         </>}
       </>}
       <DraftButton language={language} label={text.refresh} primary={state.phase === 'uncertain' && !canRetry}
-        disabled={busy || accessFailed} onPress={refresh} />
+        disabled={waiting || busy || accessFailed} onPress={refresh} />
       <DraftButton language={language} label={text.review} primary={needsMemoryReview && state.phase === 'error' && !canRetry && !accessFailed}
         disabled={busy || accessFailed} onPress={() => { setConfirming(false); onReviewMemories(); }} />
       <DraftButton language={language} label={text.back} onPress={onBack} />

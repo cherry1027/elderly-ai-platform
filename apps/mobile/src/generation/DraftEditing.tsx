@@ -128,6 +128,12 @@ function Editor(props: DraftEditingProps) {
       if (!op.current()) return;
       const safe = safeError(error);
       if (accessFailure(safe)) { fail(safe); return; }
+      if (safe.retry) {
+        // Retain the captured wording and expected revision. Waiting ends only
+        // by enabling Check; it must never start reconciliation or a PATCH.
+        publish({ ...latest.current, phase: 'uncertain', error: safe.kind, canRetry: false });
+        return;
+      }
       const uncertain = safe.mayHaveWritten || ['timeout', 'network', 'invalid-response', 'cancelled'].includes(safe.kind);
       if (safe.kind === 'conflict' || uncertain) {
         publish({ ...latest.current, phase: 'uncertain', error: safe.kind, canRetry: false });

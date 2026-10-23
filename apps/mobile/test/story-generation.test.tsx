@@ -151,6 +151,24 @@ it('never repeats write if retry reconciliation fails', async () => {
   await waitFor(() => expect(presentation().state.error).toBe('network'));
   expect(generateStoryDraft).toHaveBeenCalledTimes(1); expect(presentation().state.canRetry).toBe(false);
 });
+it.each(['RATE_LIMITED', 'API_BUSY'] as const)('%s preserves the generation key through waiting and deliberate retry', async code => {
+  const advice = { code, retryAfterSeconds: 60, retryAt: Date.now() + 60_000 };
+  jest.mocked(generateStoryDraft).mockRejectedValueOnce(new StoryProjectsError('unavailable', code === 'RATE_LIMITED' ? 429 : 503, false, advice));
+  render(<GenerateStory {...props()} />); await ready();
+  act(() => presentation().onGenerate());
+  await waitFor(() => expect(presentation().state.phase).toBe('uncertain'));
+  expect(generateStoryDraft).toHaveBeenCalledTimes(1);
+  expect(Crypto.randomUUID).toHaveBeenCalledTimes(1);
+  act(() => presentation().onRefresh());
+  await waitFor(() => expect(presentation().state.canRetry).toBe(true));
+  saved();
+  act(() => presentation().onRetry());
+  await waitFor(() => expect(presentation().state.notice).toBe('saved'));
+  const calls = jest.mocked(generateStoryDraft).mock.calls;
+  expect(calls[1][0].idempotencyKey).toBe(calls[0][0].idempotencyKey);
+  expect(calls[1][0].input).toEqual(calls[0][0].input);
+  expect(Crypto.randomUUID).toHaveBeenCalledTimes(1);
+});
 it.each(['NO_CONFIRMED_MEMORIES', 'NO_SUPPORTED_MEMORIES', 'CLARIFICATION_REQUIRED', 'STORY_CONTEXT_CHANGED',
   'CONTEXT_LIMIT', 'DRAFT_VERIFICATION_FAILED'] as const)('shows backend-authoritative %s without a fabricated draft', async code => {
     jest.mocked(generateStoryDraft).mockRejectedValueOnce(new StoryDraftsError(code === 'DRAFT_VERIFICATION_FAILED' ? 'validation' : 'conflict',

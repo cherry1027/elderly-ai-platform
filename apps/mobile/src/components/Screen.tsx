@@ -2,6 +2,7 @@ import type { PropsWithChildren, RefObject } from 'react';
 import { ScrollView, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, layout } from '../theme';
+import { ApiBackoffBanner } from '../api/ApiBackoff';
 
 type ScreenProps = PropsWithChildren<{
   scrollViewRef?: RefObject<ScrollView | null>;
@@ -17,7 +18,7 @@ export function Screen({ children, scrollViewRef, onContentLayout }: ScreenProps
         contentContainerStyle={styles.scrollContent}
         alwaysBounceVertical={false}
       >
-        <View style={styles.content} onLayout={onContentLayout}>{children}</View>
+        <View style={styles.content} onLayout={onContentLayout}><ApiBackoffBanner />{children}</View>
       </ScrollView>
     </SafeAreaView>
   );

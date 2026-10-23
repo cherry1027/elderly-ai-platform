@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AccessibilityInfo, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { StoryDraft } from '../api/story-drafts';
+import { useApiBackoff } from '../api/ApiBackoff';
 import type { StoryExport } from '../api/story-exports';
 import type { StoryProjectsErrorKind } from '../api/story-projects';
 import { MemyBrand } from '../components/BrandArtwork';
@@ -37,6 +38,7 @@ export function StoryExportsScreen(props: StoryExportsScreenProps) {
 function StoryExportsView({ language, storyLanguage, title, state, onPrepare, onShare,
   onDownload, onLoadMore, onRefresh, onBack, onSignOut }: StoryExportsScreenProps) {
   const text = exportCopy[language], locale = accessibilityLanguages[language], contentLocale = accessibilityLanguages[storyLanguage];
+  const { waiting } = useApiBackoff();
   const [historyOpen, setHistoryOpen] = useState(false), [selected, setSelected] = useState(0);
   const submitted = useRef(false), scroll = useRef<ScrollView>(null);
   const position = useRef({ content: 0, panel: 0, notice: 0 });
@@ -44,7 +46,7 @@ function StoryExportsView({ language, storyLanguage, title, state, onPrepare, on
   const accessFailed = ['authentication', 'forbidden', 'not-found'].includes(state.error ?? '');
   const visible = state.phase !== 'loading' && !accessFailed;
   const cleanupFailed = state.notice === 'cleanup-failed';
-  const canPrepare = visible && !!state.draft && state.phase === 'ready' && !state.error && !cleanupFailed;
+  const canPrepare = !waiting && visible && !!state.draft && state.phase === 'ready' && !state.error && !cleanupFailed;
   const canShare = visible && state.fileReady && !!state.prepared && state.phase === 'ready' && !state.error && !cleanupFailed;
   const index = Math.min(selected, Math.max(0, state.items.length - 1)), item = visible ? state.items[index] : undefined;
   const codeMessage = state.code && Object.hasOwn(text.codes, state.code)
@@ -118,17 +120,17 @@ function StoryExportsView({ language, storyLanguage, title, state, onPrepare, on
             <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.pages}: {item.page_count}</Text>
             <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.savedAt}: {new Date(item.created_at).toLocaleString(locale)}</Text>
             <DraftEditingButton language={language} label={text.open}
-              disabled={state.phase !== 'ready' || !!state.error || cleanupFailed || state.notice === 'uncertain'}
-              onPress={() => once(state.phase === 'ready' && !state.error && !cleanupFailed && state.notice !== 'uncertain', () => onDownload(item.export_id))} />
+              disabled={waiting || state.phase !== 'ready' || !!state.error || cleanupFailed || state.notice === 'uncertain'}
+              onPress={() => once(!waiting && state.phase === 'ready' && !state.error && !cleanupFailed && state.notice !== 'uncertain', () => onDownload(item.export_id))} />
             <DraftEditingButton language={language} label={text.previous} disabled={busy || index === 0} onPress={() => navigate(index - 1)} />
             <DraftEditingButton language={language} label={text.next} disabled={busy || index + 1 >= state.items.length} onPress={() => navigate(index + 1)} />
           </View>}
           {state.hasMore && !state.bounded && <DraftEditingButton language={language} label={text.loadMore}
-            disabled={busy || !!state.error || cleanupFailed || state.phase === 'uncertain' || state.notice === 'uncertain'} onPress={() => once(!busy && !state.error && !cleanupFailed && state.phase !== 'uncertain' && state.notice !== 'uncertain', onLoadMore)} />}
+            disabled={waiting || busy || !!state.error || cleanupFailed || state.phase === 'uncertain' || state.notice === 'uncertain'} onPress={() => once(!waiting && !busy && !state.error && !cleanupFailed && state.phase !== 'uncertain' && state.notice !== 'uncertain', onLoadMore)} />}
         </View>}
       </>}
       <DraftEditingButton language={language} label={text.refresh} primary={state.phase === 'uncertain' || (state.phase === 'error' && !accessFailed)}
-        disabled={busy || accessFailed || cleanupFailed} onPress={() => once(!busy && !accessFailed && !cleanupFailed, onRefresh)} />
+        disabled={waiting || busy || accessFailed || cleanupFailed} onPress={() => once(!waiting && !busy && !accessFailed && !cleanupFailed, onRefresh)} />
       <DraftEditingButton language={language} label={text.back} onPress={onBack} />
       <DraftEditingButton language={language} label={text.signOut} onPress={onSignOut} />
     </View>

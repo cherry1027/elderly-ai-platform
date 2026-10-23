@@ -1,3 +1,4 @@
+import type { RetryAdvice } from './backoff';
 import { executeStoryDraftRequest, StoryProjectsError, validDate, validateStoryProjectId,
   type ListStoryProjectsOptions, type StoryProjectsErrorKind } from './story-projects';
 
@@ -37,6 +38,7 @@ export interface StoryDraftPageOptions extends StoryDraftOptions { limit?: numbe
 export interface StoryDraftPage { items: StoryDraft[]; hasMore: boolean }
 
 const errorStatuses = {
+  RATE_LIMITED: 429, API_BUSY: 503,
   AUTHORIZATION_REQUIRED: 401, INVALID_ACCESS_TOKEN: 401, ACCESS_DENIED: 403,
   PROJECT_NOT_FOUND: 404, RESOURCE_NOT_FOUND: 404,
   NO_CONFIRMED_MEMORIES: 409, NO_SUPPORTED_MEMORIES: 409, CLARIFICATION_REQUIRED: 409,
@@ -48,18 +50,18 @@ const errorStatuses = {
 export type StoryDraftsErrorCode = keyof typeof errorStatuses;
 export class StoryDraftsError extends StoryProjectsError {
   readonly code?: StoryDraftsErrorCode;
-  constructor(kind: StoryProjectsErrorKind, status?: number, mayHaveWritten = false, code?: string) {
-    super(kind, status, mayHaveWritten); this.name = 'StoryDraftsError';
+  constructor(kind: StoryProjectsErrorKind, status?: number, mayHaveWritten = false, code?: string, retry?: RetryAdvice) {
+    super(kind, status, mayHaveWritten, retry); this.name = 'StoryDraftsError';
     if (code && Object.hasOwn(errorStatuses, code) && errorStatuses[code as StoryDraftsErrorCode] === status) {
       this.code = code as StoryDraftsErrorCode;
     }
   }
 }
-function httpError(status: number, code: string | undefined, writing: boolean): StoryDraftsError {
+function httpError(status: number, code: string | undefined, writing: boolean, retry?: RetryAdvice): StoryDraftsError {
   const kind: StoryProjectsErrorKind = status === 401 ? 'authentication' : status === 403 ? 'forbidden'
     : status === 404 ? 'not-found' : status === 409 ? 'conflict' : status === 408 || status === 504 ? 'timeout'
     : status === 400 || status === 422 ? 'validation' : status >= 400 ? 'unavailable' : 'invalid-response';
-  return new StoryDraftsError(kind, status, writing && status >= 500, code);
+  return new StoryDraftsError(kind, status, writing && status >= 500 && !retry, code, retry);
 }
 function invalid(): never { throw new StoryDraftsError('invalid-response'); }
 function object(value: unknown, fields: string[]): Record<string, unknown> {
@@ -145,7 +147,7 @@ async function safe<T>(operation: () => Promise<T>): Promise<T> {
   try { return await operation(); }
   catch (error) {
     if (error instanceof StoryDraftsError) throw error;
-    if (error instanceof StoryProjectsError) throw new StoryDraftsError(error.kind, error.status, error.mayHaveWritten);
+    if (error instanceof StoryProjectsError) throw new StoryDraftsError(error.kind, error.status, error.mayHaveWritten, undefined, error.retry);
     throw new StoryDraftsError('invalid-response');
   }
 }
@@ -165,7 +167,7 @@ export function listStoryDraftsPage(options: StoryDraftPageOptions): Promise<Sto
       !Number.isSafeInteger(offset) || offset < 0 || offset > 100_000) throw new StoryDraftsError('validation');
     return executeStoryDraftRequest(options, { action: 'list', projectId: selected.projectId,
       limit, offset,
-      onHttpError: (status, code) => httpError(status, code, false) }, value => {
+      onHttpError: (status, code, retry) => httpError(status, code, false, retry) }, value => {
       if (!Array.isArray(value) || value.length > limit) invalid();
       const ids = new Set<string>(); let previousVersion = Number.POSITIVE_INFINITY;
       const items = value.map(item => {
@@ -182,14 +184,14 @@ export function getStoryDraft(options: GetStoryDraftOptions): Promise<StoryDraft
   return safe(async () => {
     const selected = selection(options), draftId = validateStoryProjectId(options.draftId);
     return executeStoryDraftRequest(options, { action: 'read', projectId: selected.projectId, draftId,
-      onHttpError: (status, code) => httpError(status, code, false) }, value => draft(value, selected, draftId));
+      onHttpError: (status, code, retry) => httpError(status, code, false, retry) }, value => draft(value, selected, draftId));
   });
 }
 export function getStoryVerification(options: StoryDraftOptions): Promise<StoryProjectVerification> {
   return safe(async () => {
     const selected = selection(options);
     return executeStoryDraftRequest(options, { action: 'verification', projectId: selected.projectId,
-      onHttpError: (status, code) => httpError(status, code, false) }, value => {
+      onHttpError: (status, code, retry) => httpError(status, code, false, retry) }, value => {
       const row = object(value, ['project_id', 'draft_id', 'version', 'revision', 'verification']);
       if (!uuid(row.project_id) || row.project_id.toLowerCase() !== selected.projectId) invalid();
       const report = verification(row.verification);
@@ -215,7 +217,7 @@ export function generateStoryDraft(options: GenerateStoryDraftOptions): Promise<
     return executeStoryDraftRequest({ ...options, timeoutMs: options.timeoutMs ?? 30_000 }, {
       action: 'generate', projectId: selected.projectId, idempotencyKey,
       input: { language: selected.language, style: 'warm', confirm_generation: true },
-      onHttpError: (status, code) => httpError(status, code, true),
+      onHttpError: (status, code, retry) => httpError(status, code, true, retry),
     }, value => draft(value, selected));
   });
 }
@@ -256,7 +258,7 @@ export function editStoryDraft(options: EditStoryDraftOptions): Promise<StoryDra
     if (input.expected_revision !== before.revision) throw new StoryDraftsError('validation');
     const unchanged = input.content === before.content;
     return executeStoryDraftRequest(options, { action: 'edit', projectId: selected.projectId,
-      draftId: before.draft_id, input, onHttpError: (status, code) => httpError(status, code, true) }, value => {
+      draftId: before.draft_id, input, onHttpError: (status, code, retry) => httpError(status, code, true, retry) }, value => {
       const after = draft(value, selected, before.draft_id);
       if (!sameDraftOriginal(before, after) || after.content !== input.content ||
         (unchanged ? after.revision !== before.revision : after.revision !== before.revision + 1) ||
@@ -275,7 +277,7 @@ export function listDraftHistory(options: DraftHistoryOptions): Promise<DraftHis
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 ||
       !Number.isSafeInteger(offset) || offset < 0 || offset > 100_000) throw new StoryDraftsError('validation');
     return executeStoryDraftRequest(options, { action: 'history', projectId: selected.projectId,
-      draftId, limit, offset, onHttpError: (status, code) => httpError(status, code, false) }, value => {
+      draftId, limit, offset, onHttpError: (status, code, retry) => httpError(status, code, false, retry) }, value => {
       if (!Array.isArray(value) || value.length > limit) invalid();
       const ids = new Set<string>(); let previousRevision = Number.POSITIVE_INFINITY;
       const items = value.map(item => {

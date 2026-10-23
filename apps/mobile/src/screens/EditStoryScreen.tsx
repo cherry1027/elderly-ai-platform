@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useApiBackoff } from '../api/ApiBackoff';
 import { AccessibilityInfo, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import {
   CreateStoryInputError, UpdateStoryInputError, validateUpdateStoryInput,
@@ -35,6 +36,7 @@ function fieldError(error: unknown): FieldError {
 
 export function EditStoryScreen({ language, project, state, onSubmit, onBack, onSignOut }: EditStoryScreenProps) {
   const text = storyDetailsCopy[language];
+  const { waiting } = useApiBackoff();
   const [title, setTitle] = useState(project.title);
   const [description, setDescription] = useState(project.description ?? '');
   const [validation, setValidation] = useState<FieldError | null>(null);
@@ -85,7 +87,7 @@ export function EditStoryScreen({ language, project, state, onSubmit, onBack, on
     catch (error) { const next = fieldError(error); revealPending.current = next.field; setValidation(next); }
   }
   function submit() {
-    if (disabled || submitted.current) return;
+    if (waiting || disabled || submitted.current) return;
     serviceRevealPending.current = false;
     let input: UpdateStoryProjectInput;
     try { input = validateDraft(title, description); }
@@ -158,10 +160,10 @@ export function EditStoryScreen({ language, project, state, onSubmit, onBack, on
         {saving && <Text accessibilityLiveRegion="polite" accessibilityLanguage={accessibilityLanguages[language]}
           allowFontScaling style={styles.notice}>{text.savingWarning}</Text>}
         <Pressable accessibilityRole="button" accessibilityLabel={saving ? text.saving : text.save}
-          accessibilityLanguage={accessibilityLanguages[language]} accessibilityState={{ disabled, busy: saving }} disabled={disabled}
+          accessibilityLanguage={accessibilityLanguages[language]} accessibilityState={{ disabled: disabled || waiting, busy: saving }} disabled={disabled || waiting}
           onPress={submit} onFocus={() => setFocused('save')} onBlur={() => setFocused(null)}
-          style={({ pressed }) => [styles.action, pressed && !disabled && styles.pressed,
-            focused === 'save' && styles.focused, disabled && styles.disabled]}>
+          style={({ pressed }) => [styles.action, pressed && !disabled && !waiting && styles.pressed,
+            focused === 'save' && styles.focused, (disabled || waiting) && styles.disabled]}>
           <Text allowFontScaling style={styles.actionLabel}>{saving ? text.saving : text.save}</Text>
         </Pressable>
         <LargeButton label={text.cancel} language={language} variant="secondary" onPress={() => leave(onBack)} />

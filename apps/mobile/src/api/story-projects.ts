@@ -1,3 +1,5 @@
+import { apiBackoff, BackoffScopeError, BackoffWaitError, parseRetryAdvice, type RetryAdvice } from './backoff';
+
 export interface StoryProject {
   id: string;
   title: string;
@@ -26,7 +28,8 @@ const messages: Record<StoryProjectsErrorKind, string> = {
 };
 
 export class StoryProjectsError extends Error {
-  constructor(readonly kind: StoryProjectsErrorKind, readonly status?: number, readonly mayHaveCreated = false) {
+  constructor(readonly kind: StoryProjectsErrorKind, readonly status?: number, readonly mayHaveCreated = false,
+    readonly retry?: RetryAdvice) {
     super(messages[kind]);
     this.name = 'StoryProjectsError';
   }
@@ -161,11 +164,11 @@ export interface ListStoryProjectsOptions {
 
 type MemoryReviewRequest = {
   method: 'GET'; sessionId: string; action: 'memories' | 'clarifications'; limit: number; offset: number;
-  onHttpError: (status: number, code?: string) => StoryProjectsError;
+  onHttpError: (status: number, code?: string, retry?: RetryAdvice) => StoryProjectsError;
 } | {
   method: 'PATCH'; memoryId: string;
   input: { status: 'confirmed' | 'rejected'; expected_version: number; corrected_value?: string };
-  onHttpError: (status: number, code?: string) => StoryProjectsError;
+  onHttpError: (status: number, code?: string, retry?: RetryAdvice) => StoryProjectsError;
 };
 
 export type StoryDraftRequest = {
@@ -174,7 +177,7 @@ export type StoryDraftRequest = {
   input?: { language: 'en' | 'sv'; style: 'warm'; confirm_generation: true } |
     { content: string; expected_revision: number };
   limit?: number; offset?: number;
-  onHttpError: (status: number, code?: string) => StoryProjectsError;
+  onHttpError: (status: number, code?: string, retry?: RetryAdvice) => StoryProjectsError;
 };
 
 export interface StoryPdfResponse {
@@ -184,7 +187,7 @@ export interface StoryPdfResponse {
 export type StoryExportRequest = {
   action: 'create' | 'list' | 'download'; projectId: string;
   draftId?: string; exportId?: string; limit?: number; offset?: number;
-  onHttpError: (status: number, code?: string) => StoryProjectsError;
+  onHttpError: (status: number, code?: string, retry?: RetryAdvice) => StoryProjectsError;
 };
 
 interface StoryRequest {
@@ -202,10 +205,10 @@ interface StoryRequest {
   pdf?: StoryExportRequest;
   conversation?: { sessionId: string; method: 'GET' | 'POST'; idempotencyKey?: string;
     limit?: number; offset?: number; input?: { source_message_id: string; language: 'en' | 'sv' };
-    onHttpError: (status: number, code?: string) => StoryProjectsError };
+    onHttpError: (status: number, code?: string, retry?: RetryAdvice) => StoryProjectsError };
   expectedStatus?: 200 | 201;
   audio?: { sessionId: string; action: 'transcribe' | 'transcripts'; body?: FormData;
-    idempotencyKey?: string; onHttpError: (status: number, code?: string) => StoryProjectsError;
+    idempotencyKey?: string; onHttpError: (status: number, code?: string, retry?: RetryAdvice) => StoryProjectsError;
     onProgress?: (stage: 'authentication' | 'fetch-invoked' | 'http-response' | 'response-body', status?: number) => void };
 }
 
@@ -214,7 +217,8 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
   request = globalThis.fetch, timeoutMs = 10_000 }: ListStoryProjectsOptions,
   endpoint: StoryRequest, decode: (value: unknown) => T): Promise<T> {
   const writing = endpoint.method !== 'GET';
-  const resource = `${normalizeMobileApiBaseUrl(baseUrl)}/api/v1/story-projects`;
+  const origin = normalizeMobileApiBaseUrl(baseUrl);
+  const resource = `${origin}/api/v1/story-projects`;
   const url = endpoint.pdf ? (endpoint.pdf.action === 'create'
     ? normalizeMobileApiBaseUrl(baseUrl) + '/api/v1/story-drafts/' + endpoint.pdf.draftId + '/export'
     : endpoint.pdf.action === 'download'
@@ -236,6 +240,13 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
   if (typeof getAccessToken !== 'function' || typeof request !== 'function' ||
     !Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) throw new StoryProjectsError('configuration');
   const controller = new AbortController();
+  const lease = apiBackoff.capture();
+  const onHttpError = endpoint.pdf?.onHttpError ?? endpoint.audio?.onHttpError ?? endpoint.conversation?.onHttpError ??
+    endpoint.memoryReview?.onHttpError ?? endpoint.draft?.onHttpError;
+  const admissionError = (retry: RetryAdvice) => {
+    const status = retry.code === 'RATE_LIMITED' ? 429 : 503;
+    return onHttpError ? onHttpError(status, retry.code, retry) : new StoryProjectsError('unavailable', status, false, retry);
+  };
   let dispatched = false;
   const progress = (stage: 'authentication' | 'fetch-invoked' | 'http-response' | 'response-body', status?: number) => {
     try { endpoint.audio?.onProgress?.(stage, status); } catch { /* diagnostics cannot affect requests */ }
@@ -252,17 +263,29 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
     controller.abort();
     rejectInterrupted(failure(reason, undefined, true));
   };
-  const check = () => { if (interruption) throw failure(interruption, undefined, true); };
+  const check = () => {
+    if (interruption) throw failure(interruption, undefined, true);
+    if (!lease.isCurrent()) throw failure('cancelled', undefined, true);
+  };
+  const checkAdmission = () => {
+    try { lease.assertReady(origin); } catch (error) {
+      if (error instanceof BackoffWaitError) throw admissionError(error.advice);
+      if (error instanceof BackoffScopeError) throw failure('cancelled');
+      throw error;
+    }
+  };
   const abort = () => stop('cancelled');
   signal?.addEventListener('abort', abort, { once: true });
   if (signal?.aborted) abort();
   const timer = setTimeout(() => stop('timeout'), timeoutMs);
   const operation = (async () => {
     check();
+    checkAdmission();
     progress('authentication');
     let token: string | null;
     try { token = await getAccessToken(); } catch { check(); throw new StoryProjectsError('authentication'); }
     check();
+    checkAdmission();
     if (typeof token !== 'string' || !token || token.length > 16384 ||
       !/^[A-Za-z0-9._~-]+$/.test(token) || /^sb_(?:publishable|secret)_/.test(token)) throw new StoryProjectsError('authentication');
     let response: Response;
@@ -287,24 +310,30 @@ async function executeStoryRequest<T>({ baseUrl, getAccessToken, signal,
     }
     check();
     progress('http-response', response.status);
-    const onHttpError = endpoint.pdf?.onHttpError ?? endpoint.audio?.onHttpError ?? endpoint.conversation?.onHttpError ?? endpoint.memoryReview?.onHttpError ?? endpoint.draft?.onHttpError;
-    if (!response.ok && onHttpError) {
-      // Session actions interpret only allowlisted codes. Metadata errors continue
-      // to ignore upstream bodies, including human-readable private messages.
+    if (!response.ok && (onHttpError || response.status === 429 || response.status === 503)) {
+      // Only fixed status/code pairs affect admission. Never retain upstream
+      // messages, request bodies or unbounded error-code strings.
       let code: string | undefined;
-      if (response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() === 'application/json') {
+      const length = response.headers?.get('content-length');
+      if ((!length || (/^[0-9]+$/.test(length) && Number(length) <= 4096)) &&
+        response.headers?.get('content-type')?.split(';')[0].trim().toLowerCase() === 'application/json') {
         try {
           progress('response-body', response.status);
           const text = await response.text();
           check();
           if (text.length <= 4096) {
             const error = JSON.parse(text)?.error;
-            if (error && typeof error.code === 'string') code = error.code;
+            if (error && typeof error.code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)) code = error.code;
           }
         } catch { check(); }
       }
       check();
-      throw onHttpError(response.status, code);
+      const retry = parseRetryAdvice(response.status, code, response.headers?.get('retry-after') ?? null);
+      if (retry) {
+        lease.record(origin, retry);
+        throw admissionError(retry);
+      }
+      if (onHttpError) throw onHttpError(response.status, code);
     }
     if (response.status === 401) throw new StoryProjectsError('authentication', 401);
     if (response.status === 403) throw new StoryProjectsError('forbidden', 403);

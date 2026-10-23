@@ -1,4 +1,5 @@
 import { File } from 'expo-file-system';
+import type { RetryAdvice } from './backoff';
 import {
   executeSessionAudioRequest, StoryProjectsError, validDate, validateStoryProjectId,
   type ListStoryProjectsOptions, type StoryProjectsErrorKind,
@@ -26,6 +27,7 @@ export const SIMULATED_TRANSCRIPT_NOTICE = '[SIMULATED TRANSCRIPT / SIMULERAD TR
   'Not derived from uploaded audio / Inte baserat på uppladdat ljud.]\n';
 
 const errorStatuses = {
+  RATE_LIMITED: 429, API_BUSY: 503,
   AUTHORIZATION_REQUIRED: 401, INVALID_ACCESS_TOKEN: 401, ACCESS_DENIED: 403,
   SESSION_NOT_FOUND: 404, PROJECT_NOT_FOUND: 404, UPLOAD_TIMEOUT: 408,
   SESSION_COMPLETED: 409, TRANSCRIPTION_IN_PROGRESS: 409, TRANSCRIPTION_CONFLICT: 409,
@@ -41,23 +43,23 @@ export type AudioTranscriptErrorCode = keyof typeof errorStatuses;
 /** Only known status/code pairs survive. Never retain server messages or bodies. */
 export class AudioTranscriptError extends StoryProjectsError {
   readonly code?: AudioTranscriptErrorCode;
-  constructor(kind: StoryProjectsErrorKind, status?: number, mayHaveWritten = false, code?: string) {
-    super(kind, status, mayHaveWritten);
+  constructor(kind: StoryProjectsErrorKind, status?: number, mayHaveWritten = false, code?: string, retry?: RetryAdvice) {
+    super(kind, status, mayHaveWritten, retry);
     this.name = 'AudioTranscriptError';
     if (typeof code === 'string' && Object.hasOwn(errorStatuses, code) &&
       errorStatuses[code as AudioTranscriptErrorCode] === status) this.code = code as AudioTranscriptErrorCode;
   }
 }
 
-function httpError(status: number, rawCode: string | undefined, writing: boolean): AudioTranscriptError {
+function httpError(status: number, rawCode: string | undefined, writing: boolean, retry?: RetryAdvice): AudioTranscriptError {
   const kind: StoryProjectsErrorKind = status === 401 ? 'authentication' : status === 403 ? 'forbidden'
     : status === 404 ? 'not-found' : status === 409 ? 'conflict' : status === 408 || status === 504 ? 'timeout'
     : [400, 413, 415, 422].includes(status) ? 'validation' : status >= 400 ? 'unavailable' : 'invalid-response';
   const safeCode = typeof rawCode === 'string' && Object.hasOwn(errorStatuses, rawCode) &&
     errorStatuses[rawCode as AudioTranscriptErrorCode] === status ? rawCode : undefined;
   // A disabled provider is rejected before the server takes a transcription claim.
-  const uncertain = writing && status >= 500 && safeCode !== 'TRANSCRIPTION_DISABLED';
-  return new AudioTranscriptError(kind, status, uncertain, safeCode);
+  const uncertain = writing && status >= 500 && safeCode !== 'TRANSCRIPTION_DISABLED' && !retry;
+  return new AudioTranscriptError(kind, status, uncertain, safeCode, retry);
 }
 
 interface SessionTranscriptOptions extends ListStoryProjectsOptions {
@@ -157,7 +159,7 @@ export async function uploadSessionRecording({ sessionId, expectedLanguage, reco
   try {
     const result = await executeSessionAudioRequest({ ...options, timeoutMs: options.timeoutMs ?? 60_000 }, {
       sessionId: selected.sessionId, action: 'transcribe', body, idempotencyKey,
-      onProgress: progress, onHttpError: (status, code) => httpError(status, code, true),
+      onProgress: progress, onHttpError: (status, code, retry) => httpError(status, code, true, retry),
     }, value => transcript(value, selected.sessionId, selected.language));
     report({ stage: 'completed', outcome: 'completed', status: httpStatus });
     finished = true;
@@ -177,7 +179,7 @@ export async function listSessionTranscripts({ sessionId, expectedLanguage,
   ...options }: SessionTranscriptOptions): Promise<AudioTranscript[]> {
   const selected = identity(sessionId, expectedLanguage);
   return executeSessionAudioRequest(options, { sessionId: selected.sessionId, action: 'transcripts',
-    onHttpError: (status, code) => httpError(status, code, false),
+    onHttpError: (status, code, retry) => httpError(status, code, false, retry),
   }, value => {
     if (!Array.isArray(value) || value.length > 50) throw new AudioTranscriptError('invalid-response');
     const rows = value.map(item => transcript(item, selected.sessionId, selected.language));

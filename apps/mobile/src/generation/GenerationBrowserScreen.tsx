@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useApiBackoff } from '../api/ApiBackoff';
 import { AccessibilityInfo, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { StoryDraft } from '../api/story-drafts';
 import type { StoryProjectsErrorKind } from '../api/story-projects';
@@ -22,7 +23,7 @@ function Button({ language, label, onPress, disabled = false, primary = false }:
 }) {
   const [focused, setFocused] = useState(false);
   return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityLanguage={accessibilityLanguages[language]}
-    accessibilityState={{ disabled }} disabled={disabled} onPress={onPress}
+    accessibilityState={{ disabled }} disabled={disabled} onPress={() => { if (!disabled) onPress(); }}
     onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
     style={({ pressed }) => [styles.button, primary && styles.primary, disabled && styles.disabled,
       disabled && primary && styles.disabledPrimary, focused && styles.focused, pressed && !disabled && styles.focused]}>
@@ -37,6 +38,7 @@ export function GenerationBrowserScreen(props: GenerationBrowserScreenProps) {
 function BrowserView({ language, storyLanguage, title, selectedDraftId, state, onOpen, onLoadMore,
   onRefresh, onBack, onSignOut }: GenerationBrowserScreenProps) {
   const text = generationBrowserCopy[language], locale = accessibilityLanguages[language];
+  const { waiting } = useApiBackoff();
   const [position, setPosition] = useState(0), sent = useRef(false);
   const busy = state.phase === 'loading' || state.phase === 'checking';
   const accessFailed = ['authentication', 'forbidden', 'not-found'].includes(state.error ?? '');
@@ -54,7 +56,7 @@ function BrowserView({ language, storyLanguage, title, selectedDraftId, state, o
     setPosition(next);
     if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(`${text.position} ${next + 1} ${text.of} ${items.length}`);
   };
-  const open = () => { if (item && actionable && !sent.current) { sent.current = true; onOpen(item.draft_id); } };
+  const open = () => { if (!waiting && item && actionable && !sent.current) { sent.current = true; onOpen(item.draft_id); } };
   return <Screen>
     <MemyBrand />
     <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={screenStyles.heading}>{text.title}</Text>
@@ -77,16 +79,16 @@ function BrowserView({ language, storyLanguage, title, selectedDraftId, state, o
           item.verification.method === 'manual_unverified' ? text.manual
             : item.verification.sources_current ? text.reviewed : text.stale
         }</Text>
-        <Button language={language} label={text.open} primary disabled={!actionable} onPress={open} />
+        <Button language={language} label={text.open} primary disabled={waiting || !actionable} onPress={open} />
         <Button language={language} label={text.previous} disabled={!actionable || index === 0} onPress={() => move(index - 1)} />
         <Button language={language} label={text.next} disabled={!actionable || index + 1 >= items.length} onPress={() => move(index + 1)} />
       </View>}
       {!accessFailed && state.bounded && <Text accessibilityLanguage={locale} allowFontScaling style={styles.notice}>{text.bounded}</Text>}
       {!accessFailed && state.hasMore && !state.bounded && <>
         <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.incomplete}</Text>
-        <Button language={language} label={text.more} disabled={!actionable} onPress={onLoadMore} />
+        <Button language={language} label={text.more} disabled={waiting || !actionable} onPress={onLoadMore} />
       </>}
-      <Button language={language} label={text.refresh} disabled={busy || accessFailed} onPress={onRefresh} />
+      <Button language={language} label={text.refresh} disabled={waiting || busy || accessFailed} onPress={onRefresh} />
       <Button language={language} label={text.back} onPress={onBack} />
       <Button language={language} label={text.signOut} onPress={onSignOut} />
     </View>

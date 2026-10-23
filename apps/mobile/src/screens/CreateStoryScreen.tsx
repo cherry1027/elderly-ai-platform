@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useApiBackoff } from '../api/ApiBackoff';
 import { AccessibilityInfo, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import {
   CreateStoryInputError, validateCreateStoryInput,
@@ -28,6 +29,7 @@ interface CreateStoryScreenProps {
 
 export function CreateStoryScreen({ language, state, serviceAvailable, onSubmit, onBack, onSignOut }: CreateStoryScreenProps) {
   const text = createStoryCopy[language];
+  const { waiting } = useApiBackoff();
   const [title, setTitle] = useState('');
   const [projectLanguage, setProjectLanguage] = useState<Language>(language);
   const [validation, setValidation] = useState<CreateStoryInputError['kind'] | null>(null);
@@ -77,7 +79,7 @@ export function CreateStoryScreen({ language, state, serviceAvailable, onSubmit,
   }
 
   function submit() {
-    if (disabled || submitted.current) return;
+    if (waiting || disabled || submitted.current) return;
     let input: CreateStoryProjectInput;
     try { input = validateCreateStoryInput({ title, language: projectLanguage }); }
     catch (error) {
@@ -160,10 +162,10 @@ export function CreateStoryScreen({ language, state, serviceAvailable, onSubmit,
           {saving && <Text accessibilityLiveRegion="polite" accessibilityLanguage={accessibilityLanguages[language]}
             allowFontScaling style={styles.notice}>{text.savingWarning}</Text>}
           <Pressable accessibilityRole="button" accessibilityLabel={saving ? text.saving : text.create}
-            accessibilityLanguage={accessibilityLanguages[language]} accessibilityState={{ disabled, busy: saving }} disabled={disabled}
+            accessibilityLanguage={accessibilityLanguages[language]} accessibilityState={{ disabled: disabled || waiting, busy: saving }} disabled={disabled || waiting}
             onPress={submit} onFocus={() => setFocused('create')} onBlur={() => setFocused(null)}
-            style={({ pressed }) => [styles.action, pressed && !disabled && styles.pressed,
-              focused === 'create' && styles.focused, disabled && styles.disabled]}>
+            style={({ pressed }) => [styles.action, pressed && !disabled && !waiting && styles.pressed,
+              focused === 'create' && styles.focused, (disabled || waiting) && styles.disabled]}>
             <Text allowFontScaling style={styles.actionLabel}>{saving ? text.saving : text.create}</Text>
           </Pressable>
         </>}

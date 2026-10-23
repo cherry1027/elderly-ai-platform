@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AccessibilityInfo, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { AudioTranscript } from '../api/audio-transcripts';
+import { useApiBackoff } from '../api/ApiBackoff';
 import type { ConversationMessage } from '../api/conversation-messages';
 import type { StoryProjectsErrorKind } from '../api/story-projects';
 import { LargeButton } from '../components/LargeButton';
@@ -34,12 +35,13 @@ export interface ConversationPanelProps {
 export function ConversationPanel({ language, state, transcripts, onSelect, onProcess,
   onReconcile, onRetry, onRefresh }: ConversationPanelProps) {
   const text = transcriptConversationCopy[language];
+  const { waiting } = useApiBackoff();
   const locale = accessibilityLanguages[language];
   const [focused, setFocused] = useState<string | null>(null);
   const busy = ['loading', 'processing', 'checking'].includes(state.phase);
   const selected = transcripts.find(transcript => transcript.transcript_id === state.selectedId);
   const canChoose = state.phase === 'ready' && state.complete;
-  const canProcess = canChoose && !!selected && !state.processedIds.includes(selected.transcript_id) && !state.blockedIds?.includes(selected.transcript_id);
+  const canProcess = !waiting && canChoose && !!selected && !state.processedIds.includes(selected.transcript_id) && !state.blockedIds?.includes(selected.transcript_id);
   const failure = state.phase === 'error' || state.phase === 'uncertain';
   const status = state.error ? text.errors[state.error] : text.statuses[state.phase];
   useEffect(() => {
@@ -74,7 +76,7 @@ export function ConversationPanel({ language, state, transcripts, onSelect, onPr
       </Pressable>;
     })}
     <Pressable accessibilityRole="button" accessibilityLabel={text.process} accessibilityLanguage={locale}
-      accessibilityState={{ disabled: !canProcess }} disabled={!canProcess} onPress={onProcess}
+      accessibilityState={{ disabled: !canProcess }} disabled={!canProcess} onPress={() => { if (canProcess) onProcess(); }}
       onFocus={() => setFocused('process')} onBlur={() => setFocused(null)}
       style={({ pressed }) => [styles.action, !canProcess && styles.disabledAction,
         canProcess && pressed && styles.pressed, focused === 'process' && styles.focused]}>
@@ -82,11 +84,11 @@ export function ConversationPanel({ language, state, transcripts, onSelect, onPr
     </Pressable>
     {failure && <>
       <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.retryNotice}</Text>
-      <LargeButton language={language} variant="secondary" label={text.reconcile} onPress={onReconcile} />
-      {state.canRetry && <LargeButton language={language} label={text.retry} onPress={onRetry} />}
+      <LargeButton language={language} variant="secondary" label={text.reconcile} disabled={waiting} onPress={onReconcile} />
+      {state.canRetry && <LargeButton language={language} label={text.retry} disabled={waiting} onPress={onRetry} />}
     </>}
     {state.phase === 'ready' && <LargeButton language={language} label={text.refresh}
-      variant="secondary" onPress={onRefresh} />}
+      variant="secondary" disabled={waiting} onPress={onRefresh} />}
     <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.subheading}>{text.historyTitle}</Text>
     {!busy && state.complete && !state.messages.length && <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.noMessages}</Text>}
     {state.messages.map(message => {

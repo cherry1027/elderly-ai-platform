@@ -107,6 +107,22 @@ it('completed immediately previous save is confirmed by GET without a second PAT
   await waitFor(() => expect(editor().state.phase).toBe('saved'));
   expect(editStoryDraft).toHaveBeenCalledTimes(1); expect(editor().state.dirty).toBe(false);
 });
+it.each(['RATE_LIMITED', 'API_BUSY'] as const)('%s retains wording/revision and waits for explicit reconciliation', async code => {
+  const advice = { code, retryAfterSeconds: 60, retryAt: Date.now() + 60_000 };
+  jest.mocked(editStoryDraft).mockRejectedValueOnce(new StoryProjectsError('unavailable', code === 'RATE_LIMITED' ? 429 : 503, false, advice));
+  render(<DraftEditing {...props()} />); await ready();
+  act(() => editor().onChangeText('My fictional edit.')); act(() => editor().onSave());
+  await waitFor(() => expect(editor().state.phase).toBe('uncertain'));
+  expect(editor().state.text).toBe('My fictional edit.');
+  expect(getStoryDraft).toHaveBeenCalledTimes(1); // No automatic reconciliation.
+  expect(editor().state.canRetry).toBe(false);
+  act(() => editor().onCheck());
+  await waitFor(() => expect(editor().state.canRetry).toBe(true));
+  act(() => editor().onRetry());
+  await waitFor(() => expect(editor().state.phase).toBe('saved'));
+  expect(jest.mocked(editStoryDraft).mock.calls[1][0].input).toEqual(jest.mocked(editStoryDraft).mock.calls[0][0].input);
+  expect(jest.mocked(editStoryDraft).mock.calls[1][0].input.expected_revision).toBe(1);
+});
 it('later equal text is a conflict, not proof of this exact completed edit', async () => {
   jest.mocked(editStoryDraft).mockRejectedValueOnce(new StoryProjectsError('timeout', undefined, true));
   jest.mocked(getStoryDraft).mockResolvedValueOnce(draft()).mockResolvedValue(draft(4, 'My fictional edit.'));

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AccessibilityInfo, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { StoryDraft, StoryEdit } from '../api/story-drafts';
+import { useApiBackoff } from '../api/ApiBackoff';
 import type { StoryProjectsErrorKind } from '../api/story-projects';
 import { MemyBrand } from '../components/BrandArtwork';
 import { Screen, screenStyles } from '../components/Screen';
@@ -22,6 +23,7 @@ export function DraftHistoryScreen(props: DraftHistoryScreenProps) {
 }
 function DraftHistoryView({ language, storyLanguage, title, state, onLoadMore, onRefresh, onBack, onSignOut }: DraftHistoryScreenProps) {
   const text = draftEditingCopy[language], locale = accessibilityLanguages[language], contentLocale = accessibilityLanguages[storyLanguage];
+  const { waiting } = useApiBackoff();
   const [selected, setSelected] = useState(0), [originalOpen, setOriginalOpen] = useState(false);
   const scroll = useRef<ScrollView>(null);
   const noticeY = useRef(0), contentY = useRef(0), panelY = useRef(0);
@@ -81,10 +83,10 @@ function DraftHistoryView({ language, storyLanguage, title, state, onLoadMore, o
           <DraftEditingButton language={language} label={text.next} disabled={busy || index + 1 >= state.items.length}
             onPress={() => navigate(index + 1)} />
         </View>}
-        {state.hasMore && <DraftEditingButton language={language} label={text.loadMore} primary disabled={busy || state.phase === 'error'} onPress={onLoadMore} />}
+        {state.hasMore && <DraftEditingButton language={language} label={text.loadMore} primary disabled={waiting || busy || state.phase === 'error'} onPress={onLoadMore} />}
       </>}
       <DraftEditingButton language={language} label={text.refresh} primary={state.phase === 'error' && !accessFailed}
-        disabled={busy || accessFailed} onPress={onRefresh} />
+        disabled={waiting || busy || accessFailed} onPress={onRefresh} />
       <DraftEditingButton language={language} label={text.back} onPress={onBack} />
       <DraftEditingButton language={language} label={text.signOut} onPress={onSignOut} />
     </View>

@@ -7,6 +7,7 @@ interface LargeButtonProps {
   label: string;
   language: Language;
   onPress: () => void;
+  disabled?: boolean;
   variant?: 'primary' | 'secondary';
 }
 
@@ -14,6 +15,7 @@ export function LargeButton({
   label,
   language,
   onPress,
+  disabled = false,
   variant = 'primary',
 }: LargeButtonProps) {
   const [focused, setFocused] = useState(false);
@@ -24,13 +26,16 @@ export function LargeButton({
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityLanguage={accessibilityLanguages[language]}
-      onPress={onPress}
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={() => { if (!disabled) onPress(); }}
       onFocus={() => setFocused(true)}
       onBlur={() => setFocused(false)}
       style={({ pressed }) => [
         styles.button,
         primary ? styles.primary : styles.secondary,
-        pressed && (primary ? styles.primaryPressed : styles.secondaryPressed),
+        pressed && !disabled && (primary ? styles.primaryPressed : styles.secondaryPressed),
+        disabled && styles.disabled,
         focused && styles.focused,
       ]}
     >
@@ -76,6 +81,7 @@ const styles = StyleSheet.create({
   focused: {
     borderColor: colors.ink,
   },
+  disabled: { opacity: 0.65 },
   label: {
     color: colors.forest,
     fontSize: 22,

@@ -215,6 +215,12 @@ function ScopedExports(props: StoryExportsProps) {
       const safe = safeError(error);
       if (accessFailure(safe)) { fail(safe); return; }
       if (error instanceof NativePdfError) { fail(error); return; }
+      if (safe.retry) {
+        // A wait during export verification cannot discard an earlier uncertain
+        // snapshot or start more reads. Refresh reconciles explicitly afterward.
+        fail(safe, !!pending.current);
+        return;
+      }
       if (safe.kind === 'conflict') {
         pending.current = null;
         try {

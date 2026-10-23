@@ -9,6 +9,7 @@ import { RegistrationProvider } from '../auth/RegistrationProvider';
 import { readStoryPreviewEnabled } from '../development/story-preview-config';
 import { StoryPreview } from '../development/StoryPreview';
 import { PdfPrivacyProvider } from '../exports/PdfPrivacy';
+import { ApiBackoffProvider } from '../api/ApiBackoff';
 
 export default function RootLayout() {
   // The explicit sample launcher never mounts account or preference providers.
@@ -16,6 +17,7 @@ export default function RootLayout() {
   return <SafeAreaProvider>
     <LanguageProvider>
       <AuthProvider>
+        <ApiBackoffProvider>
         <PdfPrivacyProvider>
         <GenerationActionsProvider>
         <RegistrationProvider>
@@ -35,6 +37,7 @@ export default function RootLayout() {
         </RegistrationProvider>
         </GenerationActionsProvider>
       </PdfPrivacyProvider>
+        </ApiBackoffProvider>
       </AuthProvider>
     </LanguageProvider>
   </SafeAreaProvider>;

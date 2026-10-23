@@ -106,6 +106,7 @@ it('reloads a 409 and requires explicit re-review without another PATCH', async 
   expect(patchMemory).toHaveBeenCalledTimes(1); expect(presentation().state.memories[0]).toEqual(revised);
   act(() => presentation().onSave(fact(), 'confirmed', '1977'));
   expect(patchMemory).toHaveBeenCalledTimes(1); // Old version callback is not reusable.
+  act(() => presentation().onReviewLatest()); // Explicitly discard the old review; no automatic rebase.
   jest.mocked(patchMemory).mockResolvedValueOnce(fact({ status: 'confirmed', corrected_value: '1977', version: 4 }));
   jest.mocked(listMemoryReview).mockResolvedValueOnce({ memories: [fact({ status: 'confirmed', corrected_value: '1977', version: 4 })],
     clarifications: [], complete: true });
@@ -120,7 +121,7 @@ it.each(['network', 'timeout', 'invalid-response', 'unavailable'] as const)(
     render(<MemoryReview {...props()} />); await ready();
     act(() => presentation().onSave(fact(), 'confirmed'));
     await waitFor(() => expect(presentation().state.phase).toBe('uncertain'));
-    expect(presentation().state.memories).toEqual([]);
+    expect(presentation().state.retainedReview).toMatchObject({ memoryId: factId, expectedVersion: 1, canRetry: false });
     expect(patchMemory).toHaveBeenCalledTimes(1); expect(listMemoryReview).toHaveBeenCalledTimes(1);
     act(() => presentation().onRefresh()); await ready();
     expect(listMemoryReview).toHaveBeenCalledTimes(2); expect(patchMemory).toHaveBeenCalledTimes(1);

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AccessibilityInfo, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView,
   StyleSheet, Text, TextInput, View } from 'react-native';
 import type { StoryDraft } from '../api/story-drafts';
+import { useApiBackoff } from '../api/ApiBackoff';
 import type { StoryProjectsErrorKind } from '../api/story-projects';
 import { MemyBrand } from '../components/BrandArtwork';
 import { Screen, screenStyles } from '../components/Screen';
@@ -29,7 +30,7 @@ export function DraftEditingButton({ language, label, onPress, disabled = false,
 }) {
   const [focused, setFocused] = useState(false);
   return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityLanguage={accessibilityLanguages[language]}
-    accessibilityState={{ disabled, ...(expanded === undefined ? {} : { expanded }) }} disabled={disabled} onPress={onPress}
+    accessibilityState={{ disabled, ...(expanded === undefined ? {} : { expanded }) }} disabled={disabled} onPress={() => { if (!disabled) onPress(); }}
     onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
     style={({ pressed }) => [styles.button, primary ? styles.primary : styles.secondary, disabled && styles.disabled,
       primary && disabled && styles.disabledPrimary, focused && styles.focused, pressed && !disabled && styles.pressed]}>
@@ -41,6 +42,7 @@ export function DraftEditingButton({ language, label, onPress, disabled = false,
 export function DraftEditorScreen({ language, storyLanguage, title, state, onChangeText, onSave, onCheck,
   onRetry, onUseLatest, onKeepMine, onBack, onSignOut }: DraftEditorScreenProps) {
   const text = draftEditingCopy[language], locale = accessibilityLanguages[language];
+  const { waiting } = useApiBackoff();
   const scroll = useRef<ScrollView>(null);
   const positions = useRef({ content: 0, form: 0, notice: 0 });
   const submitted = useRef(false);
@@ -70,7 +72,7 @@ export function DraftEditorScreen({ language, storyLanguage, title, state, onCha
     if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(message);
   }, [message, state.validation, state.error, state.phase, reveal]);
   const save = () => {
-    if (!editable || !state.dirty || submitted.current) return;
+    if (waiting || !editable || !state.dirty || submitted.current) return;
     submitted.current = true; Keyboard.dismiss();
     if (state.validation) {
       reveal();
@@ -117,18 +119,18 @@ export function DraftEditorScreen({ language, storyLanguage, title, state, onCha
             <DraftEditingButton language={language} label={text.keepMine} primary onPress={() => act(onKeepMine)} />
             <DraftEditingButton language={language} label={text.useLatest} onPress={() => act(onUseLatest)} />
           </> : <>
-            {editable && <DraftEditingButton language={language} label={text.save} primary disabled={!state.dirty} onPress={save} />}
+            {editable && <DraftEditingButton language={language} label={text.save} primary disabled={waiting || !state.dirty} onPress={save} />}
             {(state.phase === 'uncertain' || state.phase === 'error' || state.phase === 'conflict') &&
-              <DraftEditingButton language={language} label={text.check} primary={!canRetry} onPress={() => act(onCheck)} />}
+              <DraftEditingButton language={language} label={text.check} primary={!canRetry} disabled={waiting} onPress={() => act(onCheck)} />}
             {canRetry && <>
               <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.retryHelp}</Text>
-              <DraftEditingButton language={language} label={text.retry} primary onPress={() => {
+              <DraftEditingButton language={language} label={text.retry} primary disabled={waiting} onPress={() => {
                 if (submitted.current) return; submitted.current = true; act(onRetry);
               }} />
             </>}
           </>}
         </>}
-        {!visible && state.phase === 'error' && !accessFailed && <DraftEditingButton language={language} label={text.check} primary onPress={onCheck} />}
+        {!visible && state.phase === 'error' && !accessFailed && <DraftEditingButton language={language} label={text.check} primary disabled={waiting} onPress={onCheck} />}
         <DraftEditingButton language={language} label={text.back} primary={state.phase === 'saved' && !state.error} onPress={() => act(onBack)} />
         <DraftEditingButton language={language} label={text.signOut} onPress={() => act(onSignOut)} />
       </View>

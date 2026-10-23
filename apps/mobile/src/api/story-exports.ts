@@ -1,4 +1,5 @@
 
+import type { RetryAdvice } from './backoff';
 import { sameDraftOriginal, type StoryDraft, type StoryDraftOptions } from './story-drafts';
 import { executeStoryExportRequest, StoryProjectsError, validDate, validateCreateStoryInput,
   validateStoryProjectId, type StoryPdfResponse, type StoryProjectsErrorKind } from './story-projects';
@@ -18,6 +19,7 @@ export interface ListStoryExportsOptions extends StoryDraftOptions { limit?: num
 export interface StoryExportsPage { items: StoryExport[]; hasMore: boolean }
 
 const errorStatuses = {
+  RATE_LIMITED: 429, API_BUSY: 503,
   AUTHORIZATION_REQUIRED: 401, INVALID_ACCESS_TOKEN: 401, ACCESS_DENIED: 403,
   PROJECT_NOT_FOUND: 404, RESOURCE_NOT_FOUND: 404, EXPORT_SOURCE_CHANGED: 409,
   VALIDATION_ERROR: 422, PDF_INVALID_REQUEST: 422, PDF_EMPTY_DRAFT: 422, PDF_UNSUPPORTED_CHARACTER: 422,
@@ -27,18 +29,18 @@ const errorStatuses = {
 export type StoryExportsErrorCode = keyof typeof errorStatuses;
 export class StoryExportsError extends StoryProjectsError {
   readonly code?: StoryExportsErrorCode;
-  constructor(kind: StoryProjectsErrorKind, status?: number, mayHaveWritten = false, code?: string) {
-    super(kind, status, mayHaveWritten); this.name = 'StoryExportsError';
+  constructor(kind: StoryProjectsErrorKind, status?: number, mayHaveWritten = false, code?: string, retry?: RetryAdvice) {
+    super(kind, status, mayHaveWritten, retry); this.name = 'StoryExportsError';
     if (code && Object.hasOwn(errorStatuses, code) && errorStatuses[code as StoryExportsErrorCode] === status) {
       this.code = code as StoryExportsErrorCode;
     }
   }
 }
-function httpError(status: number, code: string | undefined, writing: boolean) {
+function httpError(status: number, code: string | undefined, writing: boolean, retry?: RetryAdvice) {
   const kind: StoryProjectsErrorKind = status === 401 ? 'authentication' : status === 403 ? 'forbidden'
     : status === 404 ? 'not-found' : status === 409 ? 'conflict' : status === 408 || status === 504 ? 'timeout'
     : status === 400 || status === 422 ? 'validation' : status >= 400 ? 'unavailable' : 'invalid-response';
-  return new StoryExportsError(kind, status, writing && status >= 500, code);
+  return new StoryExportsError(kind, status, writing && status >= 500 && !retry, code, retry);
 }
 function invalid(): never { throw new StoryExportsError('invalid-response'); }
 function object(value: unknown, fields: string[]): Record<string, unknown> {
@@ -120,7 +122,7 @@ async function safe<T>(operation: () => Promise<T>): Promise<T> {
   try { return await operation(); }
   catch (error) {
     if (error instanceof StoryExportsError) throw error;
-    if (error instanceof StoryProjectsError) throw new StoryExportsError(error.kind, error.status, error.mayHaveWritten);
+    if (error instanceof StoryProjectsError) throw new StoryExportsError(error.kind, error.status, error.mayHaveWritten, undefined, error.retry);
     throw new StoryExportsError('invalid-response');
   }
 }
@@ -134,7 +136,7 @@ export function exportStoryPdf(options: ExportStoryPdfOptions): Promise<StoryPdf
     const draftId = validateStoryProjectId(before.draft_id), version = before.version, revision = before.revision;
     return executeStoryExportRequest({ ...options, timeoutMs: options.timeoutMs ?? 30_000 }, {
       action: 'create', projectId: selected.projectId, draftId,
-      onHttpError: (status, code) => httpError(status, code, true),
+      onHttpError: (status, code, retry) => httpError(status, code, true, retry),
     }, value => pdf(value, { version, revision }));
   });
 }
@@ -147,7 +149,7 @@ export function downloadStoryPdf(options: DownloadStoryPdfOptions): Promise<Stor
     try { audit = metadata(options.metadata, selected); } catch { throw new StoryExportsError('validation'); }
     return executeStoryExportRequest({ ...options, timeoutMs: options.timeoutMs ?? 30_000 }, {
       action: 'download', projectId: selected.projectId, exportId: audit.export_id,
-      onHttpError: (status, code) => httpError(status, code, false),
+      onHttpError: (status, code, retry) => httpError(status, code, false, retry),
     }, value => pdf(value, { version: audit.draft_version, revision: audit.draft_revision,
       exportId: audit.export_id, filename: audit.filename }));
   });
@@ -161,7 +163,7 @@ export function listStoryExports(options: ListStoryExportsOptions): Promise<Stor
       !Number.isSafeInteger(offset) || offset < 0 || offset > 100_000 ||
       options.limit === null || options.offset === null) throw new StoryExportsError('validation');
     return executeStoryExportRequest(options, { action: 'list', projectId: selected.projectId, limit, offset,
-      onHttpError: (status, code) => httpError(status, code, false) }, value => {
+      onHttpError: (status, code, retry) => httpError(status, code, false, retry) }, value => {
       if (!Array.isArray(value) || value.length > limit) invalid();
       const ids = new Set<string>(); let previous: StoryExport | null = null;
       const items = value.map(item => {

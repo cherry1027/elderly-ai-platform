@@ -105,6 +105,23 @@ it.each(['en', 'sv'] as const)('enters with authenticated GET-only reads of the 
   await jest.mocked(getStoryDraft).mock.calls[0][0].getAccessToken(); expect(token).toHaveBeenCalledWith('account-a');
   expect(exportStoryPdf).not.toHaveBeenCalled(); expect(cache.save).not.toHaveBeenCalled(); expect(cache.share).not.toHaveBeenCalled();
 });
+it.each(['RATE_LIMITED', 'API_BUSY'] as const)('%s preserves the export snapshot without automatic reconciliation or sharing', async code => {
+  const advice = { code, retryAfterSeconds: 60, retryAt: Date.now() + 60_000 };
+  jest.mocked(exportStoryPdf).mockRejectedValueOnce(new StoryProjectsError('unavailable', code === 'RATE_LIMITED' ? 429 : 503, false, advice));
+  jest.mocked(listStoryExports).mockResolvedValue({ items: [], hasMore: false });
+  render(<StoryExports {...props()} />); await ready();
+  act(() => ui().onPrepare());
+  await waitFor(() => expect(ui().state.phase).toBe('uncertain'));
+  const reads = jest.mocked(listStoryExports).mock.calls.length;
+  await act(async () => { await flush(); });
+  expect(listStoryExports).toHaveBeenCalledTimes(reads);
+  expect(exportStoryPdf).toHaveBeenCalledTimes(1);
+  expect(cache.save).not.toHaveBeenCalled(); expect(cache.share).not.toHaveBeenCalled();
+  act(() => ui().onRefresh());
+  await waitFor(() => expect(ui().state.notice).toBe('uncertain'));
+  expect(exportStoryPdf).toHaveBeenCalledTimes(1);
+  expect(cache.share).not.toHaveBeenCalled();
+});
 it('explicit preparation rechecks saved wording/title, POSTs the captured baseline and matches persisted audit before saving bytes', async () => {
   const snapshot = draft(), bytes = pdf(); jest.mocked(exportStoryPdf).mockResolvedValueOnce(bytes);
   render(<StoryExports {...props()} />); await ready(); act(() => ui().onPrepare()); await prepared();

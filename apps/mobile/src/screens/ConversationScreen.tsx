@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
+import { useApiBackoff } from '../api/ApiBackoff';
 import { AccessibilityInfo, Platform, StyleSheet, Text, View } from 'react-native';
 import type { StoryProject, StoryProjectsErrorKind } from '../api/story-projects';
 import { MemyBrand } from '../components/BrandArtwork';
@@ -28,6 +29,7 @@ interface Props {
 /** A verified-session landing screen, with an optional authenticated audio panel. */
 export function ConversationScreen({ language, state, onCheck, onBack, onSignOut, recordingPanel, onReviewMemories, backLabel }: Props) {
   const text = conversationCopy[language];
+  const { waiting } = useApiBackoff();
   const locale = accessibilityLanguages[language];
   const message = state.status === 'error' ? [text.errors[state.error], state.reconcile && text.uncertain].filter(Boolean).join(' ')
     : state.status === 'ready' ? text.ready : text.loading;
@@ -47,7 +49,7 @@ export function ConversationScreen({ language, state, onCheck, onBack, onSignOut
           allowFontScaling style={styles.notice}>{text.errors[state.error]}</Text>
         {state.reconcile && <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.uncertain}</Text>}
         {!['configuration', 'authentication', 'forbidden', 'not-found', 'validation'].includes(state.error) &&
-          <LargeButton label={text.check} language={language} onPress={onCheck} />}
+          <LargeButton label={text.check} language={language} disabled={waiting} onPress={onCheck} />}
       </>}
       {state.status === 'ready' && <>
         <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[state.project.language]}

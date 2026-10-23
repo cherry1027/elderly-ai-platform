@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { useApiBackoff } from '../api/ApiBackoff';
 import { AccessibilityInfo, Platform, StyleSheet, Text, View } from 'react-native';
 import type { StoryProject, StoryProjectsErrorKind } from '../api/story-projects';
 import { MemyBrand } from '../components/BrandArtwork';
@@ -26,6 +27,7 @@ interface Props {
 
 export function StoryDetailsScreen({ language, state, onEdit, onRefresh, onBack, onSignOut, onConversation, onGenerate }: Props) {
   const text = storyDetailsCopy[language];
+  const { waiting } = useApiBackoff();
   const message = state.status === 'error' ? text.errors[state.error]
     : state.status === 'ready' && state.saved ? text.saved : null;
   useEffect(() => {
@@ -60,7 +62,7 @@ export function StoryDetailsScreen({ language, state, onEdit, onRefresh, onBack,
         {onConversation && <LargeButton label={text.conversation} language={language} variant={onGenerate ? 'secondary' : 'primary'} onPress={onConversation} />}
       </>}
       {state.status !== 'loading' && !(state.status === 'error' && state.error === 'authentication') &&
-        <LargeButton label={text.refresh} language={language} variant="secondary" onPress={onRefresh} />}
+        <LargeButton label={text.refresh} language={language} variant="secondary" disabled={waiting} onPress={onRefresh} />}
       <LargeButton label={text.back} language={language} variant="secondary" onPress={onBack} />
       <LargeButton label={text.signOut} language={language} variant="secondary" onPress={onSignOut} />
     </View>

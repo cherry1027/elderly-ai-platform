@@ -1,4 +1,5 @@
 import { SIMULATED_TRANSCRIPT_NOTICE, type AudioTranscript } from './audio-transcripts';
+import type { RetryAdvice } from './backoff';
 import {
   executeSessionConversationRequest, StoryProjectsError, validDate, validateStoryProjectId,
   type ListStoryProjectsOptions, type StoryProjectsErrorKind,
@@ -60,6 +61,7 @@ export interface ProcessTranscriptOptions extends ConversationMessagesOptions {
   idempotencyKey: string;
 }
 const errorStatuses = {
+  RATE_LIMITED: 429, API_BUSY: 503,
   AUTHORIZATION_REQUIRED: 401, INVALID_ACCESS_TOKEN: 401, ACCESS_DENIED: 403,
   SESSION_NOT_FOUND: 404, PROJECT_NOT_FOUND: 404, SOURCE_NOT_FOUND: 404, RESOURCE_NOT_FOUND: 404,
   IDEMPOTENCY_CONFLICT: 409, CONVERSATION_CHANGED: 409, SESSION_COMPLETED: 409, CONTEXT_LIMIT: 409,
@@ -70,22 +72,22 @@ const errorStatuses = {
 export type ConversationMessagesErrorCode = keyof typeof errorStatuses;
 export class ConversationMessagesError extends StoryProjectsError {
   readonly code?: ConversationMessagesErrorCode;
-  constructor(kind: StoryProjectsErrorKind, status?: number, mayHaveWritten = false, code?: string) {
-    super(kind, status, mayHaveWritten);
+  constructor(kind: StoryProjectsErrorKind, status?: number, mayHaveWritten = false, code?: string, retry?: RetryAdvice) {
+    super(kind, status, mayHaveWritten, retry);
     this.name = 'ConversationMessagesError';
     if (code && Object.hasOwn(errorStatuses, code) && errorStatuses[code as ConversationMessagesErrorCode] === status) {
       this.code = code as ConversationMessagesErrorCode;
     }
   }
 }
-function httpError(status: number, code: string | undefined, writing: boolean): ConversationMessagesError {
+function httpError(status: number, code: string | undefined, writing: boolean, retry?: RetryAdvice): ConversationMessagesError {
   const kind: StoryProjectsErrorKind = status === 401 ? 'authentication' : status === 403 ? 'forbidden'
     : status === 404 ? 'not-found' : status === 409 ? 'conflict' : status === 504 || status === 408 ? 'timeout'
     : status === 400 || status === 422 ? 'validation' : status >= 400 ? 'unavailable' : 'invalid-response';
   const safeCode = code && Object.hasOwn(errorStatuses, code) &&
     errorStatuses[code as ConversationMessagesErrorCode] === status ? code : undefined;
   return new ConversationMessagesError(kind, status,
-    writing && status >= 500 && safeCode !== 'CONVERSATION_DISABLED', safeCode);
+    writing && status >= 500 && safeCode !== 'CONVERSATION_DISABLED' && !retry, safeCode, retry);
 }
 function invalid(): never { throw new ConversationMessagesError('invalid-response'); }
 function object(value: unknown, fields: string[]): Record<string, unknown> {
@@ -169,7 +171,7 @@ export async function processTranscript({ sessionId, expectedLanguage, projectId
   return executeSessionConversationRequest({ ...options, timeoutMs: options.timeoutMs ?? 30_000 }, {
     sessionId: selected.id, method: 'POST', idempotencyKey,
     input: { source_message_id: original.transcript_id, language: selected.language },
-    onHttpError: (status, code) => httpError(status, code, true),
+    onHttpError: (status, code, retry) => httpError(status, code, true, retry),
   }, value => {
     const row = object(value, ['user_message', 'message', 'memories', 'clarifications', 'requires_clarification', 'mode']);
     const user = message(row.user_message, selected.id, selected.language);
@@ -199,7 +201,7 @@ export async function listConversationMessages({ sessionId, expectedLanguage,
   for (let offset = 0; offset < 1000; offset += 100) {
     if (options.signal?.aborted) throw new ConversationMessagesError('cancelled');
     const page = await executeSessionConversationRequest(options, { sessionId: selected.id, method: 'GET',
-      limit: 100, offset, onHttpError: (status, code) => httpError(status, code, false),
+      limit: 100, offset, onHttpError: (status, code, retry) => httpError(status, code, false, retry),
     }, value => {
       if (!Array.isArray(value) || value.length > 100) invalid();
       return value.map(item => message(item, selected.id, selected.language));

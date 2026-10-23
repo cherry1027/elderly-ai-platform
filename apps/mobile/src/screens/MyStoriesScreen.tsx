@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useApiBackoff } from '../api/ApiBackoff';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { StoryProject, StoryProjectsErrorKind } from '../api/story-projects';
 import type { AuthUser } from '../auth/client';
@@ -26,11 +27,12 @@ interface MyStoriesScreenProps {
 
 export function MyStoriesScreen({ language, user, state, onRefresh, onCreateStory, onOpenStory, onSignOut }: MyStoriesScreenProps) {
   const text = storiesCopy[language];
+  const { waiting } = useApiBackoff();
   const [refreshFocused, setRefreshFocused] = useState(false);
   const [createFocused, setCreateFocused] = useState(false);
   const loading = state.status === 'loading';
   const authenticationFailed = state.status === 'error' && state.error === 'authentication';
-  const refreshDisabled = loading || authenticationFailed;
+  const refreshDisabled = waiting || loading || authenticationFailed;
   const projects = state.status === 'ready' ? state.projects.slice(0, 50) : [];
 
   return <Screen>
@@ -55,7 +57,7 @@ export function MyStoriesScreen({ language, user, state, onRefresh, onCreateStor
       <Pressable accessibilityRole="button" accessibilityLabel={loading ? text.refreshing : text.refresh}
         accessibilityLanguage={accessibilityLanguages[language]}
         accessibilityState={{ disabled: refreshDisabled, busy: loading }} disabled={refreshDisabled}
-        onPress={onRefresh} onFocus={() => setRefreshFocused(true)} onBlur={() => setRefreshFocused(false)}
+        onPress={() => { if (!refreshDisabled) onRefresh(); }} onFocus={() => setRefreshFocused(true)} onBlur={() => setRefreshFocused(false)}
         style={({ pressed }) => [styles.refresh, pressed && !refreshDisabled && styles.pressed,
           refreshFocused && styles.focused, refreshDisabled && styles.disabled]}>
         <Text allowFontScaling style={styles.refreshLabel}>{loading ? text.refreshing : text.refresh}</Text>

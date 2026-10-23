@@ -1,3 +1,4 @@
+import type { RetryAdvice } from './backoff';
 import { executeMemoryReviewRequest, StoryProjectsError, validDate, validateStoryProjectId,
   type ListStoryProjectsOptions, type StoryProjectsErrorKind } from './story-projects';
 
@@ -22,6 +23,7 @@ export interface PatchMemoryOptions extends MemoryReviewOptions { memory: Memory
 export interface MemoryReview { memories: MemoryFact[]; clarifications: MemoryClarification[]; complete: boolean }
 
 const errorStatuses = {
+  RATE_LIMITED: 429, API_BUSY: 503,
   AUTHORIZATION_REQUIRED: 401, INVALID_ACCESS_TOKEN: 401, ACCESS_DENIED: 403,
   SESSION_NOT_FOUND: 404, PROJECT_NOT_FOUND: 404, MEMORY_NOT_FOUND: 404, RESOURCE_NOT_FOUND: 404,
   CONVERSATION_CHANGED: 409, IDEMPOTENCY_CONFLICT: 409, VALIDATION_ERROR: 422,
@@ -30,19 +32,19 @@ const errorStatuses = {
 export type MemoryReviewErrorCode = keyof typeof errorStatuses;
 export class MemoryReviewError extends StoryProjectsError {
   readonly code?: MemoryReviewErrorCode;
-  constructor(kind: StoryProjectsErrorKind, status?: number, mayHaveWritten = false, code?: string) {
-    super(kind, status, mayHaveWritten);
+  constructor(kind: StoryProjectsErrorKind, status?: number, mayHaveWritten = false, code?: string, retry?: RetryAdvice) {
+    super(kind, status, mayHaveWritten, retry);
     this.name = 'MemoryReviewError';
     if (code && Object.hasOwn(errorStatuses, code) && errorStatuses[code as MemoryReviewErrorCode] === status) {
       this.code = code as MemoryReviewErrorCode;
     }
   }
 }
-function httpError(status: number, code: string | undefined, writing: boolean) {
+function httpError(status: number, code: string | undefined, writing: boolean, retry?: RetryAdvice) {
   const kind: StoryProjectsErrorKind = status === 401 ? 'authentication' : status === 403 ? 'forbidden'
     : status === 404 ? 'not-found' : status === 409 ? 'conflict' : status === 408 || status === 504 ? 'timeout'
     : status === 400 || status === 422 ? 'validation' : status >= 400 ? 'unavailable' : 'invalid-response';
-  return new MemoryReviewError(kind, status, writing && status >= 500, code);
+  return new MemoryReviewError(kind, status, writing && status >= 500 && !retry, code, retry);
 }
 function invalid(): never { throw new MemoryReviewError('invalid-response'); }
 function object(value: unknown, fields: string[]): Record<string, unknown> {
@@ -111,7 +113,7 @@ async function list<T extends { id: string; created_at: string }>(options: Memor
   for (let offset = 0; offset < 1000; offset += 100) {
     if (options.signal?.aborted) throw new MemoryReviewError('cancelled');
     const page = await executeMemoryReviewRequest(options, { method: 'GET', sessionId, action, limit: 100, offset,
-      onHttpError: (status, code) => httpError(status, code, false) }, value => {
+      onHttpError: (status, code, retry) => httpError(status, code, false, retry) }, value => {
       if (!Array.isArray(value) || value.length > 100) invalid();
       return value.map(decode);
     });
@@ -168,7 +170,7 @@ export async function patchMemory({ memory, input: rawInput, ...options }: Patch
   const correction = input.status === 'rejected' ? null : input.corrected_value ?? before.corrected_value;
   const unchanged = input.status === before.status && correction === before.corrected_value;
   return executeMemoryReviewRequest(options, { method: 'PATCH', memoryId: before.id, input,
-    onHttpError: (status, code) => httpError(status, code, true) }, value => {
+    onHttpError: (status, code, retry) => httpError(status, code, true, retry) }, value => {
     const after = fact(value, selected.projectId, selected.sessionId);
     if (after.id !== before.id || after.source_message_id !== before.source_message_id ||
       after.fact_type !== before.fact_type || after.value !== before.value || after.evidence !== before.evidence ||

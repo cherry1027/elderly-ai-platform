@@ -20,6 +20,10 @@ export const memoryReviewCopy = {
     incomplete: 'Some memories or sources could not be checked. Refresh before saving a review.',
     empty: 'There are no memory suggestions to review yet.',
     saved: 'Your review was saved.', conflict: 'This memory changed. Refresh, read the latest version and choose your review again.',
+    retained: 'Your review choice is kept on this screen. Refresh to check the saved memory before choosing Save review again.',
+    retainedConflict: 'Your earlier review is kept above. Read the latest saved value below, then choose Review latest memory to start a new review.',
+    latestValue: 'Latest saved review value', reviewLatest: 'Review latest memory',
+    missingReviewMemory: 'This memory is no longer in the current list. Your earlier review is kept here. Return to your conversation or refresh later.',
     uncertain: 'We could not confirm whether your review was saved. Refresh before making another change.',
     errors: {
       configuration: 'Memory review is not configured in this development app.', authentication: 'Your sign-in could not be verified. Sign out and log in again.',
@@ -55,6 +59,10 @@ export const memoryReviewCopy = {
     incomplete: 'Vissa minnen eller källor kunde inte kontrolleras. Uppdatera innan du sparar en granskning.',
     empty: 'Det finns inga minnesförslag att granska ännu.',
     saved: 'Din granskning har sparats.', conflict: 'Minnet har ändrats. Uppdatera, läs den senaste versionen och välj din granskning igen.',
+    retained: 'Ditt granskningsval finns kvar på den här skärmen. Uppdatera för att kontrollera det sparade minnet innan du väljer Spara granskning igen.',
+    retainedConflict: 'Din tidigare granskning finns kvar ovan. Läs det senast sparade värdet nedan och välj Granska det senaste minnet för att börja en ny granskning.',
+    latestValue: 'Senast sparade granskningsvärde', reviewLatest: 'Granska det senaste minnet',
+    missingReviewMemory: 'Minnet finns inte längre i den aktuella listan. Din tidigare granskning finns kvar här. Gå tillbaka till samtalet eller uppdatera senare.',
     uncertain: 'Vi kunde inte bekräfta om granskningen sparades. Uppdatera innan du gör en ny ändring.',
     errors: {
       configuration: 'Minnesgranskning är inte konfigurerad i den här utvecklingsappen.', authentication: 'Din inloggning kunde inte verifieras. Logga ut och logga in igen.',

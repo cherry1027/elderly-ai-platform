@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AccessibilityInfo, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { AudioTranscript, AudioUploadDiagnostic } from '../api/audio-transcripts';
+import { useApiBackoff } from '../api/ApiBackoff';
 import { LargeButton } from '../components/LargeButton';
 import { accessibilityLanguages, type Language } from '../i18n';
 import { colors, headingFont, layout } from '../theme';
@@ -39,6 +40,7 @@ function durationLabel(milliseconds: number) {
 export function RecordingPanel({ language, state, onStart, onStop, onConsentChange, onUpload,
   onDiscard, onRetryHistory }: RecordingPanelProps) {
   const text = audioCopy[language];
+  const { waiting } = useApiBackoff();
   const locale = accessibilityLanguages[language];
   const [focused, setFocused] = useState(false);
   const busy = ['permission', 'preparing', 'stopping', 'uploading'].includes(state.phase);
@@ -84,9 +86,9 @@ export function RecordingPanel({ language, state, onStart, onStop, onConsentChan
         <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.consentHint}</Text>
         <Pressable accessibilityRole="button" accessibilityLanguage={locale}
           accessibilityLabel={state.phase === 'ready' ? text.upload : text.retry}
-          accessibilityState={{ disabled: !state.consent }} disabled={!state.consent}
-          onPress={onUpload} style={({ pressed }) => [styles.upload, !state.consent && styles.disabled,
-            pressed && state.consent && styles.pressed]}>
+          accessibilityState={{ disabled: waiting || !state.consent }} disabled={waiting || !state.consent}
+          onPress={() => { if (!waiting && state.consent) onUpload(); }} style={({ pressed }) => [styles.upload, (waiting || !state.consent) && styles.disabled,
+            pressed && state.consent && !waiting && styles.pressed]}>
           <Text allowFontScaling style={styles.uploadText}>{state.phase === 'ready' ? text.upload : text.retry}</Text>
         </Pressable>
       </>}
@@ -97,7 +99,7 @@ export function RecordingPanel({ language, state, onStart, onStop, onConsentChan
     {state.historyFailed && <>
       <Text accessibilityRole="alert" accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.historyFailed}</Text>
       {!busy && state.phase !== 'recording' && <LargeButton language={language} label={text.retryHistory}
-        variant="secondary" onPress={onRetryHistory} />}
+        variant="secondary" disabled={waiting} onPress={onRetryHistory} />}
     </>}
     {state.transcripts.map(transcript => <View key={transcript.transcript_id} style={styles.transcript}>
       <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.transcriptHeading}>{text.transcriptTitle}</Text>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { AccessibilityInfo, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView,
   StyleSheet, Text, TextInput, View } from 'react-native';
 import { SIMULATED_TRANSCRIPT_NOTICE } from '../api/audio-transcripts';
+import { useApiBackoff } from '../api/ApiBackoff';
 import type { ConversationMessage } from '../api/conversation-messages';
 import { validateMemoryPatchInput, type MemoryFact, type MemoryClarification, type MemoryPatchInput } from '../api/memory-review';
 import type { StoryProjectsErrorKind } from '../api/story-projects';
@@ -11,6 +12,12 @@ import { accessibilityLanguages, type Language } from '../i18n';
 import { colors, headingFont, layout } from '../theme';
 import { memoryReviewCopy } from './memory-review-copy';
 
+export interface MemoryReviewDraft {
+  memoryId: string;
+  expectedVersion: number;
+  action: 'confirm' | 'correct' | 'reject';
+  correction: string;
+}
 export interface MemoryReviewState {
   phase: 'loading' | 'ready' | 'saving' | 'error' | 'conflict' | 'uncertain';
   memories: MemoryFact[];
@@ -18,7 +25,8 @@ export interface MemoryReviewState {
   sources: ConversationMessage[];
   complete: boolean;
   error?: StoryProjectsErrorKind;
-  notice?: 'saved' | 'conflict' | 'uncertain';
+  notice?: 'saved' | 'conflict' | 'uncertain' | 'retained';
+  retainedReview?: MemoryReviewDraft & { memory: MemoryFact; canRetry: boolean; conflict: boolean };
 }
 export interface MemoryReviewScreenProps {
   language: Language;
@@ -27,6 +35,8 @@ export interface MemoryReviewScreenProps {
   title: string;
   state: MemoryReviewState;
   onSave: (memory: MemoryFact, status: 'confirmed' | 'rejected', correction?: string) => void;
+  onCaptureReview?: (draft: MemoryReviewDraft) => void;
+  onReviewLatest?: () => void;
   onRefresh: () => void;
   onBack: () => void;
   backLabel?: string;
@@ -41,7 +51,7 @@ function ReviewButton({ language, label, onPress, disabled = false, primary = fa
   return <Pressable accessibilityRole={checked === undefined ? 'button' : 'radio'}
     accessibilityLabel={label} accessibilityLanguage={accessibilityLanguages[language]}
     accessibilityState={{ disabled, ...(checked === undefined ? {} : { checked }),
-      ...(expanded === undefined ? {} : { expanded }) }} disabled={disabled} onPress={onPress}
+      ...(expanded === undefined ? {} : { expanded }) }} disabled={disabled} onPress={() => { if (!disabled) onPress(); }}
     onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
     style={({ pressed }) => [styles.button, primary ? styles.primary : styles.secondary,
       checked && styles.selected, disabled && styles.disabled, disabled && primary && styles.disabledPrimary, focused && styles.focused,
@@ -51,17 +61,23 @@ function ReviewButton({ language, label, onPress, disabled = false, primary = fa
 }
 
 /** A calm read-only view until the person explicitly chooses and saves a review. */
-export function MemoryReviewScreen({ language, storyLanguage = language, resetRevision = 0, title, state, onSave, onRefresh, onBack, onSignOut, backLabel }: MemoryReviewScreenProps) {
+export function MemoryReviewScreen({ language, storyLanguage = language, resetRevision = 0, title, state, onSave, onCaptureReview,
+  onReviewLatest, onRefresh, onBack, onSignOut, backLabel }: MemoryReviewScreenProps) {
   const text = memoryReviewCopy[language];
+  const { waiting } = useApiBackoff();
   const locale = accessibilityLanguages[language];
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const scrollView = useRef<ScrollView>(null);
   const contentY = useRef(0);
   const panelY = useRef(0);
   const busy = state.phase === 'loading' || state.phase === 'saving';
   const accessFailed = ['authentication', 'forbidden', 'not-found'].includes(state.error ?? '');
-  const index = Math.min(selectedIndex, Math.max(0, state.memories.length - 1));
-  const memory = !accessFailed && state.phase !== 'loading' ? state.memories[index] : undefined;
+  const retained = state.retainedReview;
+  const index = Math.max(0, state.memories.findIndex(item => item.id === (retained?.memoryId ?? selectedId)));
+  // A failed/partial reconciliation must not unmount the retained correction.
+  const memory = !accessFailed ? retained?.memory ?? (state.phase !== 'loading' ? state.memories[index] : undefined) : undefined;
+  const currentMemory = retained ? state.memories.find(item => item.id === retained.memoryId) : undefined;
+  const freshReview = state.phase === 'ready' && !state.error && state.complete;
   const message = state.error ? text.errors[state.error]
     : state.phase === 'error' ? text.errors.unavailable : state.phase === 'loading' ? text.loading : state.phase === 'saving' ? text.saving
       : state.phase === 'conflict' || state.phase === 'uncertain' ? text[state.phase]
@@ -76,8 +92,8 @@ export function MemoryReviewScreen({ language, storyLanguage = language, resetRe
   }, [message, state.error, state.phase]);
 
   const navigate = (next: number) => {
-    if (busy) return;
-    Keyboard.dismiss(); setSelectedIndex(next);
+    if (busy || retained || !state.memories[next]) return;
+    Keyboard.dismiss(); setSelectedId(state.memories[next].id);
     if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(text.memory + ' ' + (next + 1) + ' ' + text.of + ' ' + state.memories.length);
     scrollView.current?.scrollTo({ y: Math.max(0, contentY.current + panelY.current - 16), animated: false });
   };
@@ -96,14 +112,28 @@ export function MemoryReviewScreen({ language, storyLanguage = language, resetRe
         {state.phase === 'ready' && state.complete && !memory && <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.empty}</Text>}
         {memory && <>
           <Text accessibilityRole="header" accessibilityLiveRegion="polite" accessibilityLanguage={locale} allowFontScaling style={styles.subheading}>
-            {text.memory} {index + 1} {text.of} {state.memories.length}
+            {state.memories.length ? `${text.memory} ${index + 1} ${text.of} ${state.memories.length}` : text.memory}
           </Text>
           <MemoryCard key={`${memory.id}:${memory.version}:${resetRevision}`} language={language} memory={memory} state={state}
+            onCaptureReview={draft => { setSelectedId(draft.memoryId); onCaptureReview?.(draft); }}
             onSave={onSave} scrollView={scrollView} contentY={contentY} panelY={panelY} />
-          <ReviewButton language={language} label={text.previous} disabled={busy || index === 0} onPress={() => navigate(index - 1)} />
-          <ReviewButton language={language} label={text.next} disabled={busy || index + 1 >= state.memories.length} onPress={() => navigate(index + 1)} />
+          {retained?.conflict && <>
+            {freshReview && <Text accessibilityLanguage={locale} allowFontScaling style={styles.notice}>{text.retainedConflict}</Text>}
+            {freshReview && currentMemory && <>
+              <Text accessibilityLanguage={locale} allowFontScaling style={styles.label}>{text.latestValue}</Text>
+              <Text accessibilityLanguage={accessibilityLanguages[storyLanguage]} allowFontScaling selectable style={styles.value}>
+                {currentMemory.corrected_value ?? currentMemory.value}
+              </Text>
+            </>}
+            {freshReview && !currentMemory && <Text accessibilityLanguage={locale} allowFontScaling
+              style={styles.notice}>{text.missingReviewMemory}</Text>}
+            {onReviewLatest && <ReviewButton language={language} label={text.reviewLatest}
+              disabled={busy || !freshReview || !currentMemory} onPress={onReviewLatest} />}
+          </>}
+          <ReviewButton language={language} label={text.previous} disabled={busy || !!retained || index === 0} onPress={() => navigate(index - 1)} />
+          <ReviewButton language={language} label={text.next} disabled={busy || !!retained || index + 1 >= state.memories.length} onPress={() => navigate(index + 1)} />
         </>}
-        <ReviewButton language={language} label={text.refresh} disabled={busy || accessFailed} onPress={() => { Keyboard.dismiss(); onRefresh(); }} />
+        <ReviewButton language={language} label={text.refresh} disabled={waiting || busy || accessFailed} onPress={() => { Keyboard.dismiss(); onRefresh(); }} />
         <ReviewButton language={language} label={backLabel ?? text.back} onPress={() => { Keyboard.dismiss(); onBack(); }} />
         <ReviewButton language={language} label={text.signOut} onPress={() => { Keyboard.dismiss(); onSignOut(); }} />
       </View>
@@ -111,15 +141,18 @@ export function MemoryReviewScreen({ language, storyLanguage = language, resetRe
   </KeyboardAvoidingView>;
 }
 
-function MemoryCard({ language, memory, state, onSave, scrollView, contentY, panelY }: {
+function MemoryCard({ language, memory, state, onSave, onCaptureReview, scrollView, contentY, panelY }: {
   language: Language; memory: MemoryFact; state: MemoryReviewState; onSave: MemoryReviewScreenProps['onSave'];
+  onCaptureReview?: MemoryReviewScreenProps['onCaptureReview'];
   scrollView: RefObject<ScrollView | null>; contentY: RefObject<number>; panelY: RefObject<number>;
 }) {
   const text = memoryReviewCopy[language];
+  const { waiting } = useApiBackoff();
   const locale = accessibilityLanguages[language];
+  const retained = state.retainedReview;
   const currentValue = memory.corrected_value ?? memory.value;
-  const [action, setAction] = useState<'confirm' | 'correct' | 'reject' | null>(null);
-  const [draft, setDraft] = useState('');
+  const [action, setAction] = useState<'confirm' | 'correct' | 'reject' | null>(() => retained?.action ?? null);
+  const [draft, setDraft] = useState(() => retained?.correction ?? '');
   const [validation, setValidation] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [sourceOpen, setSourceOpen] = useState(false);
@@ -130,7 +163,8 @@ function MemoryCard({ language, memory, state, onSave, scrollView, contentY, pan
   const source = state.sources.find(row => row.id === memory.source_message_id && row.role === 'user' &&
     row.session_id === memory.session_id && row.text.includes(memory.evidence) && row.text.includes(memory.value));
   const simulated = source?.text.startsWith(SIMULATED_TRANSCRIPT_NOTICE) === true;
-  const canReview = state.phase === 'ready' && state.complete && !!source;
+  const canReview = !retained && state.phase === 'ready' && state.complete && !!source;
+  const canSave = canReview || (!!retained?.canRetry && !retained.conflict && state.phase === 'ready' && state.complete && !!source);
   const questions = state.clarifications.filter(question => question.fact_id === memory.id &&
     question.session_id === memory.session_id && question.status === 'open');
   useEffect(() => { submitted.current = false; }, [state.phase, state.error, state.notice]);
@@ -153,7 +187,7 @@ function MemoryCard({ language, memory, state, onSave, scrollView, contentY, pan
     Keyboard.dismiss(); setAction(next); setValidation(false); setDraft(next === 'correct' ? currentValue : '');
   };
   const save = () => {
-    if (!canReview || !action || submitted.current) return;
+    if (waiting || !canSave || !action || submitted.current) return;
     let input: MemoryPatchInput;
     try {
       input = validateMemoryPatchInput({ status: action === 'reject' ? 'rejected' : 'confirmed', expected_version: memory.version,
@@ -163,6 +197,7 @@ function MemoryCard({ language, memory, state, onSave, scrollView, contentY, pan
     }
     const correction = action === 'correct' && draft !== currentValue && input.corrected_value !== currentValue ? input.corrected_value : undefined;
     submitted.current = true; setValidation(false); Keyboard.dismiss();
+    onCaptureReview?.({ memoryId: memory.id, expectedVersion: memory.version, action, correction: draft });
     if (correction === undefined) onSave(memory, input.status);
     else onSave(memory, input.status, correction);
   };
@@ -200,7 +235,7 @@ function MemoryCard({ language, memory, state, onSave, scrollView, contentY, pan
     {action === 'correct' && <View style={styles.field} onLayout={event => { correctionY.current = event.nativeEvent.layout.y; revealError(); }}>
       <Text accessibilityLanguage={locale} allowFontScaling style={styles.label}>{text.correctionLabel}</Text>
       {validation && <Text accessibilityRole="alert" accessibilityLanguage={locale} accessibilityLiveRegion="polite" allowFontScaling style={styles.notice}>{text.correctionError}</Text>}
-      <TextInput value={draft} onChangeText={value => { setDraft(value); setValidation(false); }}
+      <TextInput value={draft} onChangeText={value => { if (canReview) { setDraft(value); setValidation(false); } }}
         accessibilityLabel={text.correctionLabel} accessibilityLanguage={locale}
         accessibilityHint={validation ? `${text.correctionError} ${text.correctionHelp}` : text.correctionHelp}
         allowFontScaling editable={canReview} multiline textAlignVertical="top" autoCapitalize="sentences" autoCorrect
@@ -212,9 +247,11 @@ function MemoryCard({ language, memory, state, onSave, scrollView, contentY, pan
         Keyboard.dismiss(); setAction(null); setDraft(''); setValidation(false);
       }} />
     </View>}
-    <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.notSaved}</Text>
+    {!retained && <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.notSaved}</Text>}
+    {retained && (state.error || state.notice !== 'retained' || state.phase !== 'ready') &&
+      <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.retained}</Text>}
     <ReviewButton language={language} label={state.phase === 'saving' ? text.saving : text.save}
-      primary disabled={!canReview || !action} onPress={save} />
+      primary disabled={waiting || !canSave || !action} onPress={save} />
   </View>;
 }
 

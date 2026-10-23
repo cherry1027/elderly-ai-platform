@@ -162,7 +162,10 @@ function ScopedGeneration({ language, user, project, baseUrl, getAccessToken,
     } catch (error) {
       if (!current()) return;
       const safe = error instanceof StoryProjectsError ? error : new StoryProjectsError('network', undefined, true);
-      const uncertain = safe.mayHaveWritten || ['network', 'timeout', 'invalid-response', 'cancelled'].includes(safe.kind);
+      // A wait can also interrupt verification after a successful POST, or an
+      // exact retry of a previously uncertain action. Keep its original key and
+      // payload until a deliberate reconciliation/retry resolves that action.
+      const uncertain = !!safe.retry || safe.mayHaveWritten || ['network', 'timeout', 'invalid-response', 'cancelled'].includes(safe.kind);
       if (safe instanceof StoryDraftsError && safe.code === 'IDEMPOTENCY_CONFLICT') {
         actions.set(user.id, scope, { ...action, blocked: true });
       } else if (!uncertain) actions.remove(user.id, scope);

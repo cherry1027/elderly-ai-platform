@@ -23,6 +23,7 @@ import { createStoryCopy } from '../src/create-story-copy';
 import { authCopy } from '../src/auth-copy';
 import { copy, type Language as Locale } from '../src/i18n';
 import { AuthError } from '../src/auth/errors';
+import { leaveCopy } from '../src/navigation/useGuardedLeave';
 
 jest.mock('../src/auth/client', () => ({ createMobileAuth: jest.fn() }));
 jest.mock('../src/auth/config', () => ({ readMobileAuthConfig: jest.fn() }));
@@ -58,57 +59,65 @@ beforeEach(async () => {
 });
 async function openCreate(language: Locale = 'en') {
   await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language, completed: true }));
-  const flow = renderRouter(routes, { initialUrl: '/' });
+  const flow = await renderRouter(routes, { initialUrl: '/' });
   await openMyStories(language);
   await screen.findByRole('header', { name: storiesCopy[language].title });
-  fireEvent.press(screen.getByRole('button', { name: storiesCopy[language].createStory }));
+  await fireEvent.press(screen.getByRole('button', { name: storiesCopy[language].createStory }));
   await screen.findByRole('header', { name: createStoryCopy[language].title });
   return flow;
 }
-function save(title = 'Synthetic created story', language: Locale = 'en') {
-  fireEvent.changeText(screen.getByLabelText(createStoryCopy[language].titleLabel), title);
-  fireEvent.press(screen.getByRole('button', { name: createStoryCopy[language].create }));
+async function save(title = 'Synthetic created story', language: Locale = 'en') {
+  await fireEvent.changeText(screen.getByLabelText(createStoryCopy[language].titleLabel), title);
+  await fireEvent.press(screen.getByRole('button', { name: createStoryCopy[language].create }));
 }
 it.each<Locale>(['en', 'sv'])('navigates intentionally from My Stories to native Create and back in %s', async language => {
   await openCreate(language);
   expect(screen.getByRole('radio', { name: createStoryCopy[language][language === 'sv' ? 'swedish' : 'english'] }).props.accessibilityState.checked).toBe(true);
   expect(createStoryProject).not.toHaveBeenCalled();
-  fireEvent.changeText(screen.getByLabelText(createStoryCopy[language].titleLabel), 'Unsaved private title');
-  fireEvent.press(screen.getByRole('button', { name: createStoryCopy[language].back }));
+  await fireEvent.changeText(screen.getByLabelText(createStoryCopy[language].titleLabel), 'Unsaved private title');
+  await fireEvent.press(screen.getByRole('button', { name: createStoryCopy[language].back }));
+  expect(screen.getByText(leaveCopy[language].dirty)).toBeOnTheScreen();
+  expect(createStoryProject).not.toHaveBeenCalled();
+  await fireEvent.press(screen.getByRole('button', { name: leaveCopy[language].keep }));
+  expect(screen.getByLabelText(createStoryCopy[language].titleLabel).props.value).toBe('Unsaved private title');
+  await fireEvent.press(screen.getByRole('button', { name: createStoryCopy[language].back }));
+  await fireEvent.press(screen.getByRole('button', { name: leaveCopy[language].discard }));
   await screen.findByRole('header', { name: storiesCopy[language].title });
   expect(screen.queryByText('Unsaved private title')).toBeNull();
-  fireEvent.press(screen.getByRole('button', { name: storiesCopy[language].createStory }));
+  await fireEvent.press(screen.getByRole('button', { name: storiesCopy[language].createStory }));
   expect(screen.getByLabelText(createStoryCopy[language].titleLabel).props.value).toBe('');
 });
 it.each(['checking', 'signed-out', 'blocked', 'busy'] as const)('never exposes creation or makes a POST for %s authentication', async status => {
   snapshot = { status, user: null, error: null };
-  renderRouter(routes, { initialUrl: '/authenticated?create=true' });
+  await renderRouter(routes, { initialUrl: '/authenticated?create=true' });
   await waitFor(() => expect(auth.restore).toHaveBeenCalled());
   expect(screen.queryByRole('header', { name: createStoryCopy.en.title })).toBeNull();
   expect(createStoryProject).not.toHaveBeenCalled(); expect(auth.getAccessToken).not.toHaveBeenCalled();
 });
 it('ignores URL claims that try to open or submit a creation form', async () => {
-  renderRouter(routes, { initialUrl: '/authenticated?create=true&title=Injected&language=en' });
+  await renderRouter(routes, { initialUrl: '/authenticated?create=true&title=Injected&language=en' });
   await openMyStories();
   await screen.findByRole('header', { name: storiesCopy.en.title });
   expect(screen.queryByLabelText(createStoryCopy.en.titleLabel)).toBeNull(); expect(createStoryProject).not.toHaveBeenCalled();
 });
 it('keeps the unconfigured live preview honest and never invents saved data', async () => {
   jest.mocked(readMobileApiConfig).mockReturnValue(null);
-  await openCreate(); save();
+  await openCreate(); await save();
   await screen.findByText(createStoryCopy.en.errors.configuration);
   expect(createStoryProject).not.toHaveBeenCalled(); expect(auth.getAccessToken).not.toHaveBeenCalled();
   expect(screen.queryByText(createStoryCopy.en.success)).toBeNull();
-  fireEvent.press(screen.getByRole('button', { name: createStoryCopy.en.back }));
+  await fireEvent.press(screen.getByRole('button', { name: createStoryCopy.en.back }));
+  expect(screen.getByText(leaveCopy.en.dirty)).toBeOnTheScreen();
+  await fireEvent.press(screen.getByRole('button', { name: leaveCopy.en.discard }));
   await screen.findByRole('header', { name: storiesCopy.en.title });
   expect(screen.queryByText('Synthetic created story')).toBeNull(); expect(listStoryProjects).not.toHaveBeenCalled();
 });
 it('shows only a confirmed creation and then reloads the server list instead of inserting the response', async () => {
-  await openCreate(); save(); await screen.findByText(createStoryCopy.en.success);
+  await openCreate(); await save(); await screen.findByText(createStoryCopy.en.success);
   const call = jest.mocked(createStoryProject).mock.calls[0][0];
   await expect(call.getAccessToken()).resolves.toBe('synthetic-token-account-a');
   expect(auth.getAccessToken).toHaveBeenCalledWith('account-a');
-  fireEvent.press(screen.getByRole('button', { name: createStoryCopy.en.back }));
+  await fireEvent.press(screen.getByRole('button', { name: createStoryCopy.en.back }));
   await screen.findByText(storiesCopy.en.empty);
   expect(listStoryProjects).toHaveBeenCalledTimes(2);
   expect(screen.queryByText('Synthetic created story')).toBeNull();
@@ -118,8 +127,11 @@ it('shows only a confirmed creation and then reloads the server list instead of 
 it('cancels a pending save and ignores success after Sign Out', async () => {
   let finish!: (value: StoryProject) => void;
   jest.mocked(createStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-  await openCreate(); save(); const signal = jest.mocked(createStoryProject).mock.calls[0][0].signal!;
-  fireEvent.press(screen.getByRole('button', { name: createStoryCopy.en.signOut }));
+  await openCreate(); await save(); const signal = jest.mocked(createStoryProject).mock.calls[0][0].signal!;
+  await fireEvent.press(screen.getByRole('button', { name: createStoryCopy.en.signOut }));
+  expect(screen.getByText(leaveCopy.en.uncertain)).toBeOnTheScreen(); expect(signal.aborted).toBe(false);
+  expect(auth.signOut).not.toHaveBeenCalled();
+  await fireEvent.press(screen.getByRole('button', { name: leaveCopy.en.leave }));
   await screen.findByRole('header', { name: copy.en.welcomeTitle }); expect(signal.aborted).toBe(true);
   await act(async () => { finish(project('Private late story')); });
   expect(screen.queryByText('Private late story')).toBeNull(); expect(screen.queryByText(createStoryCopy.en.success)).toBeNull();
@@ -127,32 +139,32 @@ it('cancels a pending save and ignores success after Sign Out', async () => {
 it('cannot carry an account A title or late response into account B', async () => {
   let finish!: (value: StoryProject) => void;
   jest.mocked(createStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-  await openCreate(); save('Account A private title'); const signal = jest.mocked(createStoryProject).mock.calls[0][0].signal!;
-  act(() => publish(account('account-b')));
+  await openCreate(); await save('Account A private title'); const signal = jest.mocked(createStoryProject).mock.calls[0][0].signal!;
+  await act(() => publish(account('account-b')));
   await openSettings(); await screen.findByText('account-b@example.test'); await openMyStories(); expect(signal.aborted).toBe(true);
   await act(async () => { finish(project('Account A private response')); });
   expect(screen.queryByText('Account A private response')).toBeNull();
-  fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.createStory }));
+  await fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.createStory }));
   expect(screen.getByLabelText(createStoryCopy.en.titleLabel).props.value).toBe('');
 });
 it('drops the form and in-flight request during session revalidation rather than resubmitting', async () => {
   let finish!: (value: StoryProject) => void;
   jest.mocked(createStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-  await openCreate(); save(); const signal = jest.mocked(createStoryProject).mock.calls[0][0].signal!;
-  act(() => publish({ status: 'checking', user: null, error: null }));
+  await openCreate(); await save(); const signal = jest.mocked(createStoryProject).mock.calls[0][0].signal!;
+  await act(() => publish({ status: 'checking', user: null, error: null }));
   expect(screen.queryByLabelText(createStoryCopy.en.titleLabel)).toBeNull(); expect(signal.aborted).toBe(true);
-  act(() => publish(account())); await openMyStories(); await screen.findByRole('header', { name: storiesCopy.en.title });
+  await act(() => publish(account())); await openMyStories(); await screen.findByRole('header', { name: storiesCopy.en.title });
   await act(async () => { finish(project('Stale created response')); });
   expect(screen.queryByText('Stale created response')).toBeNull(); expect(createStoryProject).toHaveBeenCalledTimes(1);
 });
 it('cancels saving when the native route loses focus without unmounting its stack entry', async () => {
   let finish!: (value: StoryProject) => void;
   jest.mocked(createStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-  await openCreate(); save(); const signal = jest.mocked(createStoryProject).mock.calls[0][0].signal!;
-  act(() => router.push('/outside' as '/'));
+  await openCreate(); await save(); const signal = jest.mocked(createStoryProject).mock.calls[0][0].signal!;
+  await act(() => router.push('/outside' as '/'));
   await screen.findByText('Another test route'); expect(signal.aborted).toBe(true);
   await act(async () => { finish(project('Private unfocused response')); });
-  act(() => router.back()); await openMyStories(); await screen.findByRole('header', { name: storiesCopy.en.title });
+  await act(() => router.back()); await openMyStories(); await screen.findByRole('header', { name: storiesCopy.en.title });
   expect(screen.queryByText('Private unfocused response')).toBeNull(); expect(screen.queryByText(createStoryCopy.en.success)).toBeNull();
 });
 it('returns to My Stories and cancels on Android hardware Back', async () => {
@@ -163,17 +175,24 @@ it('returns to My Stories and cancels on Android hardware Back', async () => {
     return original(event, listener);
   });
   try {
-    await openCreate(); fireEvent.changeText(screen.getByLabelText(createStoryCopy.en.titleLabel), 'Unsaved private title');
-    act(() => { expect(hardwareBack?.()).toBe(true); });
+    await openCreate(); await fireEvent.changeText(screen.getByLabelText(createStoryCopy.en.titleLabel), 'Unsaved private title');
+    await act(() => { expect(hardwareBack?.()).toBe(true); });
+    expect(screen.getByText(leaveCopy.en.dirty)).toBeOnTheScreen();
+    await fireEvent.press(screen.getByRole('button', { name: leaveCopy.en.keep }));
+    expect(screen.getByLabelText(createStoryCopy.en.titleLabel).props.value).toBe('Unsaved private title');
+    await act(() => { expect(hardwareBack?.()).toBe(true); });
+    await fireEvent.press(screen.getByRole('button', { name: leaveCopy.en.discard }));
     await screen.findByRole('header', { name: storiesCopy.en.title }); expect(createStoryProject).not.toHaveBeenCalled();
   } finally { BackHandler.addEventListener = original; }
 });
 it('preserves secure cleanup failure handling when signing out from Create', async () => {
-  await openCreate(); fireEvent.changeText(screen.getByLabelText(createStoryCopy.en.titleLabel), 'Private draft');
+  await openCreate(); await fireEvent.changeText(screen.getByLabelText(createStoryCopy.en.titleLabel), 'Private draft');
   jest.mocked(auth.signOut).mockImplementationOnce(async () => {
     publish({ status: 'blocked', user: null, error: 'cleanup' }); throw new AuthError('cleanup');
   });
-  fireEvent.press(screen.getByRole('button', { name: createStoryCopy.en.signOut }));
+  await fireEvent.press(screen.getByRole('button', { name: createStoryCopy.en.signOut }));
+  expect(auth.signOut).not.toHaveBeenCalled();
+  await fireEvent.press(screen.getByRole('button', { name: leaveCopy.en.discard }));
   await screen.findByText(authCopy.en.errors.cleanup);
   expect(screen.queryByLabelText(createStoryCopy.en.titleLabel)).toBeNull(); expect(screen.queryByText('Private draft')).toBeNull();
 });

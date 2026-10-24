@@ -116,7 +116,7 @@ describe('verified native session -> real project-list adapter -> dashboard, moc
   it.each<Language>(['en', 'sv'])('uses the latest verified user token and displays/refreshes the plain array in %s', async language => {
     const f = fixture(); await f.signIn(); await f.rotate();
     fetchMock.mockResolvedValueOnce(json([row(), row('En svensk påhittad berättelse', 'sv', 2)]));
-    render(<VerifiedDashboard auth={f.auth} language={language} />);
+    await render(<VerifiedDashboard auth={f.auth} language={language} />);
     await screen.findByText('An English fictional story');
     expect(screen.getByText('En svensk påhittad berättelse')).toBeOnTheScreen();
     expect(fetchMock).toHaveBeenCalledWith(`${baseUrl}/api/v1/story-projects?limit=50&offset=0`, expect.objectContaining({
@@ -125,7 +125,7 @@ describe('verified native session -> real project-list adapter -> dashboard, moc
     }));
     expect(JSON.stringify(fetchMock.mock.calls)).not.toContain(key);
     fetchMock.mockResolvedValueOnce(json([row('Server refresh result')]));
-    fireEvent.press(screen.getByRole('button', { name: storiesCopy[language].refresh }));
+    await fireEvent.press(screen.getByRole('button', { name: storiesCopy[language].refresh }));
     await screen.findByText('Server refresh result');
     expect(screen.queryByText('An English fictional story')).toBeNull();
     expect(screen.queryByText('En svensk påhittad berättelse')).toBeNull();
@@ -135,7 +135,7 @@ describe('verified native session -> real project-list adapter -> dashboard, moc
   });
 
   it('sends no project request before verified login, then loads after normal sign-in', async () => {
-    const f = fixture(); render(<VerifiedDashboard auth={f.auth} />);
+    const f = fixture(); await render(<VerifiedDashboard auth={f.auth} />);
     expect(screen.getByText('No verified account')).toBeOnTheScreen(); expect(fetchMock).not.toHaveBeenCalled();
     fetchMock.mockResolvedValueOnce(json([]));
     await act(async () => { await f.signIn(); });
@@ -147,7 +147,7 @@ describe('verified native session -> real project-list adapter -> dashboard, moc
   it('does not acquire a token or send HTTP without configured backend settings', async () => {
     Object.defineProperty(Constants, 'expoConfig', { configurable: true, value: { extra: {} } });
     const f = fixture(); await f.signIn(); const token = jest.spyOn(f.auth, 'getAccessToken');
-    render(<VerifiedDashboard auth={f.auth} />);
+    await render(<VerifiedDashboard auth={f.auth} />);
     await screen.findByText(storiesCopy.en.errors.configuration);
     expect(token).not.toHaveBeenCalled(); expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.queryByText(storiesCopy.en.empty)).toBeNull();
@@ -164,7 +164,7 @@ describe('verified native session -> real project-list adapter -> dashboard, moc
     finally { clock.mockRestore(); }
     await expect(expiredToken).resolves.toBeNull();
     f.auth.setForeground(false);
-    render(<VerifiedDashboard auth={f.auth} />);
+    await render(<VerifiedDashboard auth={f.auth} />);
     expect(screen.getByText('No verified account')).toBeOnTheScreen();
     // Model rejected session revalidation separately, through real SDK HTTP
     // handling, without changing system time during asynchronous SDK work.
@@ -177,14 +177,14 @@ describe('verified native session -> real project-list adapter -> dashboard, moc
 
   it('removes old projects after a real adapter 401 and retains a safe sign-out path', async () => {
     const f = fixture(); await f.signIn(); fetchMock.mockResolvedValueOnce(json([row()]));
-    render(<VerifiedDashboard auth={f.auth} />); await screen.findByText('An English fictional story');
+    await render(<VerifiedDashboard auth={f.auth} />); await screen.findByText('An English fictional story');
     fetchMock.mockResolvedValueOnce(json({ error: { code: 'UNAUTHORIZED', message: 'synthetic-private-detail' } }, 401));
-    fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.refresh }));
+    await fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.refresh }));
     await screen.findByText(storiesCopy.en.errors.authentication);
     expect(screen.queryByText('An English fictional story')).toBeNull();
     expect(screen.queryByText('synthetic-private-detail')).toBeNull();
     expect(screen.getByRole('button', { name: storiesCopy.en.refresh })).toBeDisabled();
-    fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.signOut }));
+    await fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.signOut }));
     await screen.findByText('No verified account');
   });
 
@@ -194,7 +194,7 @@ describe('verified native session -> real project-list adapter -> dashboard, moc
     else fetchMock.mockResolvedValueOnce(new Response('synthetic-private-response', {
       headers: { 'Content-Type': kind === 'html' ? 'text/html' : 'application/json' },
     }));
-    render(<VerifiedDashboard auth={f.auth} />);
+    await render(<VerifiedDashboard auth={f.auth} />);
     await screen.findByText(storiesCopy.en.errors[kind === 'network' ? 'network' : 'invalid-response']);
     expect(screen.queryByText(/synthetic-private-/)).toBeNull();
     expect(screen.queryByText(storiesCopy.en.empty)).toBeNull();
@@ -203,10 +203,10 @@ describe('verified native session -> real project-list adapter -> dashboard, moc
   it('aborts a real adapter request on sign-out and ignores its late body', async () => {
     const f = fixture(); await f.signIn(); let finish!: (response: Response) => void;
     fetchMock.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-    render(<VerifiedDashboard auth={f.auth} />);
+    await render(<VerifiedDashboard auth={f.auth} />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     const signal = fetchMock.mock.calls[0][1]!.signal!;
-    fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.signOut }));
+    await fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.signOut }));
     await screen.findByText('No verified account'); expect(signal.aborted).toBe(true);
     const body = jest.fn(async () => JSON.stringify([row('Late private account A')]));
     await act(async () => { finish({ status: 200, ok: true, headers: new Headers({ 'Content-Type': 'application/json' }), text: body } as unknown as Response); });
@@ -216,7 +216,7 @@ describe('verified native session -> real project-list adapter -> dashboard, moc
   it('cannot publish account A late results or token into a newly verified account B', async () => {
     const f = fixture(); await f.signIn(); let finishA!: (response: Response) => void;
     fetchMock.mockImplementationOnce(() => new Promise(resolve => { finishA = resolve; }));
-    render(<VerifiedDashboard auth={f.auth} />);
+    await render(<VerifiedDashboard auth={f.auth} />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     const signalA = fetchMock.mock.calls[0][1]!.signal!;
     await act(async () => { await f.auth.signOut(); });

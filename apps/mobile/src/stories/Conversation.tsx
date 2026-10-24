@@ -8,6 +8,7 @@ import type { Language } from '../i18n';
 import { conversationCopy } from '../conversation-copy';
 import { MemoryReview } from '../memories/MemoryReview';
 import { ConversationScreen, type ConversationState } from '../screens/ConversationScreen';
+import type { LeaveHandle } from '../navigation/useGuardedLeave';
 
 interface Props {
   language: Language;
@@ -24,6 +25,7 @@ interface Props {
 export function Conversation({ language, user, project, getAccessToken, onBack, onSignOut, reviewOnOpen = false, backLabel }: Props) {
   const [config] = useState(readMobileApiConfig);
   const recording = useRef<SessionRecordingHandle | null>(null);
+  const memoryLeave = useRef<LeaveHandle | null>(null);
   const [reviewIdentity, setReviewIdentity] = useState<string | null>(null);
   const selected = useMemo(() => ({ id: project.id, title: project.title, language: project.language }),
     [project.id, project.title, project.language]);
@@ -123,18 +125,25 @@ export function Conversation({ language, user, project, getAccessToken, onBack, 
   }, [cancel]);
   useEffect(() => {
     const listener = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (reviewIdentity === identity && !reviewOnOpen) setReviewIdentity(null);
-      else leave(onBack);
+      // The mounted memory screen owns its unsaved-review warning, regardless
+      // of native listener registration order. Do not bypass it from here.
+      if (memoryLeave.current || reviewIdentity === identity || (reviewOnOpen && phase.current === 'ready')) return false;
+      leave(onBack);
       return true;
     });
     return () => listener.remove();
   }, [leave, onBack, reviewIdentity, identity, reviewOnOpen]);
   const state: ConversationState = frame.identity === identity && frame.revision === revision
     ? frame.state : { status: 'loading' };
+  const requestVisibleLeave = (destination: () => void) => {
+    if (!alive.current || phase.current === 'left' || latest.current !== identity) return;
+    if (memoryLeave.current) memoryLeave.current.requestLeave(() => leave(destination));
+    else leave(destination);
+  };
   if (state.status === 'ready' && (reviewIdentity === identity || reviewOnOpen)) {
     return <MemoryReview language={language} title={selected.title} ownerId={user.id} projectId={selected.id}
       sessionId={state.session.id} sessionLanguage={state.session.language} baseUrl={config?.baseUrl ?? null}
-      getAccessToken={getAccessToken} backLabel={reviewOnOpen ? backLabel ?? conversationCopy[language].back : undefined} onBack={() => { if (reviewOnOpen) leave(onBack); else setReviewIdentity(null); }} onSignOut={() => leave(onSignOut)} />;
+      getAccessToken={getAccessToken} leaveRef={memoryLeave} backLabel={reviewOnOpen ? backLabel ?? conversationCopy[language].back : undefined} onBack={() => { if (reviewOnOpen) leave(onBack); else setReviewIdentity(null); }} onSignOut={() => leave(onSignOut)} />;
   }
   const openReview = () => {
     if (state.status !== 'ready' || phase.current !== 'ready' || latest.current !== identity) return;
@@ -148,5 +157,5 @@ export function Conversation({ language, user, project, getAccessToken, onBack, 
     recordingPanel={state.status === 'ready' ? <SessionRecording ref={recording} language={language}
       ownerId={user.id} projectId={selected.id} sessionId={state.session.id} sessionLanguage={state.session.language}
       baseUrl={config?.baseUrl ?? null} getAccessToken={getAccessToken} /> : undefined}
-    onBack={() => leave(onBack)} onSignOut={() => leave(onSignOut)} />;
+    onBack={() => requestVisibleLeave(onBack)} onSignOut={() => requestVisibleLeave(onSignOut)} />;
 }

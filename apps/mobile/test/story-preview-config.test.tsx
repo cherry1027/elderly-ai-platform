@@ -49,11 +49,11 @@ const normalReady = {
     publishableKey: 'sb_publishable_synthetic_configuration_for_tests' },
   memyDevelopmentApi: { enabled: true, baseUrl: 'http://192.168.20.30:8000' },
 };
-function withExtra(extra: unknown, check: () => void, platformName: typeof Platform.OS = 'ios', metadata: Record<string, unknown> = {}) {
+async function withExtra(extra: unknown, check: () => void | Promise<void>, platformName: typeof Platform.OS = 'ios', metadata: Record<string, unknown> = {}) {
   const previous = Constants.expoConfig;
   const platform = jest.replaceProperty(Platform, 'OS', platformName);
   Object.defineProperty(Constants, 'expoConfig', { configurable: true, value: { ...metadata, extra } });
-  try { check(); }
+  try { await check(); }
   finally { Object.defineProperty(Constants, 'expoConfig', { configurable: true, value: previous }); platform.restore(); }
 }
 function expectPersistentDataUntouched() {
@@ -61,7 +61,7 @@ function expectPersistentDataUntouched() {
   expect(AsyncStorage.clear).not.toHaveBeenCalled(); expect(SecureStore.setItemAsync).not.toHaveBeenCalled();
   expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
 }
-function renderNormalRoot(extra: unknown = normalReady, metadata: Record<string, unknown> = {}) {
+async function renderNormalRoot(extra: unknown = normalReady, metadata: Record<string, unknown> = {}) {
   // Root selection only: real-provider session/preference behavior is covered
   // separately by the authentication and onboarding regression suites.
   const providers = [LanguageProvider, AuthProvider, GenerationActionsProvider, RegistrationProvider, LoginNavigationProvider];
@@ -69,8 +69,8 @@ function renderNormalRoot(extra: unknown = normalReady, metadata: Record<string,
   const stack = Stack as unknown as jest.Mock;
   stack.mockImplementation(() => <Text>Normal application stack</Text>);
   try {
-    withExtra(extra, () => {
-      const view = render(<RootLayout />);
+    await withExtra(extra, async () => {
+      const view = await render(<RootLayout />);
       try {
         expect(screen.getByText('Normal application stack')).toBeOnTheScreen();
         expect(screen.queryByText('SAMPLE STORIES. Nothing is saved.')).toBeNull();
@@ -80,7 +80,7 @@ function renderNormalRoot(extra: unknown = normalReady, metadata: Record<string,
         expectPersistentDataUntouched();
         expect(globalThis.fetch).not.toHaveBeenCalled(); expect(globalThis.XMLHttpRequest).not.toHaveBeenCalled();
         expect(globalThis.WebSocket).not.toHaveBeenCalled();
-      } finally { view.unmount(); }
+      } finally { await view.unmount(); }
     }, 'ios', metadata);
   } finally {
     for (const provider of providers) jest.mocked(provider).mockImplementation(() => {
@@ -91,48 +91,48 @@ function renderNormalRoot(extra: unknown = normalReady, metadata: Record<string,
 }
 
 describe('explicit sample-story native configuration gate', () => {
-  it.each(['ios', 'android'] as const)('accepts only the exact disabled-service configuration on native %s', platform => {
-    withExtra(enabled, () => expect(readStoryPreviewEnabled()).toBe(true), platform);
+  it.each(['ios', 'android'] as const)('accepts only the exact disabled-service configuration on native %s', async platform => {
+    await withExtra(enabled, () => expect(readStoryPreviewEnabled()).toBe(true), platform);
   });
-  it('rejects web even with otherwise valid sample configuration', () => {
-    withExtra(enabled, () => expect(readStoryPreviewEnabled()).toBe(false), 'web');
+  it('rejects web even with otherwise valid sample configuration', async () => {
+    await withExtra(enabled, () => expect(readStoryPreviewEnabled()).toBe(false), 'web');
   });
-  it('rejects production execution even with otherwise valid sample configuration', () => {
+  it('rejects production execution even with otherwise valid sample configuration', async () => {
     const descriptor = Object.getOwnPropertyDescriptor(globalThis, '__DEV__');
     Object.defineProperty(globalThis, '__DEV__', { configurable: true, value: false });
-    try { withExtra(enabled, () => expect(readStoryPreviewEnabled()).toBe(false)); }
+    try { await withExtra(enabled, () => expect(readStoryPreviewEnabled()).toBe(false)); }
     finally { if (descriptor) Object.defineProperty(globalThis, '__DEV__', descriptor); else Reflect.deleteProperty(globalThis, '__DEV__'); }
   });
   it.each([undefined, null, {}, [], false, 'preview',
     { ...enabled, memyStoryPreviewEnabled: false }, { ...enabled, memyStoryPreviewEnabled: 'true' },
     { ...enabled, memyStoryPreviewEnabled: 1 }, { memyStoryPreviewEnabled: true },
-  ])('rejects missing, false or malformed preview configuration %#', extra => {
-    withExtra(extra, () => expect(readStoryPreviewEnabled()).toBe(false));
+  ])('rejects missing, false or malformed preview configuration %#', async extra => {
+    await withExtra(extra, () => expect(readStoryPreviewEnabled()).toBe(false));
   });
   it.each((['memyDevelopmentAuth', 'memyDevelopmentApi'] as const).flatMap(key => [
     undefined, null, false, [], {}, 'disabled', { enabled: true }, { enabled: 0 }, { enabled: 'false' },
     { enabled: false, unexpected: true },
-  ].map(value => ({ key, value }))))('requires an exact disabled record for $key (%#)', ({ key, value }) => {
-    withExtra({ ...enabled, [key]: value }, () => expect(readStoryPreviewEnabled()).toBe(false));
+  ].map(value => ({ key, value }))))('requires an exact disabled record for $key (%#)', async ({ key, value }) => {
+    await withExtra({ ...enabled, [key]: value }, () => expect(readStoryPreviewEnabled()).toBe(false));
   });
   it.each([
     { ...enabled, memyDevelopmentAuth: { enabled: true, supabaseUrl: 'https://development.example.invalid', publishableKey: 'synthetic-never-read' } },
     { ...enabled, memyDevelopmentApi: { enabled: true, baseUrl: 'http://192.168.20.30:8000' } },
     { ...enabled, memyDevelopmentAuth: { enabled: false, publishableKey: 'synthetic-never-read' } },
     { ...enabled, memyDevelopmentApi: { enabled: false, baseUrl: 'http://192.168.20.30:8000' } },
-  ])('rejects a credential-bearing or enabled service record %#', extra => {
-    withExtra(extra, () => expect(readStoryPreviewEnabled()).toBe(false));
+  ])('rejects a credential-bearing or enabled service record %#', async extra => {
+    await withExtra(extra, () => expect(readStoryPreviewEnabled()).toBe(false));
   });
-  it('cannot be enabled merely by URL-like or query-parameter values', () => {
-    withExtra({ ...enabled, memyStoryPreviewEnabled: false,
+  it('cannot be enabled merely by URL-like or query-parameter values', async () => {
+    await withExtra({ ...enabled, memyStoryPreviewEnabled: false,
       url: 'exp://192.168.20.30:8081/--/?memyStoryPreviewEnabled=true',
       queryParams: { memyStoryPreviewEnabled: true },
     }, () => expect(readStoryPreviewEnabled()).toBe(false));
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
-  it('renders the actual sample UI without mounting account/preference providers or using persistent stores', () => {
-    withExtra(enabled, () => {
-      const view = render(<RootLayout />);
+  it('renders the actual sample UI without mounting account/preference providers or using persistent stores', async () => {
+    await withExtra(enabled, async () => {
+      const view = await render(<RootLayout />);
       try {
         expect(screen.getByText('SAMPLE STORIES. Nothing is saved.')).toBeOnTheScreen();
         for (const provider of [LanguageProvider, AuthProvider, GenerationActionsProvider, RegistrationProvider, LoginNavigationProvider]) {
@@ -143,29 +143,29 @@ describe('explicit sample-story native configuration gate', () => {
         expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
         expect(globalThis.fetch).not.toHaveBeenCalled(); expect(globalThis.XMLHttpRequest).not.toHaveBeenCalled();
         expect(globalThis.WebSocket).not.toHaveBeenCalled();
-      } finally { view.unmount(); }
+      } finally { await view.unmount(); }
     });
   });
-  it('mounts only normal routing/providers for ready development configuration without clearing any stored data', () => {
-    renderNormalRoot();
+  it('mounts only normal routing/providers for ready development configuration without clearing any stored data', async () => {
+    await renderNormalRoot();
   });
   it.each([
     { initialUrl: 'exp://192.168.20.30:8081/--/login?memyStoryPreviewEnabled=true', restoredRoute: '/login' },
     { initialUrl: 'memy-foundation:///authenticated?preview-stories=1', restoredRoute: '/authenticated' },
     { queryParams: { memyStoryPreviewEnabled: true }, linkingUri: 'exp://192.168.20.30:8081/--/welcome' },
-  ])('does not select samples from restored-route/query metadata on normal configuration (%#)', metadata => {
-    renderNormalRoot(normalReady, metadata);
+  ])('does not select samples from restored-route/query metadata on normal configuration (%#)', async metadata => {
+    await renderNormalRoot(normalReady, metadata);
   });
-  it('reopens the normal application after a full sample remount without carrying its gate or clearing stores', () => {
-    withExtra(enabled, () => {
-      const view = render(<RootLayout />);
+  it('reopens the normal application after a full sample remount without carrying its gate or clearing stores', async () => {
+    await withExtra(enabled, async () => {
+      const view = await render(<RootLayout />);
       expect(screen.getByText('SAMPLE STORIES. Nothing is saved.')).toBeOnTheScreen();
       for (const provider of [LanguageProvider, AuthProvider, GenerationActionsProvider, RegistrationProvider, LoginNavigationProvider]) {
         expect(provider).not.toHaveBeenCalled();
       }
-      view.unmount();
+      await view.unmount();
     });
-    renderNormalRoot();
+    await renderNormalRoot();
     expectPersistentDataUntouched();
   });
 });
@@ -263,7 +263,7 @@ describe('protected launcher to app-config handoff with synthetic local settings
     MEMY_MOBILE_AUTH_MODE: 'verification', memy_mobile_auth_mode: 'development',
     EXPO_PUBLIC_UNAPPROVED: 'synthetic-should-be-removed', expo_public_other: 'synthetic-should-be-removed', EXPO_OFFLINE: '1',
   };
-  it.each(['start', 'android'])('%s selects normal configuration despite inherited sample flags', action => {
+  it.each(['start', 'android'])('%s selects normal configuration despite inherited sample flags', async action => {
     const { environment, args } = launchEnvironment(action, inherited);
     expect(environment.MEMY_MOBILE_AUTH_MODE).toBe('development');
     expect(Object.keys(environment).filter(key => key.toUpperCase() === 'MEMY_MOBILE_STORY_PREVIEW')).toEqual([]);
@@ -275,9 +275,9 @@ describe('protected launcher to app-config handoff with synthetic local settings
     expect(read.mock.calls.map(([filename]) => filename).sort()).toEqual([
       path.join(appRoot, 'development.api.local.json'), path.join(appRoot, 'development.auth.local.json'),
     ].sort());
-    withExtra(result.extra, () => expect(readStoryPreviewEnabled()).toBe(false));
+    await withExtra(result.extra, () => expect(readStoryPreviewEnabled()).toBe(false));
   });
-  it('enables samples only for explicit preview startup, without opening either local setting or changing app identity', () => {
+  it('enables samples only for explicit preview startup, without opening either local setting or changing app identity', async () => {
     const { environment, args } = launchEnvironment('preview-stories', inherited);
     expect(environment.MEMY_MOBILE_AUTH_MODE).toBe('verification'); expect(environment.MEMY_MOBILE_STORY_PREVIEW).toBe('1');
     expect(Object.keys(environment).filter(key => key.toUpperCase() === 'MEMY_MOBILE_STORY_PREVIEW')).toEqual(['MEMY_MOBILE_STORY_PREVIEW']);
@@ -286,7 +286,7 @@ describe('protected launcher to app-config handoff with synthetic local settings
     const read = syntheticLocalRead(); const { result } = evaluateAppConfig(environment, read);
     expect(result.extra).toEqual(enabled); expect(read).not.toHaveBeenCalled();
     expect(result.name).toBe(`${identity.name} (Sample Stories)`); expect(result.slug).toBe(identity.slug); expect(result.scheme).toBe(identity.scheme);
-    withExtra(result.extra, () => expect(readStoryPreviewEnabled()).toBe(true));
+    await withExtra(result.extra, () => expect(readStoryPreviewEnabled()).toBe(true));
   });
   it('keeps offline verification separate from explicit sample startup and never opens local settings', () => {
     const { environment } = launchEnvironment('test', inherited);
@@ -297,4 +297,78 @@ describe('protected launcher to app-config handoff with synthetic local settings
     expect(result.name).toBe(identity.name); expect(result.slug).toBe(identity.slug); expect(result.scheme).toBe(identity.scheme);
     expectPersistentDataUntouched();
   });
+});
+
+describe('SDK 58 CLI NODE_ENV changes do not grant configuration authority', () => {
+  const disabled = { ...enabled, memyStoryPreviewEnabled: false };
+  const inherited = {
+    NODE_ENV: 'test', MEMY_MOBILE_AUTH_MODE: 'development', memy_mobile_auth_mode: 'development',
+    MEMY_MOBILE_STORY_PREVIEW: '1', MeMy_MoBiLe_StOrY_PrEvIeW: '1',
+    EXPO_PUBLIC_SUPABASE_KEY: 'synthetic-never-bundle', expo_public_api_url: 'synthetic-never-bundle',
+    ExPo_PuBlIc_StOrY_PrEvIeW: '1', EXPO_NO_DOTENV: '0', EXPO_NO_CLIENT_ENV_VARS: '0',
+  };
+  it.each(['development', 'production', 'test'])(
+    'NODE_ENV=%s alone cannot read local files or enable authentication, API or sample data', async nodeEnv => {
+      const read = syntheticLocalRead();
+      const { result } = evaluateAppConfig({ NODE_ENV: nodeEnv, EXPO_PUBLIC_MEMY_MOBILE_AUTH_MODE: 'development',
+        EXPO_PUBLIC_MEMY_MOBILE_STORY_PREVIEW: '1' }, read);
+      expect(result.extra).toEqual(disabled); expect(read).not.toHaveBeenCalled();
+      expect(result.name).toBe(identity.name); expect(result.slug).toBe(identity.slug); expect(result.scheme).toBe(identity.scheme);
+      await withExtra(result.extra, () => expect(readStoryPreviewEnabled()).toBe(false));
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    },
+  );
+
+  // Exercise the actual launcher and config modules with a mocked filesystem.
+  // The CLI may replace NODE_ENV after spawning; that is independent of Memy's
+  // explicit mode. These tests do not run Expo, open local settings or use a key.
+  it.each(['config', 'dependencies', 'bundle', 'bundle-ios'].flatMap(action =>
+    ['development', 'production'].map(nodeEnv => ({ action, nodeEnv }))))(
+    '$action remains isolated if the SDK CLI changes NODE_ENV to $nodeEnv after launch', async ({ action, nodeEnv }) => {
+      const original = { ...inherited };
+      const { environment } = launchEnvironment(action, inherited);
+      expect(inherited).toEqual(original);
+      expect(environment.MEMY_MOBILE_AUTH_MODE).toBe('verification');
+      expect(Object.keys(environment).filter(key => key.toUpperCase() === 'MEMY_MOBILE_AUTH_MODE')).toEqual(['MEMY_MOBILE_AUTH_MODE']);
+      expect(Object.keys(environment).some(key => key.toUpperCase() === 'MEMY_MOBILE_STORY_PREVIEW')).toBe(false);
+      expect(Object.keys(environment).some(key => key.toUpperCase().startsWith('EXPO_PUBLIC_'))).toBe(false);
+      const read = syntheticLocalRead();
+      const { result } = evaluateAppConfig({ ...environment, NODE_ENV: nodeEnv }, read);
+      expect(result.extra).toEqual(disabled); expect(read).not.toHaveBeenCalled();
+      expect(result.name).toBe(identity.name); expect(result.slug).toBe(identity.slug); expect(result.scheme).toBe(identity.scheme);
+      await withExtra(result.extra, () => expect(readStoryPreviewEnabled()).toBe(false));
+      expectPersistentDataUntouched(); expect(globalThis.fetch).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['start', 'android'])(
+    '%s still requires its deliberate development mode and exact approved synthetic files after a CLI NODE_ENV change', action => {
+      const { environment } = launchEnvironment(action, { ...inherited, NODE_ENV: 'production' });
+      expect(environment.MEMY_MOBILE_AUTH_MODE).toBe('development');
+      const read = syntheticLocalRead();
+      const { result } = evaluateAppConfig({ ...environment, NODE_ENV: 'development' }, read);
+      expect(result.extra).toEqual(normalReady); expect(result.extra.memyStoryPreviewEnabled).toBe(false);
+      expect(read.mock.calls.map(([filename]) => filename).sort()).toEqual([
+        path.join(appRoot, 'development.auth.local.json'), path.join(appRoot, 'development.api.local.json'),
+      ].sort());
+      // Production-looking NODE_ENV never adds a production endpoint or a root
+      // .env read. The only two reads above are supplied by the in-memory stub.
+      expect(result.slug).toBe(identity.slug); expect(result.scheme).toBe(identity.scheme);
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['development', 'production'])(
+    'only explicit preview startup enables samples when the CLI sets NODE_ENV=%s; both services stay disabled', nodeEnv => {
+      const { environment } = launchEnvironment('preview-stories', inherited);
+      expect(environment.MEMY_MOBILE_AUTH_MODE).toBe('verification');
+      expect(environment.MEMY_MOBILE_STORY_PREVIEW).toBe('1');
+      const read = syntheticLocalRead();
+      const { result } = evaluateAppConfig({ ...environment, NODE_ENV: nodeEnv }, read);
+      expect(result.extra).toEqual(enabled); expect(read).not.toHaveBeenCalled();
+      expect(result.name).toBe(`${identity.name} (Sample Stories)`);
+      expect(result.slug).toBe(identity.slug); expect(result.scheme).toBe(identity.scheme);
+      expectPersistentDataUntouched(); expect(globalThis.fetch).not.toHaveBeenCalled();
+    },
+  );
 });

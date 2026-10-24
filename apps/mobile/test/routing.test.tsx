@@ -27,16 +27,23 @@ const routes = { _layout: RootLayout, index: EntryRoute, language: LanguageRoute
   register: RegisterRoute, 'auth/confirm': ConfirmRoute };
 
 async function openFlow(initialUrl = '/') {
-  const flow = renderRouter(routes, { initialUrl });
+  const flow = await renderRouter(routes, { initialUrl });
   await screen.findByRole('header');
   return flow;
 }
 async function welcome(language: Language = 'en') {
-  fireEvent.press(screen.getByRole('radio', { name: language === 'sv' ? 'Svenska' : 'English' }));
-  fireEvent.press(screen.getByRole('button', { name: copy[language].continue }));
+  await fireEvent.press(screen.getByRole('radio', { name: language === 'sv' ? 'Svenska' : 'English' }));
+  await fireEvent.press(screen.getByRole('button', { name: copy[language].continue }));
   await screen.findByRole('header', { name: introCopy[language].scenes[0].title });
-  fireEvent.press(screen.getByRole('button', { name: introCopy[language].skip }));
+  await fireEvent.press(screen.getByRole('button', { name: introCopy[language].skip }));
   await screen.findByRole('header', { name: copy[language].welcomeTitle });
+}
+async function expectStoredPreferences(language: Language, completed: boolean) {
+  const expected = { version: 1, language, completed };
+  // Keep fake-timer polling synchronous: an async predicate can resolve while
+  // RNTL's timer act is still open, overlapping the next real navigation event.
+  await waitFor(() => expect(AsyncStorage.setItem).toHaveBeenLastCalledWith(PREFERENCES_KEY, JSON.stringify(expected)));
+  expect(JSON.parse((await AsyncStorage.getItem(PREFERENCES_KEY))!)).toEqual(expected);
 }
 function RememberedVisitEntry() {
   const { language, ready } = useLanguage();
@@ -68,7 +75,7 @@ describe('actual native router flow', () => {
     const flow = await openFlow();
     await welcome(language);
     expect(flow.getPathname()).toBe('/welcome');
-    fireEvent.press(screen.getByRole('button', { name: copy[language].changeLanguage }));
+    await fireEvent.press(screen.getByRole('button', { name: copy[language].changeLanguage }));
     await screen.findByRole('header', { name: copy[language].languageTitle });
     expect(flow.getPathname()).toBe('/language');
     expect(screen.getByRole('radio', { name: language === 'sv' ? 'Svenska' : 'English' })).toBeChecked();
@@ -77,17 +84,17 @@ describe('actual native router flow', () => {
   it('lets the user change language after returning without forcing introduction again', async () => {
     await openFlow();
     await welcome();
-    fireEvent.press(screen.getByRole('button', { name: copy.en.changeLanguage }));
-    fireEvent.press(screen.getByRole('radio', { name: 'Svenska' }));
-    fireEvent.press(screen.getByRole('button', { name: copy.sv.continue }));
+    await fireEvent.press(screen.getByRole('button', { name: copy.en.changeLanguage }));
+    await fireEvent.press(screen.getByRole('radio', { name: 'Svenska' }));
+    await fireEvent.press(screen.getByRole('button', { name: copy.sv.continue }));
     expect(await screen.findByRole('header', { name: copy.sv.welcomeTitle })).toBeVisible();
   });
 
   it('returns from changing language without leaving stale language history behind Welcome', async () => {
     const flow = await openFlow();
     await welcome();
-    fireEvent.press(screen.getByRole('button', { name: copy.en.changeLanguage }));
-    fireEvent.press(screen.getByRole('button', { name: copy.en.continue }));
+    await fireEvent.press(screen.getByRole('button', { name: copy.en.changeLanguage }));
+    await fireEvent.press(screen.getByRole('button', { name: copy.en.continue }));
     await screen.findByRole('header', { name: copy.en.welcomeTitle });
     await waitFor(() => expect(router.canGoBack()).toBe(false));
     expect(flow.getPathname()).toBe('/welcome');
@@ -96,9 +103,9 @@ describe('actual native router flow', () => {
   it('does not stack duplicate introduction screens after repeated Continue activation', async () => {
     const flow = await openFlow();
     const next = screen.getByRole('button', { name: copy.en.continue });
-    act(() => { fireEvent.press(next); fireEvent.press(next); });
+    await act(async () => { await fireEvent.press(next); await fireEvent.press(next); });
     await screen.findByRole('header', { name: introCopy.en.scenes[0].title });
-    fireEvent.press(screen.getByRole('button', { name: introCopy.en.back }));
+    await fireEvent.press(screen.getByRole('button', { name: introCopy.en.back }));
     await screen.findByRole('header', { name: copy.en.languageTitle });
     expect(flow.getPathname()).toBe('/language');
   });
@@ -106,17 +113,16 @@ describe('actual native router flow', () => {
   it('can reach language selection if Welcome was opened without history', async () => {
     await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language: 'en', completed: true }));
     const flow = await openFlow('/welcome');
-    fireEvent.press(screen.getByRole('button', { name: copy.en.changeLanguage }));
+    await fireEvent.press(screen.getByRole('button', { name: copy.en.changeLanguage }));
     await screen.findByRole('header', { name: copy.en.languageTitle });
     expect(flow.getPathname()).toBe('/language');
   });
 
   it('persists the selected language across application remount', async () => {
     const first = await openFlow();
-    fireEvent.press(screen.getByRole('radio', { name: 'Svenska' }));
-    await waitFor(() => expect(AsyncStorage.setItem).toHaveBeenCalled());
-    await waitFor(async () => expect(JSON.parse((await AsyncStorage.getItem(PREFERENCES_KEY))!).language).toBe('sv'));
-    first.unmount();
+    await fireEvent.press(screen.getByRole('radio', { name: 'Svenska' }));
+    await expectStoredPreferences('sv', false);
+    await first.unmount();
     await openFlow();
     expect(screen.getByRole('radio', { name: 'Svenska' })).toBeChecked();
   });
@@ -124,7 +130,7 @@ describe('actual native router flow', () => {
   it('does not contact authentication or backend services during the complete flow', async () => {
     await openFlow();
     await welcome('sv');
-    fireEvent.press(screen.getByRole('button', { name: copy.sv.changeLanguage }));
+    await fireEvent.press(screen.getByRole('button', { name: copy.sv.changeLanguage }));
     expect(globalThis.fetch).not.toHaveBeenCalled();
     expect(globalThis.XMLHttpRequest).not.toHaveBeenCalled();
     expect(globalThis.WebSocket).not.toHaveBeenCalled();
@@ -135,42 +141,40 @@ describe('actual native router flow', () => {
       const original = BackHandler.addEventListener;
       const handlers: Parameters<typeof BackHandler.addEventListener>[1][] = [];
       BackHandler.addEventListener = (name, handler) => { handlers.push(handler); return original(name, handler); };
-      let flow: ReturnType<typeof renderRouter> | undefined;
+      let flow: Awaited<ReturnType<typeof renderRouter>> | undefined;
       try {
         await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language, completed: true }));
         flow = await openFlow();
-        fireEvent.press(screen.getByRole('button', { name: copy[language].changeLanguage }));
+        await fireEvent.press(screen.getByRole('button', { name: copy[language].changeLanguage }));
         await screen.findByRole('header', { name: copy[language].languageTitle });
         const selected = language === 'sv' ? 'en' : 'sv';
-        fireEvent.press(screen.getByRole('radio', { name: selected === 'sv' ? 'Svenska' : 'English' }));
-        if (hardware) act(() => {
+        await fireEvent.press(screen.getByRole('radio', { name: selected === 'sv' ? 'Svenska' : 'English' }));
+        if (hardware) await act(() => {
           const handler = handlers.at(-1)!;
           expect(handler({} as Parameters<typeof handler>[0])).toBe(true);
         });
-        else fireEvent.press(screen.getByRole('button', { name: introCopy[selected].back }));
+        else await fireEvent.press(screen.getByRole('button', { name: introCopy[selected].back }));
         await screen.findByRole('header', { name: copy[selected].welcomeTitle });
         expect(flow.getPathname()).toBe('/welcome');
         expect(screen.queryByRole('header', { name: introCopy[selected].scenes[0].title })).toBeNull();
-        await waitFor(async () => expect(JSON.parse((await AsyncStorage.getItem(PREFERENCES_KEY))!))
-          .toEqual({ version: 1, language: selected, completed: true }));
+        await expectStoredPreferences(selected, true);
         expect(globalThis.fetch).not.toHaveBeenCalled();
-      } finally { flow?.unmount(); BackHandler.addEventListener = original; }
+      } finally { await flow?.unmount(); BackHandler.addEventListener = original; }
     });
 
   it('returns to Welcome after a language change without inventing completion for a remembered account visit', async () => {
-    const flow = renderRouter({ ...routes, index: RememberedVisitEntry }, { initialUrl: '/' });
-    fireEvent.press(await screen.findByRole('button', { name: 'Simulate previously verified visit' }));
+    const flow = await renderRouter({ ...routes, index: RememberedVisitEntry }, { initialUrl: '/' });
+    await fireEvent.press(await screen.findByRole('button', { name: 'Simulate previously verified visit' }));
     await screen.findByRole('header', { name: copy.en.welcomeTitle });
     expect(await AsyncStorage.getItem(PREFERENCES_KEY)).toBeNull();
-    fireEvent.press(screen.getByRole('button', { name: copy.en.changeLanguage }));
+    await fireEvent.press(screen.getByRole('button', { name: copy.en.changeLanguage }));
     await screen.findByRole('header', { name: copy.en.languageTitle });
-    fireEvent.press(screen.getByRole('radio', { name: 'Svenska' }));
-    fireEvent.press(screen.getByRole('button', { name: copy.sv.continue }));
+    await fireEvent.press(screen.getByRole('radio', { name: 'Svenska' }));
+    await fireEvent.press(screen.getByRole('button', { name: copy.sv.continue }));
     await screen.findByRole('header', { name: copy.sv.welcomeTitle });
     expect(flow.getPathname()).toBe('/welcome');
     expect(screen.queryByRole('header', { name: introCopy.sv.scenes[0].title })).toBeNull();
-    await waitFor(async () => expect(JSON.parse((await AsyncStorage.getItem(PREFERENCES_KEY))!))
-      .toEqual({ version: 1, language: 'sv', completed: false }));
+    await expectStoredPreferences('sv', false);
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
@@ -178,20 +182,19 @@ describe('actual native router flow', () => {
     const snapshot = { status: 'signed-in' as const, user: { id: 'synthetic-verified-user', email: 'returning@example.test' },
       error: null, appActive: true, signIn: jest.fn(async () => {}), signOut: jest.fn(async () => {}), getAccessToken: jest.fn(async () => null) };
     const auth = jest.spyOn(AuthModule, 'useAuth').mockReturnValue(snapshot);
-    let flow: ReturnType<typeof renderRouter> | undefined;
+    let flow: Awaited<ReturnType<typeof renderRouter>> | undefined;
     try {
       await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language: 'en', completed: true }));
       flow = await openFlow('/language');
-      fireEvent.press(screen.getByRole('radio', { name: 'Svenska' }));
-      fireEvent.press(screen.getByRole('button', { name: copy.sv.continue }));
+      await fireEvent.press(screen.getByRole('radio', { name: 'Svenska' }));
+      await fireEvent.press(screen.getByRole('button', { name: copy.sv.continue }));
       await openSettings('sv'); await screen.findByText(snapshot.user.email);
       expect(flow.getPathname()).toBe('/authenticated');
       expect(snapshot.signOut).not.toHaveBeenCalled(); expect(snapshot.signIn).not.toHaveBeenCalled();
       expect(snapshot.getAccessToken).not.toHaveBeenCalled();
-      await waitFor(async () => expect(JSON.parse((await AsyncStorage.getItem(PREFERENCES_KEY))!))
-        .toEqual({ version: 1, language: 'sv', completed: true }));
+      await expectStoredPreferences('sv', true);
       expect(globalThis.fetch).not.toHaveBeenCalled();
-    } finally { flow?.unmount(); auth.mockRestore(); }
+    } finally { await flow?.unmount(); auth.mockRestore(); }
   });
 
   it('enables intentional login and local registration preview while guest stays unavailable', async () => {
@@ -211,48 +214,47 @@ describe('introduction completion and replay', () => {
     const flow = await openFlow();
     expect(flow.getPathname()).toBe('/welcome');
     expect(screen.queryByText(/SAMPLE STORIES|EXEMPELBERÄTTELSER/)).toBeNull();
-    fireEvent.press(screen.getByRole('button', { name: introCopy.en.replay }));
+    await fireEvent.press(screen.getByRole('button', { name: introCopy.en.replay }));
     for (let scene = 0; scene < 3; scene++) {
       expect(await screen.findByRole('header', { name: introCopy.en.scenes[scene].title })).toBeVisible();
       expect(screen.queryByText(/SAMPLE STORIES|EXEMPELBERÄTTELSER/)).toBeNull();
-      fireEvent.press(screen.getByRole('button', { name: scene === 2 ? introCopy.en.enter : introCopy.en.next }));
+      await fireEvent.press(screen.getByRole('button', { name: scene === 2 ? introCopy.en.enter : introCopy.en.next }));
     }
     expect(await screen.findByRole('header', { name: copy.en.welcomeTitle })).toBeVisible();
     expect(screen.queryByText(/SAMPLE STORIES|EXEMPELBERÄTTELSER/)).toBeNull();
-    await waitFor(async () => expect(JSON.parse((await AsyncStorage.getItem(PREFERENCES_KEY))!))
-      .toEqual({ version: 1, language: 'en', completed: true }));
+    await expectStoredPreferences('en', true);
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   it.each<Language>(['en', 'sv'])('shows all three scenes in order and enters Welcome in %s', async (language) => {
     const flow = await openFlow();
-    fireEvent.press(screen.getByRole('radio', { name: language === 'sv' ? 'Svenska' : 'English' }));
-    fireEvent.press(screen.getByRole('button', { name: copy[language].continue }));
+    await fireEvent.press(screen.getByRole('radio', { name: language === 'sv' ? 'Svenska' : 'English' }));
+    await fireEvent.press(screen.getByRole('button', { name: copy[language].continue }));
     for (let scene = 0; scene < 3; scene++) {
       expect(await screen.findByRole('header', { name: introCopy[language].scenes[scene].title })).toBeVisible();
       expect(screen.getByTestId('memory-book-scene-' + (scene + 1), { includeHiddenElements: true })).toBeOnTheScreen();
-      fireEvent.press(screen.getByRole('button', { name: scene === 2 ? introCopy[language].enter : introCopy[language].next }));
+      await fireEvent.press(screen.getByRole('button', { name: scene === 2 ? introCopy[language].enter : introCopy[language].next }));
     }
     expect(await screen.findByRole('header', { name: copy[language].welcomeTitle })).toBeVisible();
     expect(flow.getPathname()).toBe('/welcome');
-    await waitFor(async () => expect(JSON.parse((await AsyncStorage.getItem(PREFERENCES_KEY))!).completed).toBe(true));
+    await expectStoredPreferences(language, true);
   });
 
   it('moves back through scenes without marking completion', async () => {
     await openFlow('/introduction?scene=2');
-    fireEvent.press(screen.getByRole('button', { name: introCopy.en.back }));
+    await fireEvent.press(screen.getByRole('button', { name: introCopy.en.back }));
     expect(await screen.findByRole('header', { name: introCopy.en.scenes[1].title })).toBeVisible();
-    fireEvent.press(screen.getByRole('button', { name: introCopy.en.back }));
+    await fireEvent.press(screen.getByRole('button', { name: introCopy.en.back }));
     expect(await screen.findByRole('header', { name: introCopy.en.scenes[0].title })).toBeVisible();
     expect(AsyncStorage.setItem).not.toHaveBeenCalled();
   });
 
   it.each([0, 1, 2])('explicitly skips from scene %s and returning users bypass the introduction', async (scene) => {
     const flow = await openFlow('/introduction?scene=' + scene);
-    fireEvent.press(screen.getByRole('button', { name: introCopy.en.skip }));
+    await fireEvent.press(screen.getByRole('button', { name: introCopy.en.skip }));
     await screen.findByRole('header', { name: copy.en.welcomeTitle });
-    await waitFor(async () => expect(JSON.parse((await AsyncStorage.getItem(PREFERENCES_KEY))!).completed).toBe(true));
-    flow.unmount();
+    await expectStoredPreferences('en', true);
+    await flow.unmount();
     const returning = await openFlow();
     expect(returning.getPathname()).toBe('/welcome');
     expect(screen.queryByText(introCopy.en.scenes[0].title)).toBeNull();
@@ -262,7 +264,7 @@ describe('introduction completion and replay', () => {
     await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language: 'sv', completed: true }));
     const flow = await openFlow();
     expect(flow.getPathname()).toBe('/welcome');
-    fireEvent.press(screen.getByRole('button', { name: introCopy.sv.replay }));
+    await fireEvent.press(screen.getByRole('button', { name: introCopy.sv.replay }));
     expect(await screen.findByRole('header', { name: introCopy.sv.scenes[0].title })).toBeVisible();
     expect(JSON.parse((await AsyncStorage.getItem(PREFERENCES_KEY))!).completed).toBe(true);
   });
@@ -271,9 +273,9 @@ describe('introduction completion and replay', () => {
     await openFlow();
     await welcome();
     for (let attempt = 0; attempt < 3; attempt++) {
-      fireEvent.press(screen.getByRole('button', { name: introCopy.en.replay }));
+      await fireEvent.press(screen.getByRole('button', { name: introCopy.en.replay }));
       await screen.findByRole('header', { name: introCopy.en.scenes[0].title });
-      fireEvent.press(screen.getByRole('button', { name: introCopy.en.skip }));
+      await fireEvent.press(screen.getByRole('button', { name: introCopy.en.skip }));
       await screen.findByRole('header', { name: copy.en.welcomeTitle });
     }
     await waitFor(() => expect(router.canGoBack()).toBe(false));
@@ -285,34 +287,34 @@ describe('introduction completion and replay', () => {
       const original = BackHandler.addEventListener;
       const handlers: Parameters<typeof BackHandler.addEventListener>[1][] = [];
       BackHandler.addEventListener = (name, handler) => { handlers.push(handler); return original(name, handler); };
-      let flow: ReturnType<typeof renderRouter> | undefined;
+      let flow: Awaited<ReturnType<typeof renderRouter>> | undefined;
       try {
         await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language, completed: true }));
         flow = await openFlow();
-        fireEvent.press(screen.getByRole('button', { name: introCopy[language].replay }));
+        await fireEvent.press(screen.getByRole('button', { name: introCopy[language].replay }));
         await screen.findByRole('header', { name: introCopy[language].scenes[0].title });
-        fireEvent.press(screen.getByRole('button', { name: introCopy[language].next }));
+        await fireEvent.press(screen.getByRole('button', { name: introCopy[language].next }));
         await screen.findByRole('header', { name: introCopy[language].scenes[1].title });
-        fireEvent.press(screen.getByRole('button', { name: introCopy[language].back }));
+        await fireEvent.press(screen.getByRole('button', { name: introCopy[language].back }));
         await screen.findByRole('header', { name: introCopy[language].scenes[0].title });
-        if (hardware) act(() => {
+        if (hardware) await act(() => {
           const handler = handlers.at(-1)!;
           expect(handler({} as Parameters<typeof handler>[0])).toBe(true);
         });
-        else fireEvent.press(screen.getByRole('button', { name: introCopy[language].back }));
+        else await fireEvent.press(screen.getByRole('button', { name: introCopy[language].back }));
         await screen.findByRole('header', { name: copy[language].welcomeTitle });
         expect(flow.getPathname()).toBe('/welcome');
         expect(JSON.parse((await AsyncStorage.getItem(PREFERENCES_KEY))!)).toEqual({ version: 1, language, completed: true });
         expect(globalThis.fetch).not.toHaveBeenCalled();
-      } finally { flow?.unmount(); BackHandler.addEventListener = original; }
+      } finally { await flow?.unmount(); BackHandler.addEventListener = original; }
     });
 
   it('does not duplicate language selection when backing out of the first scene', async () => {
     const flow = await openFlow();
     for (let attempt = 0; attempt < 3; attempt++) {
-      fireEvent.press(screen.getByRole('button', { name: copy.en.continue }));
+      await fireEvent.press(screen.getByRole('button', { name: copy.en.continue }));
       await screen.findByRole('header', { name: introCopy.en.scenes[0].title });
-      fireEvent.press(screen.getByRole('button', { name: introCopy.en.back }));
+      await fireEvent.press(screen.getByRole('button', { name: introCopy.en.back }));
       await screen.findByRole('header', { name: copy.en.languageTitle });
     }
     expect(router.canGoBack()).toBe(false);
@@ -327,10 +329,10 @@ describe('introduction completion and replay', () => {
   it('preserves completion when changing the language of a returning user', async () => {
     await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language: 'en', completed: true }));
     await openFlow();
-    fireEvent.press(screen.getByRole('button', { name: copy.en.changeLanguage }));
-    fireEvent.press(screen.getByRole('radio', { name: 'Svenska' }));
-    fireEvent.press(screen.getByRole('button', { name: copy.sv.continue }));
+    await fireEvent.press(screen.getByRole('button', { name: copy.en.changeLanguage }));
+    await fireEvent.press(screen.getByRole('radio', { name: 'Svenska' }));
+    await fireEvent.press(screen.getByRole('button', { name: copy.sv.continue }));
     expect(await screen.findByRole('header', { name: copy.sv.welcomeTitle })).toBeVisible();
-    await waitFor(async () => expect(JSON.parse((await AsyncStorage.getItem(PREFERENCES_KEY))!)).toEqual({ version: 1, language: 'sv', completed: true }));
+    await expectStoredPreferences('sv', true);
   });
 });

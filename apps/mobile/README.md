@@ -1,4 +1,12 @@
-# Memy Mobile Task 3D-3 — Start / Continue Conversation
+# Memy Mobile — SDK 58 compatibility worktree
+
+This isolated worktree preserves the reviewed cumulative B3 application and
+upgrades its Expo/React Native toolchain. See
+[SDK 58 compatibility and iPhone verification](docs/sdk58-compatibility.md)
+for current safety restrictions and the separate, pending B3 chat-style recording
+refinement. The feature notes below describe earlier implementation stages.
+
+## Memy Mobile Task 3D-3 — Start / Continue Conversation
 
 Real story details now open a minimal authenticated conversation-session landing.
 The app reconciles saved sessions and uses the backend's atomic `/continue`
@@ -362,9 +370,10 @@ Do not change token lifetimes or Supabase settings to accelerate refresh testing
 
 ## Authentication and storage behavior
 
-The supported Supabase SDK is pinned at 2.118.0, with Expo SDK 57 SecureStore 57.0.4
-and the documented React Native URL polyfill. No other existing package version
-was intentionally upgraded. Tools are installed only within apps/mobile.
+The Supabase SDK remains pinned at 2.118.0. This compatibility worktree uses
+Expo SDK 58 SecureStore 58.0.2 and the existing React Native URL polyfill; secure
+storage identity and behavior are preserved. SDK-compatible toolchain changes are
+listed in the review package. Tools are installed only within apps/mobile.
 
 Sessions use SecureStore (Keychain/Keystore), not browser storage or AsyncStorage.
 The fixed namespace is memy.auth.edbkuunyeyxnyenmmqud.v1. Size-bounded chunks and a

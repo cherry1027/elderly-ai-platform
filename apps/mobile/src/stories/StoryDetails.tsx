@@ -9,6 +9,7 @@ import {
 import type { Language } from '../i18n';
 import { StoryDetailsScreen, type StoryDetailsState } from '../screens/StoryDetailsScreen';
 import { EditStoryScreen, type EditStoryState } from '../screens/EditStoryScreen';
+import type { LeaveHandle } from '../navigation/useGuardedLeave';
 
 interface Props {
   language: Language;
@@ -18,6 +19,7 @@ interface Props {
   onBack: () => void;
   onSignOut: () => void;
   onConversation?: (project: StoryProject) => void;
+  onReviewMemories?: (project: StoryProject) => void;
   onGenerate?: (project: StoryProject) => void;
 }
 type Frame = {
@@ -26,7 +28,7 @@ type Frame = {
 };
 type Phase = 'loading' | 'details' | 'details-error' | 'editing' | 'saving' | 'edit-blocked' | 'left';
 
-export function StoryDetails({ language, user, projectId: rawId, getAccessToken, onBack, onSignOut, onConversation, onGenerate }: Props) {
+export function StoryDetails({ language, user, projectId: rawId, getAccessToken, onBack, onSignOut, onConversation, onReviewMemories, onGenerate }: Props) {
   const projectId = useMemo(() => { try { return validateStoryProjectId(rawId); } catch { return null; } }, [rawId]);
   const [config] = useState(readMobileApiConfig);
   const [revision, setRevision] = useState(0);
@@ -38,6 +40,7 @@ export function StoryDetails({ language, user, projectId: rawId, getAccessToken,
   const authenticationBlocked = useRef(false);
   const selection = useRef({ owner: user.id, projectId });
   const request = useRef<AbortController | null>(null);
+  const formLeave = useRef<LeaveHandle | null>(null);
   const cancelRequest = useCallback(() => {
     generation.current += 1;
     request.current?.abort();
@@ -99,9 +102,17 @@ export function StoryDetails({ language, user, projectId: rawId, getAccessToken,
     : !config ? { status: 'error', error: 'configuration' } : matching ? frame.details : { status: 'loading' };
   const editing = matching && frame.editing && details.status === 'ready';
   const back = useCallback(() => {
-    if (editing) reload();
+    if (['editing', 'saving', 'edit-blocked'].includes(phase.current)) formLeave.current?.requestLeave(reload);
     else leave(onBack);
-  }, [editing, reload, leave, onBack]);
+  }, [reload, leave, onBack]);
+  const requestWorkspaceLeave = (destination: () => void) => {
+    if (!alive.current || phase.current === 'left' || selection.current.owner !== user.id || selection.current.projectId !== projectId) return;
+    // A captured workspace Back/Sign Out callback may arrive after Edit opened.
+    // Route it through the current form rather than discarding that newer draft.
+    if (['editing', 'saving', 'edit-blocked'].includes(phase.current)) {
+      formLeave.current?.requestLeave(() => leave(destination));
+    } else leave(destination);
+  };
   useEffect(() => {
     const listener = BackHandler.addEventListener('hardwareBackPress', () => { back(); return true; });
     return () => listener.remove();
@@ -159,11 +170,20 @@ export function StoryDetails({ language, user, projectId: rawId, getAccessToken,
     leave(() => onGenerate(details.project));
   }
 
-  if (editing && details.status === 'ready') return <EditStoryScreen key={`${user.id}:${projectId}`} language={language}
+  function beginReview() {
+    if (!onReviewMemories || !alive.current || phase.current !== 'details' || !matching || details.status !== 'ready' ||
+        selection.current.owner !== user.id || selection.current.projectId !== projectId) return;
+    // Conversation's existing review-only mode reconciles saved sessions without
+    // calling the continuation writer when no session exists.
+    leave(() => onReviewMemories(details.project));
+  }
+
+  if (editing && details.status === 'ready') return <EditStoryScreen key={`${user.id}:${projectId}`} leaveRef={formLeave} language={language}
     project={details.project} state={frame.edit} onSubmit={save} onBack={reload} onSignOut={() => leave(onSignOut)} />;
   return <StoryDetailsScreen language={language} state={details} onEdit={beginEdit}
     onConversation={onConversation ? beginConversation : undefined}
+    onReviewMemories={onReviewMemories ? beginReview : undefined}
     onGenerate={onGenerate ? beginGeneration : undefined}
     onRefresh={() => { if (phase.current === 'details' || phase.current === 'details-error') reload(); }}
-    onBack={() => leave(onBack)} onSignOut={() => leave(onSignOut)} />;
+    onBack={() => requestWorkspaceLeave(onBack)} onSignOut={() => requestWorkspaceLeave(onSignOut)} />;
 }

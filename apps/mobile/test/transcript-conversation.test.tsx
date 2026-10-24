@@ -1,3 +1,4 @@
+import { getComponent } from './component-probe';
 import { act, render, screen, waitFor, cleanup } from '@testing-library/react-native';
 import { AppState, Text } from 'react-native';
 import * as Crypto from 'expo-crypto';
@@ -9,6 +10,13 @@ import { listConversationMessages, processTranscript, ConversationMessagesError,
 import { SIMULATED_TRANSCRIPT_NOTICE, type AudioTranscript } from '../src/api/audio-transcripts';
 import { StoryProjectsError, type StoryProjectsErrorKind } from '../src/api/story-projects';
 import { readStoryPreviewEnabled } from '../src/development/story-preview-config';
+
+
+jest.mock('../src/conversation/ConversationPanel', () => {
+  const actual = jest.requireActual<typeof import('../src/conversation/ConversationPanel')>('../src/conversation/ConversationPanel');
+  const { observeComponent } = jest.requireActual<typeof import('./component-probe')>('./component-probe');
+  return { ...actual, ConversationPanel: observeComponent(actual.ConversationPanel) };
+});
 
 jest.mock('../src/api/conversation-messages', () => ({ ...jest.requireActual('../src/api/conversation-messages'),
   listConversationMessages: jest.fn(), processTranscript: jest.fn() }));
@@ -28,19 +36,19 @@ const turn: ConversationTurn = { user_message: userMessage, message: assistant, 
 const getAccessToken = jest.fn(async (_owner: string) => 'synthetic-account-token');
 const props = { language: 'en' as const, ownerId: 'account-a', projectId, sessionId, sessionLanguage: 'en' as const,
   baseUrl: 'http://192.168.20.40:8000', transcripts: [source], getAccessToken };
-const state = () => screen.UNSAFE_getByType(ConversationPanel).props.state;
-const callbacks = () => screen.UNSAFE_getByType(ConversationPanel).props;
+const state = () => getComponent(ConversationPanel).props.state;
+const callbacks = () => getComponent(ConversationPanel).props;
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>(done => { resolve = done; });
   return { promise, resolve };
 }
 async function open(overrides: Partial<React.ComponentProps<typeof TranscriptConversation>> = {}) {
-  const view = render(<TranscriptConversation {...props} {...overrides} />);
+  const view = await render(<TranscriptConversation {...props} {...overrides} />);
   await waitFor(() => expect(state().phase).not.toBe('loading'));
   return view;
 }
-async function select() { act(() => callbacks().onSelect(sourceId)); }
+async function select() { await act(() => callbacks().onSelect(sourceId)); }
 async function process() { await select(); await act(async () => callbacks().onProcess()); }
 let onAppState: (value: string) => void;
 beforeEach(() => {
@@ -54,7 +62,7 @@ beforeEach(() => {
     return { remove: jest.fn() };
   });
 });
-afterEach(() => { cleanup(); jest.restoreAllMocks(); });
+afterEach(async () => { await cleanup(); jest.restoreAllMocks(); });
 
 it('loads only saved history on entry, selection, transcript changes and refresh', async () => {
   const view = await open();
@@ -63,7 +71,7 @@ it('loads only saved history on entry, selection, transcript changes and refresh
   expect(Crypto.randomUUID).not.toHaveBeenCalled();
   await select();
   expect(processTranscript).not.toHaveBeenCalled();
-  view.rerender(<TranscriptConversation {...props} transcripts={[{ ...source }]} />);
+  await view.rerender(<TranscriptConversation {...props} transcripts={[{ ...source }]} />);
   await act(async () => callbacks().onRefresh());
   expect(processTranscript).not.toHaveBeenCalled();
   expect(listConversationMessages).toHaveBeenCalledTimes(2);
@@ -88,17 +96,17 @@ it.each(['en', 'sv'] as const)('explicitly processes one saved %s source with a 
   expect(state().messages[0].text).toBe(source.text);
   expect(screen.queryByText(source.text)).toBeNull(); // full immutable source already displayed above by RecordingPanel
   expect(screen.getByText(assistant.text)).toBeOnTheScreen();
-  act(() => { callbacks().onProcess(); callbacks().onProcess(); });
+  await act(() => { callbacks().onProcess(); callbacks().onProcess(); });
   expect(processTranscript).toHaveBeenCalledTimes(1);
 });
 it('locks repeat taps before reconciliation or POST resolves', async () => {
   await open(); const pending = deferred<ConversationTurn>();
   jest.mocked(processTranscript).mockReturnValueOnce(pending.promise);
   await select();
-  act(() => { callbacks().onProcess(); callbacks().onProcess(); callbacks().onProcess(); });
+  await act(() => { callbacks().onProcess(); callbacks().onProcess(); callbacks().onProcess(); });
   await waitFor(() => expect(processTranscript).toHaveBeenCalledTimes(1));
   expect(state().phase).toBe('processing');
-  act(() => callbacks().onSelect('other'));
+  await act(() => callbacks().onSelect('other'));
   await act(async () => pending.resolve(turn));
   expect(Crypto.randomUUID).toHaveBeenCalledTimes(1);
   expect(processTranscript).toHaveBeenCalledTimes(1);
@@ -127,10 +135,10 @@ it('retains the same uncertain action across navigation in the same verified acc
   const tree = (visible: boolean) => <ConversationActionsProvider ownerId="account-a">
     {visible ? <TranscriptConversation {...props} /> : <Text>Outside conversation</Text>}
   </ConversationActionsProvider>;
-  const view = render(tree(true));
+  const view = await render(tree(true));
   await waitFor(() => expect(state().phase).toBe('ready'));
   await process();
-  view.rerender(tree(false)); view.rerender(tree(true));
+  await view.rerender(tree(false)); await view.rerender(tree(true));
   await waitFor(() => expect(state().phase).toBe('ready'));
   await select();
   expect(state().phase).toBe('uncertain');
@@ -154,31 +162,31 @@ it.each(['configuration', 'authentication', 'forbidden', 'not-found', 'validatio
 it.each(['sample', 'unconfigured'] as const)('never requests history or POST in %s mode', async mode => {
   jest.mocked(readStoryPreviewEnabled).mockReturnValue(mode === 'sample');
   await open({ baseUrl: mode === 'unconfigured' ? null : props.baseUrl });
-  act(() => callbacks().onProcess());
+  await act(() => callbacks().onProcess());
   expect(listConversationMessages).not.toHaveBeenCalled(); expect(processTranscript).not.toHaveBeenCalled();
   expect(state().error).toBe('configuration');
 });
 it('refuses processing when history is incomplete or source identity/text does not match', async () => {
   jest.mocked(listConversationMessages).mockResolvedValue({ messages: [], complete: false });
   const view = await open();
-  act(() => { callbacks().onSelect(sourceId); callbacks().onProcess(); });
+  await act(() => { callbacks().onSelect(sourceId); callbacks().onProcess(); });
   expect(processTranscript).not.toHaveBeenCalled();
   jest.mocked(listConversationMessages).mockResolvedValue({ messages: [{ ...userMessage, text: 'Different original' }], complete: true });
   await act(async () => callbacks().onRefresh());
   await process();
   expect(state().error).toBe('invalid-response');
   expect(processTranscript).not.toHaveBeenCalled();
-  view.unmount();
+  await view.unmount();
 });
 it.each(['ownerId', 'sessionId', 'projectId'] as const)('cancels and ignores late private results after %s changes', async field => {
   const pending = deferred<ConversationTurn>();
   jest.mocked(processTranscript).mockReturnValueOnce(pending.promise);
   const view = await open(); await select();
-  act(() => callbacks().onProcess());
+  await act(() => callbacks().onProcess());
   await waitFor(() => expect(processTranscript).toHaveBeenCalledTimes(1));
   const signal = jest.mocked(processTranscript).mock.calls[0][0].signal;
   jest.mocked(listConversationMessages).mockResolvedValue({ messages: [], complete: true });
-  view.rerender(<TranscriptConversation {...props} {...{ [field]: field === 'ownerId' ? 'account-b' : '90000000-0000-4000-8000-000000000001' }} />);
+  await view.rerender(<TranscriptConversation {...props} {...{ [field]: field === 'ownerId' ? 'account-b' : '90000000-0000-4000-8000-000000000001' }} />);
   await waitFor(() => expect(state().phase).toBe('ready'));
   await act(async () => pending.resolve(turn));
   expect(signal?.aborted).toBe(true);
@@ -189,10 +197,10 @@ it('aborts and clears history on background and reloads without automatically re
   const pending = deferred<ConversationTurn>();
   jest.mocked(processTranscript).mockReturnValueOnce(pending.promise);
   await open(); await select();
-  act(() => callbacks().onProcess());
+  await act(() => callbacks().onProcess());
   await waitFor(() => expect(processTranscript).toHaveBeenCalledTimes(1));
   const signal = jest.mocked(processTranscript).mock.calls[0][0].signal;
-  act(() => onAppState('background'));
+  await act(() => onAppState('background'));
   expect(state().messages).toEqual([]);
   await act(async () => pending.resolve(turn));
   expect(state().messages).toEqual([]); expect(signal?.aborted).toBe(true);
@@ -229,12 +237,12 @@ it('never labels a blocked conflict as processed or offers an inert process acti
   const tree = (visible: boolean) => <ConversationActionsProvider ownerId="account-a">
     {visible ? <TranscriptConversation {...props} /> : <Text>Outside conversation</Text>}
   </ConversationActionsProvider>;
-  const view = render(tree(true));
+  const view = await render(tree(true));
   await waitFor(() => expect(state().phase).toBe('ready'));
   await process();
   await act(async () => callbacks().onReconcile());
   expect(state()).toMatchObject({ phase: 'ready', blockedIds: [sourceId], processedIds: [], selectedId: undefined });
-  view.rerender(tree(false)); view.rerender(tree(true));
+  await view.rerender(tree(false)); await view.rerender(tree(true));
   await waitFor(() => expect(state().phase).toBe('ready'));
   const radio = screen.getByRole('radio');
   expect(radio).toBeDisabled();

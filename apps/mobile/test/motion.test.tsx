@@ -19,25 +19,25 @@ describe('device reduced motion', () => {
 
   afterEach(() => jest.restoreAllMocks());
 
-  it('starts with static artwork before the asynchronous preference is known', () => {
+  it('starts with static artwork before the asynchronous preference is known', async () => {
     jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockReturnValue(new Promise(() => {}));
-    const { result } = renderHook(() => useReducedMotion());
+    const { result } = await renderHook(() => useReducedMotion());
     expect(result.current).toBe(true);
   });
 
   it.each([true, false])('respects device reduced-motion setting %s', async (enabled) => {
     jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(enabled);
-    const { result } = renderHook(() => useReducedMotion());
+    const { result } = await renderHook(() => useReducedMotion());
     await waitFor(() => expect(result.current).toBe(enabled));
   });
 
   it('updates immediately when the user changes the setting', async () => {
     jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(false);
-    const { result } = renderHook(() => useReducedMotion());
+    const { result } = await renderHook(() => useReducedMotion());
     await waitFor(() => expect(result.current).toBe(false));
-    act(() => onChange(true));
+    await act(() => onChange(true));
     expect(result.current).toBe(true);
-    act(() => onChange(false));
+    await act(() => onChange(false));
     expect(result.current).toBe(false);
   });
 
@@ -46,33 +46,33 @@ describe('device reduced motion', () => {
     jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockReturnValue(new Promise((done) => {
       resolve = done;
     }));
-    const { result } = renderHook(() => useReducedMotion());
-    act(() => onChange(true));
+    const { result } = await renderHook(() => useReducedMotion());
+    await act(() => onChange(true));
     await act(async () => resolve(false));
     expect(result.current).toBe(true);
   });
 
   it('stays static when reading the device setting fails', async () => {
     jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockRejectedValue(new Error('Unavailable'));
-    const { result } = renderHook(() => useReducedMotion());
+    const { result } = await renderHook(() => useReducedMotion());
     await act(async () => {});
     expect(result.current).toBe(true);
   });
 
-  it('stays static when reading the device setting throws synchronously', () => {
+  it('stays static when reading the device setting throws synchronously', async () => {
     jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockImplementation(() => {
       throw new Error('Unavailable');
     });
-    const { result } = renderHook(() => useReducedMotion());
+    const { result } = await renderHook(() => useReducedMotion());
     expect(result.current).toBe(true);
   });
 
-  it('stays static when changes cannot be observed', () => {
+  it('stays static when changes cannot be observed', async () => {
     jest.spyOn(AccessibilityInfo, 'addEventListener').mockImplementation(() => {
       throw new Error('Unavailable');
     });
     const initialRead = jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled');
-    const { result } = renderHook(() => useReducedMotion());
+    const { result } = await renderHook(() => useReducedMotion());
     expect(result.current).toBe(true);
     expect(initialRead).not.toHaveBeenCalled();
   });
@@ -82,8 +82,8 @@ describe('device reduced motion', () => {
     jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockReturnValue(new Promise((done) => {
       resolve = done;
     }));
-    const view = renderHook(() => useReducedMotion());
-    view.unmount();
+    const view = await renderHook(() => useReducedMotion());
+    await view.unmount();
     expect(remove).toHaveBeenCalledTimes(1);
     await act(async () => resolve(false));
   });

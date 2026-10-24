@@ -1,3 +1,4 @@
+import { getComponent } from './component-probe';
 import { openMyStories, openSettings } from './root-shell-helpers';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, screen, waitFor } from '@testing-library/react-native';
@@ -27,6 +28,7 @@ import { storiesCopy } from '../src/stories-copy';
 import { rootNavigationCopy } from '../src/root-navigation-copy';
 import { StoriesHome } from '../src/stories/StoriesHome';
 
+jest.mock('../src/stories/StoriesHome', () => { const actual = jest.requireActual<typeof import('../src/stories/StoriesHome')>('../src/stories/StoriesHome'); return { ...actual, StoriesHome: jest.requireActual<typeof import('./component-probe')>('./component-probe').observeComponent(actual.StoriesHome) }; });
 jest.mock('../src/auth/client', () => ({ createMobileAuth: jest.fn() }));
 jest.mock('../src/auth/config', () => ({ readMobileAuthConfig: jest.fn() }));
 const routes = { _layout: RootLayout, index: Entry, language: Language, introduction: Introduction,
@@ -52,20 +54,20 @@ beforeEach(async () => {
 });
 async function openWelcome(language: Locale = 'en') {
   await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language, completed: true }));
-  const view = renderRouter(routes, { initialUrl: '/' });
+  const view = await renderRouter(routes, { initialUrl: '/' });
   await screen.findByRole('header', { name: copy[language].welcomeTitle });
   return view;
 }
 async function openLogin(language: Locale = 'en') {
-  fireEvent.press(screen.getByRole('button', { name: introCopy[language].login }));
+  await fireEvent.press(screen.getByRole('button', { name: introCopy[language].login }));
   await screen.findByRole('header', { name: authCopy[language].title });
 }
-function fill(language: Locale = 'en', email = 'a@example.test') {
-  fireEvent.changeText(screen.getByLabelText(authCopy[language].email), email);
-  fireEvent.changeText(screen.getByLabelText(authCopy[language].password), 'synthetic-password');
-  fireEvent.press(screen.getByRole('button', { name: authCopy[language].signIn }));
+async function fill(language: Locale = 'en', email = 'a@example.test') {
+  await fireEvent.changeText(screen.getByLabelText(authCopy[language].email), email);
+  await fireEvent.changeText(screen.getByLabelText(authCopy[language].password), 'synthetic-password');
+  await fireEvent.press(screen.getByRole('button', { name: authCopy[language].signIn }));
 }
-function appStack(flow: ReturnType<typeof renderRouter>) {
+function appStack(flow: Awaited<ReturnType<typeof renderRouter>>) {
   const root = flow.getRouterState()!;
   // Expo Router's test container wraps the actual application stack in __root.
   return root.routes[0]?.name === '__root' && root.routes[0].state ? root.routes[0].state : root;
@@ -73,19 +75,22 @@ function appStack(flow: ReturnType<typeof renderRouter>) {
 
 describe('actual native login routes with mocked auth services', () => {
   it.each<Locale>(['en', 'sv'])('persists Settings language and returns real authenticated Replay to Settings in %s', async language => {
-    const flow = await openWelcome(language); await openLogin(language); fill(language);
+    const flow = await openWelcome(language); await openLogin(language); await fill(language);
     await screen.findByRole('header', { name: rootNavigationCopy[language].homeTitle });
     expect(auth.getAccessToken).not.toHaveBeenCalled();
     await openSettings(language);
     const next = language === 'en' ? 'sv' : 'en';
-    fireEvent.press(screen.getByRole('radio', { name: next === 'sv' ? 'Svenska' : 'English' }));
+    await fireEvent.press(screen.getByRole('radio', { name: next === 'sv' ? 'Svenska' : 'English' }));
     await screen.findByRole('header', { name: rootNavigationCopy[next].settingsTitle });
-    await waitFor(async () => expect(JSON.parse((await AsyncStorage.getItem(PREFERENCES_KEY))!))
-      .toEqual({ version: 1, language: next, completed: true }));
-    fireEvent.press(screen.getByRole('button', { name: rootNavigationCopy[next].replay }));
+    await waitFor(() => expect(AsyncStorage.setItem).toHaveBeenLastCalledWith(PREFERENCES_KEY,
+      JSON.stringify({ version: 1, language: next, completed: true })));
+    expect(JSON.parse((await AsyncStorage.getItem(PREFERENCES_KEY))!))
+      .toEqual({ version: 1, language: next, completed: true });
+    await fireEvent.press(screen.getByRole('button', { name: rootNavigationCopy[next].replay }));
     for (const scene of [0, 1, 2] as const) {
       await screen.findByRole('header', { name: introCopy[next].scenes[scene].title });
-      fireEvent.press(screen.getByRole('button', { name: scene === 2 ? introCopy[next].enter : introCopy[next].next }));
+      await fireEvent.press(screen.getByRole('button', { name: scene === 2 ? introCopy[next].enter : introCopy[next].next }));
+      if (scene < 2) expect(flow.getSearchParams().scene).toBe(String(scene + 1));
     }
     await screen.findByRole('header', { name: rootNavigationCopy[next].settingsTitle });
     expect(flow.getPathname()).toBe('/authenticated');
@@ -94,12 +99,12 @@ describe('actual native login routes with mocked auth services', () => {
     expect(auth.getAccessToken).not.toHaveBeenCalled(); expect(globalThis.fetch).not.toHaveBeenCalled();
   }, 15_000);
   it('rejects the previous account’s captured Replay callback after account replacement', async () => {
-    await openWelcome(); await openLogin(); fill();
+    await openWelcome(); await openLogin(); await fill();
     await screen.findByRole('header', { name: rootNavigationCopy.en.homeTitle });
-    const previous = screen.UNSAFE_getByType(StoriesHome).props.onReplayIntroduction;
-    act(() => publish({ status: 'signed-in', user: { id: 'b@example.test', email: 'b@example.test' }, error: null }));
+    const previous = getComponent(StoriesHome).props.onReplayIntroduction;
+    await act(() => publish({ status: 'signed-in', user: { id: 'b@example.test', email: 'b@example.test' }, error: null }));
     await openSettings(); await screen.findByText('b@example.test');
-    act(() => { expect(previous()).toBe(false); });
+    await act(() => { expect(previous()).toBe(false); });
     expect(screen.getByRole('header', { name: rootNavigationCopy.en.settingsTitle })).toBeOnTheScreen();
     expect(screen.queryByText('a@example.test')).toBeNull(); expect(globalThis.fetch).not.toHaveBeenCalled();
   });
@@ -108,49 +113,49 @@ describe('actual native login routes with mocked auth services', () => {
     expect(screen.getByRole('button', { name: entranceCopy[language].previewRegistration })).toBeEnabled();
     expect(screen.queryByRole('button', { name: introCopy[language].guest })).toBeNull();
     expect(screen.getByText(entranceCopy[language].availability)).toBeOnTheScreen();
-    await openLogin(language); fill(language);
+    await openLogin(language); await fill(language);
     await openSettings(language); await screen.findByText('a@example.test');
-    fireEvent.press(screen.getByRole('button', { name: authCopy[language].signOut }));
+    await fireEvent.press(screen.getByRole('button', { name: authCopy[language].signOut }));
     await screen.findByRole('header', { name: copy[language].welcomeTitle });
     expect(screen.queryByText('a@example.test')).toBeNull();
     expect(globalThis.fetch).not.toHaveBeenCalled();
     expect(JSON.parse((await AsyncStorage.getItem(PREFERENCES_KEY))!)).toEqual({ version: 1, language, completed: true });
   });
   it('guards direct authenticated entry when there is no verified user', async () => {
-    renderRouter(routes, { initialUrl: '/authenticated' });
+    await renderRouter(routes, { initialUrl: '/authenticated' });
     await screen.findByRole('header', { name: copy.en.languageTitle });
     expect(screen.queryByText(authCopy.en.signedIn)).toBeNull();
     expect(screen.queryByRole('header', { name: authCopy.en.title })).toBeNull();
   });
   it('restores only a verified service account at application entry', async () => {
     snapshot = { status: 'signed-in', user: { id: 'verified-a', email: 'a@example.test' }, error: null };
-    renderRouter(routes, { initialUrl: '/' });
+    await renderRouter(routes, { initialUrl: '/' });
     await openSettings(); await screen.findByText('a@example.test');
     expect(screen.getByRole('button', { name: authCopy.en.signOut })).toBeEnabled();
   });
   it('removes account details and offers cleanup retry after failed sign-out', async () => {
-    await openWelcome(); await openLogin(); fill(); await openSettings(); await screen.findByText('a@example.test');
+    await openWelcome(); await openLogin(); await fill(); await openSettings(); await screen.findByText('a@example.test');
     jest.mocked(auth.signOut).mockImplementationOnce(async () => {
       publish({ status: 'blocked', user: null, error: 'cleanup' }); throw new AuthError('cleanup');
     });
-    fireEvent.press(screen.getByRole('button', { name: authCopy.en.signOut }));
+    await fireEvent.press(screen.getByRole('button', { name: authCopy.en.signOut }));
     await screen.findByText(authCopy.en.errors.cleanup);
     expect(screen.getByRole('header', { name: copy.en.welcomeTitle })).toBeOnTheScreen();
     expect(screen.queryByText('a@example.test')).toBeNull();
     expect(screen.queryByRole('button', { name: introCopy.en.login })).toBeNull();
     expect(screen.queryByLabelText(authCopy.en.password)).toBeNull();
-    fireEvent.press(screen.getByRole('button', { name: authCopy.en.retryCleanup }));
+    await fireEvent.press(screen.getByRole('button', { name: authCopy.en.retryCleanup }));
     await waitFor(() => expect(screen.getByRole('button', { name: introCopy.en.login })).toBeEnabled());
     expect(screen.queryByLabelText(authCopy.en.password)).toBeNull();
   });
   it('does not retain a previous account after sign-out and another sign-in', async () => {
-    await openWelcome(); await openLogin(); fill(); await openSettings(); await screen.findByText('a@example.test');
-    fireEvent.press(screen.getByRole('button', { name: authCopy.en.signOut }));
+    await openWelcome(); await openLogin(); await fill(); await openSettings(); await screen.findByText('a@example.test');
+    await fireEvent.press(screen.getByRole('button', { name: authCopy.en.signOut }));
     await screen.findByRole('header', { name: copy.en.welcomeTitle });
     await openLogin();
     expect(screen.getByLabelText(authCopy.en.email).props.value).toBe('');
     expect(screen.getByLabelText(authCopy.en.password).props.value).toBe('');
-    fill('en', 'b@example.test'); await openSettings(); await screen.findByText('b@example.test');
+    await fill('en', 'b@example.test'); await openSettings(); await screen.findByText('b@example.test');
     expect(screen.queryByText('a@example.test')).toBeNull();
   });
   it('cancels pending login when Back returns to Welcome', async () => {
@@ -160,7 +165,7 @@ describe('actual native login routes with mocked auth services', () => {
       publish({ status: 'busy', user: null, error: null });
       return new Promise<void>((resolve) => { finish = resolve; });
     });
-    fill(); fireEvent.press(screen.getByRole('button', { name: authCopy.en.back }));
+    await fill(); await fireEvent.press(screen.getByRole('button', { name: authCopy.en.back }));
     await screen.findByRole('header', { name: copy.en.welcomeTitle });
     expect(auth.signOut).toHaveBeenCalledTimes(1);
     await act(async () => { finish(); });
@@ -181,8 +186,8 @@ describe('actual native login routes with mocked auth services', () => {
         publish({ status: 'busy', user: null, error: null });
         return new Promise<void>((resolve) => { finish = resolve; });
       });
-      fill();
-      act(() => { expect(hardwareBack?.()).toBe(true); });
+      await fill();
+      await act(() => { expect(hardwareBack?.()).toBe(true); });
       await screen.findByRole('header', { name: copy.en.welcomeTitle });
       expect(auth.signOut).toHaveBeenCalledTimes(1);
       await act(async () => { finish(); });
@@ -195,7 +200,7 @@ describe('canonical entrance and in-memory login intent', () => {
   const coldPaths = ['/login', '/authenticated', '/welcome'] as const;
 
   it.each(coldPaths)('opens first-use language selection from cold %s', async (path) => {
-    const flow = renderRouter(routes, { initialUrl: path });
+    const flow = await renderRouter(routes, { initialUrl: path });
     await screen.findByRole('header', { name: copy.en.languageTitle });
     expect(flow.getPathname()).toBe('/language');
     expect(screen.queryByRole('header', { name: authCopy.en.title })).toBeNull();
@@ -205,7 +210,7 @@ describe('canonical entrance and in-memory login intent', () => {
 
   it.each(coldPaths)('opens Welcome for a returning signed-out visitor from cold %s', async (path) => {
     await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language: 'sv', completed: true }));
-    const flow = renderRouter(routes, { initialUrl: path });
+    const flow = await renderRouter(routes, { initialUrl: path });
     await screen.findByRole('header', { name: copy.sv.welcomeTitle });
     expect(flow.getPathname()).toBe('/welcome');
     expect(screen.queryByRole('header', { name: authCopy.sv.title })).toBeNull();
@@ -215,7 +220,7 @@ describe('canonical entrance and in-memory login intent', () => {
 
   it.each(coldPaths)('opens the authenticated screen for a verified session from cold %s', async (path) => {
     snapshot = { status: 'signed-in', user: { id: 'verified-a', email: 'a@example.test' }, error: null };
-    const flow = renderRouter(routes, { initialUrl: path });
+    const flow = await renderRouter(routes, { initialUrl: path });
     await openSettings(); await screen.findByText('a@example.test');
     expect(flow.getPathname()).toBe('/authenticated');
     expect(screen.queryByRole('header', { name: authCopy.en.title })).toBeNull();
@@ -224,10 +229,10 @@ describe('canonical entrance and in-memory login intent', () => {
 
   it('returns to Welcome after sign-out from a verified account with no saved onboarding preferences', async () => {
     snapshot = { status: 'signed-in', user: { id: 'verified-a', email: 'a@example.test' }, error: null };
-    const flow = renderRouter(routes, { initialUrl: '/' });
+    const flow = await renderRouter(routes, { initialUrl: '/' });
     await openSettings(); await screen.findByText('a@example.test');
     expect(await AsyncStorage.getItem(PREFERENCES_KEY)).toBeNull();
-    fireEvent.press(screen.getByRole('button', { name: authCopy.en.signOut }));
+    await fireEvent.press(screen.getByRole('button', { name: authCopy.en.signOut }));
     await screen.findByRole('header', { name: copy.en.welcomeTitle });
     expect(flow.getPathname()).toBe('/welcome');
     expect(await AsyncStorage.getItem(PREFERENCES_KEY)).toBeNull();
@@ -238,10 +243,10 @@ describe('canonical entrance and in-memory login intent', () => {
 
   it('returns to Welcome after displayed account verification is lost without inventing onboarding completion', async () => {
     snapshot = { status: 'signed-in', user: { id: 'verified-a', email: 'a@example.test' }, error: null };
-    const flow = renderRouter(routes, { initialUrl: '/' });
+    const flow = await renderRouter(routes, { initialUrl: '/' });
     await openSettings(); await screen.findByText('a@example.test');
     expect(await AsyncStorage.getItem(PREFERENCES_KEY)).toBeNull();
-    act(() => publish({ status: 'signed-out', user: null, error: 'session' }));
+    await act(() => publish({ status: 'signed-out', user: null, error: 'session' }));
     await screen.findByRole('header', { name: copy.en.welcomeTitle });
     expect(flow.getPathname()).toBe('/welcome');
     expect(await AsyncStorage.getItem(PREFERENCES_KEY)).toBeNull();
@@ -254,7 +259,7 @@ describe('canonical entrance and in-memory login intent', () => {
     snapshot = { status: 'checking', user: null, error: null };
     let finish!: () => void;
     jest.mocked(auth.restore).mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
-    renderRouter(routes, { initialUrl: path });
+    await renderRouter(routes, { initialUrl: path });
     await waitFor(() => expect(auth.restore).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole('header', { name: authCopy.en.title })).toBeNull();
     expect(auth.signOut).not.toHaveBeenCalled();
@@ -268,7 +273,7 @@ describe('canonical entrance and in-memory login intent', () => {
 
   it.each(['/login?loginRequested=true', '/login?intent=login', '/login?from=welcome'])('never accepts a URL claim as Welcome login intent: %s', async (path) => {
     await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language: 'en', completed: true }));
-    renderRouter(routes, { initialUrl: path });
+    await renderRouter(routes, { initialUrl: path });
     await screen.findByRole('header', { name: copy.en.welcomeTitle });
     expect(screen.queryByLabelText(authCopy.en.password)).toBeNull();
     expect(auth.signIn).not.toHaveBeenCalled();
@@ -276,10 +281,10 @@ describe('canonical entrance and in-memory login intent', () => {
 
   it('does not persist Welcome login intent or input values across a router remount', async () => {
     const first = await openWelcome(); await openLogin();
-    fireEvent.changeText(screen.getByLabelText(authCopy.en.email), 'typed@example.test');
-    fireEvent.changeText(screen.getByLabelText(authCopy.en.password), 'synthetic-unsent-password');
-    first.unmount();
-    const relaunched = renderRouter(routes, { initialUrl: '/login' });
+    await fireEvent.changeText(screen.getByLabelText(authCopy.en.email), 'typed@example.test');
+    await fireEvent.changeText(screen.getByLabelText(authCopy.en.password), 'synthetic-unsent-password');
+    await first.unmount();
+    const relaunched = await renderRouter(routes, { initialUrl: '/login' });
     await screen.findByRole('header', { name: copy.en.welcomeTitle });
     expect(relaunched.getPathname()).toBe('/welcome');
     expect(screen.queryByLabelText(authCopy.en.password)).toBeNull();
@@ -291,9 +296,9 @@ describe('canonical entrance and in-memory login intent', () => {
 
   it('requires another Welcome button press after leaving Login with Back', async () => {
     await openWelcome(); await openLogin();
-    fireEvent.press(screen.getByRole('button', { name: authCopy.en.back }));
+    await fireEvent.press(screen.getByRole('button', { name: authCopy.en.back }));
     await screen.findByRole('header', { name: copy.en.welcomeTitle });
-    act(() => router.navigate('/login'));
+    await act(() => router.navigate('/login'));
     await screen.findByRole('header', { name: copy.en.welcomeTitle });
     expect(screen.queryByLabelText(authCopy.en.password)).toBeNull();
     await openLogin();
@@ -301,12 +306,12 @@ describe('canonical entrance and in-memory login intent', () => {
   });
 
   it('does not expose a stale Login through stack Back after success or sign-out', async () => {
-    const flow = await openWelcome(); await openLogin(); fill(); await openSettings(); await screen.findByText('a@example.test');
+    const flow = await openWelcome(); await openLogin(); await fill(); await openSettings(); await screen.findByText('a@example.test');
     await waitFor(() => expect(appStack(flow).routes.map(route => route.name)).toEqual(['authenticated']));
     expect(router.canGoBack()).toBe(false);
     expect(screen.queryByLabelText(authCopy.en.password)).toBeNull();
     expect(auth.signOut).not.toHaveBeenCalled();
-    fireEvent.press(screen.getByRole('button', { name: authCopy.en.signOut }));
+    await fireEvent.press(screen.getByRole('button', { name: authCopy.en.signOut }));
     await screen.findByRole('header', { name: copy.en.welcomeTitle });
     await waitFor(() => expect(appStack(flow).routes.map(route => route.name)).toEqual(['welcome']));
     expect(router.canGoBack()).toBe(false);
@@ -317,7 +322,7 @@ describe('canonical entrance and in-memory login intent', () => {
 
   it.each(['/', ...coldPaths])('keeps cold session-recovery entry %s on Welcome without inventing preferences', async path => {
     snapshot = { status: 'signed-out', user: null, error: 'session' };
-    const flow = renderRouter(routes, { initialUrl: path });
+    const flow = await renderRouter(routes, { initialUrl: path });
     await screen.findByRole('header', { name: copy.en.welcomeTitle });
     expect(flow.getPathname()).toBe('/welcome');
     expect(router.canGoBack()).toBe(false);
@@ -328,13 +333,13 @@ describe('canonical entrance and in-memory login intent', () => {
 
   it('offers cleanup retry at cold Welcome even without saved preferences', async () => {
     snapshot = { status: 'blocked', user: null, error: 'cleanup' };
-    const flow = renderRouter(routes, { initialUrl: '/' });
+    const flow = await renderRouter(routes, { initialUrl: '/' });
     await screen.findByText(authCopy.en.errors.cleanup);
     expect(flow.getPathname()).toBe('/welcome'); expect(router.canGoBack()).toBe(false);
     expect(screen.queryByRole('button', { name: introCopy.en.login })).toBeNull();
     expect(await AsyncStorage.getItem(PREFERENCES_KEY)).toBeNull();
     expect(auth.signOut).not.toHaveBeenCalled();
-    fireEvent.press(screen.getByRole('button', { name: authCopy.en.retryCleanup }));
+    await fireEvent.press(screen.getByRole('button', { name: authCopy.en.retryCleanup }));
     await waitFor(() => expect(screen.getByRole('button', { name: introCopy.en.login })).toBeEnabled());
     expect(flow.getPathname()).toBe('/welcome');
     expect(await AsyncStorage.getItem(PREFERENCES_KEY)).toBeNull();
@@ -342,14 +347,14 @@ describe('canonical entrance and in-memory login intent', () => {
 
   it.each(['checking', 'busy'] as const)('retains history while %s, then resets only the verified focused route without replacing its key', async status => {
     const flow = await openWelcome();
-    act(() => { publish({ status, user: null, error: null }); router.push('/authenticated'); });
+    await act(() => { publish({ status, user: null, error: null }); router.push('/authenticated'); });
     await waitFor(() => expect(flow.getPathname()).toBe('/authenticated'));
     const before = appStack(flow);
     const key = before.routes[before.index ?? 0].key;
     expect(before.routes.length).toBeGreaterThan(1);
     expect(screen.queryByText('a@example.test')).toBeNull();
     expect(auth.signOut).not.toHaveBeenCalled();
-    act(() => publish({ status: 'signed-in', user: { id: 'verified-a', email: 'a@example.test' }, error: null }));
+    await act(() => publish({ status: 'signed-in', user: { id: 'verified-a', email: 'a@example.test' }, error: null }));
     await openSettings(); await screen.findByText('a@example.test');
     await waitFor(() => expect(appStack(flow).routes.map(route => route.name)).toEqual(['authenticated']));
     expect(appStack(flow).routes[0].key).toBe(key);
@@ -358,13 +363,13 @@ describe('canonical entrance and in-memory login intent', () => {
 
   it.each(['checking', 'busy'] as const)('does not clear public history until Welcome is eligible and auth is no longer %s', async status => {
     const flow = await openWelcome();
-    act(() => router.push('/language'));
-    act(() => { publish({ status, user: null, error: null }); router.push('/welcome'); });
+    await act(() => router.push('/language'));
+    await act(() => { publish({ status, user: null, error: null }); router.push('/welcome'); });
     await waitFor(() => expect(flow.getPathname()).toBe('/welcome'));
     const before = appStack(flow);
     const key = before.routes[before.index ?? 0].key;
     expect(before.routes.length).toBeGreaterThan(1);
-    act(() => publish({ status: 'signed-out', user: null, error: null }));
+    await act(() => publish({ status: 'signed-out', user: null, error: null }));
     await screen.findByRole('header', { name: copy.en.welcomeTitle });
     await waitFor(() => expect(appStack(flow).routes.map(route => route.name)).toEqual(['welcome']));
     expect(appStack(flow).routes[0].key).toBe(key);
@@ -383,7 +388,7 @@ describe('canonical entrance and in-memory login intent', () => {
     let flow: Awaited<ReturnType<typeof openWelcome>> | undefined;
     try {
       flow = await openWelcome();
-      act(() => {
+      await act(() => {
         [...changes].forEach(listener => listener('background'));
         publish({ status: 'signed-in', user: { id: 'verified-a', email: 'a@example.test' }, error: null });
         router.push('/authenticated');
@@ -394,29 +399,29 @@ describe('canonical entrance and in-memory login intent', () => {
       expect(before.routes.length).toBeGreaterThan(1);
       expect(screen.queryByText('a@example.test')).toBeNull();
       expect(auth.signOut).not.toHaveBeenCalled();
-      act(() => [...changes].forEach(listener => listener('active')));
+      await act(() => [...changes].forEach(listener => listener('active')));
       await openSettings(); await screen.findByText('a@example.test');
       await waitFor(() => expect(appStack(flow!).routes.map(route => route.name)).toEqual(['authenticated']));
       expect(appStack(flow).routes[0].key).toBe(key);
       expect(auth.signOut).not.toHaveBeenCalled(); expect(auth.signIn).not.toHaveBeenCalled();
-    } finally { flow?.unmount(); AppState.addEventListener = original; }
+    } finally { await flow?.unmount(); AppState.addEventListener = original; }
   });
 
   it('removes an in-memory private draft on session expiry and never reveals it to the next account', async () => {
-    await openWelcome(); await openLogin(); fill(); await openSettings(); await screen.findByText('a@example.test');
+    await openWelcome(); await openLogin(); await fill(); await openSettings(); await screen.findByText('a@example.test');
     await openMyStories();
-    fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.createStory }));
+    await fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.createStory }));
     await screen.findByLabelText(createStoryCopy.en.titleLabel);
-    fireEvent.changeText(screen.getByLabelText(createStoryCopy.en.titleLabel), 'Private account A draft');
-    act(() => publish({ status: 'checking', user: null, error: null }));
+    await fireEvent.changeText(screen.getByLabelText(createStoryCopy.en.titleLabel), 'Private account A draft');
+    await act(() => publish({ status: 'checking', user: null, error: null }));
     expect(screen.queryByLabelText(createStoryCopy.en.titleLabel)).toBeNull();
-    act(() => publish({ status: 'signed-out', user: null, error: 'session' }));
+    await act(() => publish({ status: 'signed-out', user: null, error: 'session' }));
     await screen.findByRole('header', { name: copy.en.welcomeTitle });
     expect(screen.queryByText('a@example.test')).toBeNull();
     expect(screen.queryByLabelText(authCopy.en.password)).toBeNull();
-    await openLogin(); fill('en', 'b@example.test'); await openSettings(); await screen.findByText('b@example.test');
+    await openLogin(); await fill('en', 'b@example.test'); await openSettings(); await screen.findByText('b@example.test');
     await openMyStories();
-    fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.createStory }));
+    await fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.createStory }));
     await screen.findByLabelText(createStoryCopy.en.titleLabel);
     expect(screen.getByLabelText(createStoryCopy.en.titleLabel).props.value).toBe('');
     expect(screen.queryByText('Private account A draft')).toBeNull();
@@ -426,11 +431,11 @@ describe('canonical entrance and in-memory login intent', () => {
 
   it('preserves Replay after returning from Login without changing the saved language or completion', async () => {
     await openWelcome('sv'); await openLogin('sv');
-    fireEvent.press(screen.getByRole('button', { name: authCopy.sv.back }));
+    await fireEvent.press(screen.getByRole('button', { name: authCopy.sv.back }));
     await screen.findByRole('header', { name: copy.sv.welcomeTitle });
-    fireEvent.press(screen.getByRole('button', { name: introCopy.sv.replay }));
+    await fireEvent.press(screen.getByRole('button', { name: introCopy.sv.replay }));
     await screen.findByRole('header', { name: introCopy.sv.scenes[0].title });
-    fireEvent.press(screen.getByRole('button', { name: introCopy.sv.skip }));
+    await fireEvent.press(screen.getByRole('button', { name: introCopy.sv.skip }));
     await screen.findByRole('header', { name: copy.sv.welcomeTitle });
     expect(JSON.parse((await AsyncStorage.getItem(PREFERENCES_KEY))!)).toEqual({ version: 1, language: 'sv', completed: true });
   });
@@ -439,9 +444,9 @@ describe('canonical entrance and in-memory login intent', () => {
     await openWelcome(); await openLogin();
     const target = await redirectSystemPath({ path: 'exp://192.168.1.25:8083/--/login?from=welcome', initial: false });
     expect(target).toBe('/');
-    act(() => router.navigate(target as '/'));
+    await act(() => router.navigate(target as '/'));
     await screen.findByRole('header', { name: copy.en.welcomeTitle });
-    act(() => router.navigate('/login'));
+    await act(() => router.navigate('/login'));
     await screen.findByRole('header', { name: copy.en.welcomeTitle });
     expect(screen.queryByLabelText(authCopy.en.password)).toBeNull();
     expect(auth.signIn).not.toHaveBeenCalled();
@@ -461,14 +466,14 @@ describe('canonical entrance and in-memory login intent', () => {
     let view: Awaited<ReturnType<typeof openWelcome>> | undefined;
     try {
       view = await openWelcome(); await openLogin();
-      fireEvent.changeText(screen.getByLabelText(authCopy.en.password), 'synthetic-unsent-password');
-      act(() => [...changes].forEach((listener) => listener('background')));
+      await fireEvent.changeText(screen.getByLabelText(authCopy.en.password), 'synthetic-unsent-password');
+      await act(() => [...changes].forEach((listener) => listener('background')));
       expect(screen.queryByLabelText(authCopy.en.password)).toBeNull();
-      act(() => [...changes].forEach((listener) => listener('active')));
+      await act(() => [...changes].forEach((listener) => listener('active')));
       await screen.findByRole('header', { name: authCopy.en.title });
       expect(screen.getByLabelText(authCopy.en.password).props.value).toBe('');
       expect(auth.signOut).not.toHaveBeenCalled();
       expect(auth.signIn).not.toHaveBeenCalled();
-    } finally { view?.unmount(); AppState.addEventListener = original; }
+    } finally { await view?.unmount(); AppState.addEventListener = original; }
   });
 });

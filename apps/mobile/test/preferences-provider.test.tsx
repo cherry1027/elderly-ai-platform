@@ -27,7 +27,7 @@ function Probe() {
 }
 
 async function openProvider() {
-  const view = render(<LanguageProvider><Probe /></LanguageProvider>);
+  const view = await render(<LanguageProvider><Probe /></LanguageProvider>);
   await screen.findByText('ready');
   return view;
 }
@@ -41,8 +41,11 @@ afterEach(() => { jest.useRealTimers(); });
 
 describe('persistent language and introduction provider', () => {
   it('waits for loading, then starts the first-use flow in English', async () => {
-    render(<LanguageProvider><Probe /></LanguageProvider>);
+    let finish!: (value: string | null) => void;
+    device.getItem.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    await render(<LanguageProvider><Probe /></LanguageProvider>);
     expect(screen.getByText('loading')).toBeOnTheScreen();
+    await act(() => finish(null));
     await screen.findByText('ready');
     expect(screen.getByText('en')).toBeOnTheScreen();
     expect(screen.getByText('first use')).toBeOnTheScreen();
@@ -61,7 +64,7 @@ describe('persistent language and introduction provider', () => {
   it('changes language without clearing a previously completed introduction', async () => {
     device.getItem.mockResolvedValue('{"version":1,"language":"en","completed":true}');
     await openProvider();
-    fireEvent.press(screen.getByRole('button', { name: 'Swedish' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Swedish' }));
     expect(screen.getByText('sv')).toBeOnTheScreen();
     expect(screen.getByText('completed')).toBeOnTheScreen();
     await waitFor(() => expect(device.setItem).toHaveBeenLastCalledWith(PREFERENCES_KEY, '{"version":1,"language":"sv","completed":true}'));
@@ -71,7 +74,7 @@ describe('persistent language and introduction provider', () => {
     let finish!: () => void;
     device.setItem.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
     await openProvider();
-    fireEvent.press(screen.getByRole('button', { name: 'Complete' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Complete' }));
     expect(screen.getByText('completed')).toBeOnTheScreen();
     await waitFor(() => expect(device.setItem).toHaveBeenCalledTimes(1));
     await act(async () => { finish(); });
@@ -80,7 +83,7 @@ describe('persistent language and introduction provider', () => {
   it('keeps current-session completion and reports an unavailable save', async () => {
     device.setItem.mockRejectedValue(new Error('synthetic native failure'));
     await openProvider();
-    fireEvent.press(screen.getByRole('button', { name: 'Complete' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Complete' }));
     await screen.findByText('storage warning');
     expect(screen.getByText('completed')).toBeOnTheScreen();
     expect(screen.queryByText(/synthetic native failure/)).toBeNull();
@@ -105,9 +108,9 @@ describe('persistent language and introduction provider', () => {
   it('does not accept writes before stored preferences have been loaded', async () => {
     let finishRead!: (raw: string | null) => void;
     device.getItem.mockImplementation(() => new Promise((resolve) => { finishRead = resolve; }));
-    render(<LanguageProvider><Probe /></LanguageProvider>);
-    fireEvent.press(screen.getByRole('button', { name: 'Swedish' }));
-    fireEvent.press(screen.getByRole('button', { name: 'Complete' }));
+    await render(<LanguageProvider><Probe /></LanguageProvider>);
+    await fireEvent.press(screen.getByRole('button', { name: 'Swedish' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Complete' }));
     expect(device.setItem).not.toHaveBeenCalled();
     await act(async () => {
       await Promise.resolve();
@@ -121,18 +124,18 @@ describe('persistent language and introduction provider', () => {
     jest.useFakeTimers();
     let finishRead!: (raw: string | null) => void;
     device.getItem.mockImplementation(() => new Promise((resolve) => { finishRead = resolve; }));
-    render(<LanguageProvider><Probe /></LanguageProvider>);
+    await render(<LanguageProvider><Probe /></LanguageProvider>);
     await act(async () => { await jest.advanceTimersByTimeAsync(STORAGE_TIMEOUT_MS); });
     expect(screen.getByText('ready')).toBeOnTheScreen();
     expect(screen.getByText('storage warning')).toBeOnTheScreen();
-    fireEvent.press(screen.getByRole('button', { name: 'Swedish' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Swedish' }));
     await act(async () => { finishRead('{"version":1,"language":"en","completed":false}'); });
     expect(screen.getByText('sv')).toBeOnTheScreen();
   });
 
   it('saves rapid language and completion changes in order without stale state', async () => {
     await openProvider();
-    fireEvent.press(screen.getByRole('button', { name: 'Rapid changes' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Rapid changes' }));
     expect(screen.getByText('en')).toBeOnTheScreen();
     expect(screen.getByText('completed')).toBeOnTheScreen();
     await waitFor(() => expect(device.setItem).toHaveBeenCalledTimes(3));
@@ -144,10 +147,10 @@ describe('persistent language and introduction provider', () => {
     device.getItem.mockImplementation(async (key) => values.get(key) ?? null);
     device.setItem.mockImplementation(async (key, value) => { values.set(key, value); });
     const first = await openProvider();
-    fireEvent.press(screen.getByRole('button', { name: 'Swedish' }));
-    fireEvent.press(screen.getByRole('button', { name: 'Complete' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Swedish' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Complete' }));
     await waitFor(() => expect(device.setItem).toHaveBeenCalledTimes(2));
-    first.unmount();
+    await first.unmount();
     await openProvider();
     expect(screen.getByText('sv')).toBeOnTheScreen();
     expect(screen.getByText('completed')).toBeOnTheScreen();

@@ -154,6 +154,7 @@ function StoryViews(props: Props) {
     }} />;
   if (view.kind === 'details') return <StoryDetails key={view.projectId} {...scopedProps} projectId={view.projectId} onBack={showList}
     onConversation={project => navigate(view, { kind: 'conversation', project })}
+    onReviewMemories={project => navigate(view, { kind: 'conversation', project, reviewOnOpen: true })}
     onGenerate={project => navigate(view, { kind: 'generation', project, initialDraftId: selectedGenerations.current.get(project.id) })} />;
 
   const tab: RootTab = view.kind === 'list' ? 'stories' : view.kind === 'settings' ? 'settings' : 'home';

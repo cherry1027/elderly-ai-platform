@@ -1,3 +1,4 @@
+import { getComponent, maybeComponent } from './component-probe';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, screen, waitFor } from '@testing-library/react-native';
 import { renderRouter } from 'expo-router/testing-library';
@@ -24,6 +25,11 @@ import { createStoryCopy } from '../src/create-story-copy';
 import type { Language } from '../src/i18n';
 import { PREFERENCES_KEY } from '../src/onboarding/preferences';
 
+jest.mock('../src/stories/CreateStory', () => { const actual = jest.requireActual<typeof import('../src/stories/CreateStory')>('../src/stories/CreateStory'); return { ...actual, CreateStory: jest.requireActual<typeof import('./component-probe')>('./component-probe').observeComponent(actual.CreateStory) }; });
+jest.mock('../src/screens/HomeScreen', () => { const actual = jest.requireActual<typeof import('../src/screens/HomeScreen')>('../src/screens/HomeScreen'); return { ...actual, HomeScreen: jest.requireActual<typeof import('./component-probe')>('./component-probe').observeComponent(actual.HomeScreen) }; });
+jest.mock('../src/screens/MyStoriesScreen', () => { const actual = jest.requireActual<typeof import('../src/screens/MyStoriesScreen')>('../src/screens/MyStoriesScreen'); return { ...actual, MyStoriesScreen: jest.requireActual<typeof import('./component-probe')>('./component-probe').observeComponent(actual.MyStoriesScreen) }; });
+jest.mock('../src/components/RootTabBar', () => { const actual = jest.requireActual<typeof import('../src/components/RootTabBar')>('../src/components/RootTabBar'); return { ...actual, RootTabBar: jest.requireActual<typeof import('./component-probe')>('./component-probe').observeComponent(actual.RootTabBar) }; });
+jest.mock('../src/stories/StoryDashboard', () => { const actual = jest.requireActual<typeof import('../src/stories/StoryDashboard')>('../src/stories/StoryDashboard'); return { ...actual, StoryDashboard: jest.requireActual<typeof import('./component-probe')>('./component-probe').observeComponent(actual.StoryDashboard) }; });
 jest.mock('../src/auth/client', () => ({ createMobileAuth: jest.fn() }));
 jest.mock('../src/auth/config', () => ({ readMobileAuthConfig: jest.fn(() => ({
   supabaseUrl: 'https://edbkuunyeyxnyenmmqud.supabase.co', publishableKey: 'sb_publishable_synthetic_test_key_only',
@@ -52,11 +58,11 @@ function deferred<T>() {
   const promise = new Promise<T>(yes => { resolve = yes; });
   return { promise, resolve };
 }
-const tabs = () => screen.UNSAFE_getByType(RootTabBar).props as { tab: RootTab; onSelectTab: (tab: RootTab) => void };
+const tabs = () => getComponent(RootTabBar).props as { tab: RootTab; onSelectTab: (tab: RootTab) => void };
 async function settle() { await act(async () => { await Promise.resolve(); }); }
 async function open(language: Language) {
   await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language, completed: true }));
-  const flow = renderRouter(routes, { initialUrl: '/authenticated' });
+  const flow = await renderRouter(routes, { initialUrl: '/authenticated' });
   await screen.findByRole('header', { name: rootNavigationCopy[language].homeTitle });
   return flow;
 }
@@ -101,27 +107,27 @@ afterEach(() => { jest.restoreAllMocks(); });
 
 it.each<Language>(['en', 'sv'])('clears unfinished %s story wording on background and returns the same owner to Home only after verification', async language => {
   const flow = await open(language);
-  const oldHome = screen.UNSAFE_getByType(HomeScreen).props;
+  const oldHome = getComponent(HomeScreen).props;
   const oldTabs = tabs().onSelectTab;
-  fireEvent.press(screen.getByRole('button', { name: rootNavigationCopy[language].createStory }));
-  fireEvent.changeText(screen.getByLabelText(createStoryCopy[language].titleLabel), privateTitle);
-  const oldBack = screen.UNSAFE_getByType(CreateStory).props.onBack;
-  act(() => appState('inactive'));
+  await fireEvent.press(screen.getByRole('button', { name: rootNavigationCopy[language].createStory }));
+  await fireEvent.changeText(screen.getByLabelText(createStoryCopy[language].titleLabel), privateTitle);
+  const oldBack = getComponent(CreateStory).props.onBack;
+  await act(() => appState('inactive'));
   expect(screen.queryByLabelText(createStoryCopy[language].titleLabel)).toBeNull();
-  expect(screen.UNSAFE_queryByType(RootTabBar)).toBeNull();
-  act(() => { oldBack(); oldTabs('stories'); oldHome.onCreateStory(); oldHome.onOpenStories(); });
+  expect(maybeComponent(RootTabBar)).toBeNull();
+  await act(() => { oldBack(); oldTabs('stories'); oldHome.onCreateStory(); oldHome.onOpenStories(); });
   expect(listStoryProjects).not.toHaveBeenCalled();
-  act(() => appState('active'));
+  await act(() => appState('active'));
   expect(screen.queryByRole('header', { name: rootNavigationCopy[language].homeTitle })).toBeNull();
-  expect(screen.UNSAFE_queryByType(RootTabBar)).toBeNull();
+  expect(maybeComponent(RootTabBar)).toBeNull();
   expect(listStoryProjects).not.toHaveBeenCalled(); expect(auth.getAccessToken).not.toHaveBeenCalled();
-  act(() => publish({ status: 'signed-in', user: ownerA, error: null }));
+  await act(() => publish({ status: 'signed-in', user: ownerA, error: null }));
   await screen.findByRole('header', { name: rootNavigationCopy[language].homeTitle });
   expect(flow.getPathname()).toBe('/authenticated'); expect(tabs().tab).toBe('home');
-  act(() => { oldBack(); oldTabs('stories'); oldHome.onCreateStory(); oldHome.onOpenStories(); });
+  await act(() => { oldBack(); oldTabs('stories'); oldHome.onCreateStory(); oldHome.onOpenStories(); });
   await settle();
   expect(tabs().tab).toBe('home'); expect(listStoryProjects).not.toHaveBeenCalled();
-  fireEvent.press(screen.getByRole('button', { name: rootNavigationCopy[language].createStory }));
+  await fireEvent.press(screen.getByRole('button', { name: rootNavigationCopy[language].createStory }));
   expect(screen.getByLabelText(createStoryCopy[language].titleLabel).props.value).toBe('');
   expect(screen.queryByText(privateTitle)).toBeNull();
   expect(JSON.parse((await AsyncStorage.getItem(PREFERENCES_KEY))!)).toEqual({ version: 1, language, completed: true });
@@ -134,28 +140,28 @@ it.each<Language>(['en', 'sv'])('aborts pending %s account A rows on background 
   const pending = deferred<StoryProject[]>();
   jest.mocked(listStoryProjects).mockReturnValueOnce(pending.promise);
   await open(language);
-  fireEvent.press(screen.getByRole('button', { name: rootNavigationCopy[language].openStories }));
+  await fireEvent.press(screen.getByRole('button', { name: rootNavigationCopy[language].openStories }));
   await waitFor(() => expect(listStoryProjects).toHaveBeenCalledTimes(1));
   const oldTabs = tabs().onSelectTab;
-  const oldSignOut = screen.UNSAFE_getByType(StoryDashboard).props.onSignOut;
-  const oldRefresh = screen.UNSAFE_getByType(MyStoriesScreen).props.onRefresh;
+  const oldSignOut = getComponent(StoryDashboard).props.onSignOut;
+  const oldRefresh = getComponent(MyStoriesScreen).props.onRefresh;
   const request = jest.mocked(listStoryProjects).mock.calls[0][0];
   await request.getAccessToken(); expect(auth.getAccessToken).toHaveBeenLastCalledWith(ownerA.id);
-  act(() => appState('background'));
-  expect(request.signal?.aborted).toBe(true); expect(screen.UNSAFE_queryByType(RootTabBar)).toBeNull();
-  act(() => appState('active'));
-  act(() => { oldTabs('stories'); oldSignOut(); oldRefresh(); });
+  await act(() => appState('background'));
+  expect(request.signal?.aborted).toBe(true); expect(maybeComponent(RootTabBar)).toBeNull();
+  await act(() => appState('active'));
+  await act(() => { oldTabs('stories'); oldSignOut(); oldRefresh(); });
   expect(listStoryProjects).toHaveBeenCalledTimes(1); expect(auth.signOut).not.toHaveBeenCalled();
-  act(() => publish({ status: 'signed-in', user: ownerB, error: null }));
+  await act(() => publish({ status: 'signed-in', user: ownerB, error: null }));
   await screen.findByRole('header', { name: rootNavigationCopy[language].homeTitle });
   await act(async () => pending.resolve([project('Account A fictional private row', language)]));
-  act(() => { oldTabs('stories'); oldSignOut(); oldRefresh(); });
+  await act(() => { oldTabs('stories'); oldSignOut(); oldRefresh(); });
   await settle();
   expect(tabs().tab).toBe('home'); expect(listStoryProjects).toHaveBeenCalledTimes(1);
   expect(screen.queryByText('Account A fictional private row')).toBeNull(); expect(auth.signOut).not.toHaveBeenCalled();
   expect(await request.getAccessToken()).toBeNull();
   jest.mocked(listStoryProjects).mockResolvedValueOnce([project('Account B fictional story', language)]);
-  fireEvent.press(screen.getByRole('button', { name: rootNavigationCopy[language].openStories }));
+  await fireEvent.press(screen.getByRole('button', { name: rootNavigationCopy[language].openStories }));
   await screen.findByText('Account B fictional story');
   expect(screen.queryByText('Account A fictional private row')).toBeNull();
   await jest.mocked(listStoryProjects).mock.calls[1][0].getAccessToken();

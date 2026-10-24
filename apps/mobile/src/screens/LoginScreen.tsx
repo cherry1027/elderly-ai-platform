@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import {
   AppState, Keyboard, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, View, type ScrollView,
 } from 'react-native';
@@ -29,9 +29,9 @@ export function LoginScreen({ language, onSignIn, onBack, busy, error, blocked =
   const mounted = useRef(true);
   const submitting = useRef(false);
   const generation = useRef(0);
-  const emailInput = useRef<TextInput>(null);
-  const passwordInput = useRef<TextInput>(null);
-  const scrollView = useRef<ScrollView>(null);
+  const emailInput = useRef<ComponentRef<typeof TextInput>>(null);
+  const passwordInput = useRef<ComponentRef<typeof TextInput>>(null);
+  const scrollView = useRef<ComponentRef<typeof ScrollView>>(null);
   const formTop = useRef(0);
   const disabled = busy || working || blocked;
 
@@ -77,21 +77,21 @@ export function LoginScreen({ language, onSignIn, onBack, busy, error, blocked =
   useEffect(() => {
     if (!message) return;
     let active = true;
-    const reveal = () => { if (active) scrollView.current?.scrollTo({ y: Math.max(0, formTop.current - 16), animated: false }); };
+    const reveal = () => { if (active && !Keyboard.isVisible()) scrollView.current?.scrollTo({ y: Math.max(0, formTop.current - 16), animated: false }); };
     reveal();
     const shown = Keyboard.addListener('keyboardDidShow', reveal);
     const hidden = Keyboard.addListener('keyboardDidHide', reveal);
     return () => { active = false; shown.remove(); hidden.remove(); };
   }, [message]);
 
-  return <KeyboardAvoidingView style={styles.keyboard} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-    <AccountScreen scrollViewRef={scrollView} onContentLayout={() => {
-      if (message) scrollView.current?.scrollTo({ y: Math.max(0, formTop.current - 16), animated: false });
+  return <KeyboardAvoidingView style={styles.keyboard} enabled={Platform.OS !== 'ios'} behavior="height">
+    <AccountScreen keyboardAware scrollViewRef={scrollView} onContentLayout={() => {
+      if (message && !Keyboard.isVisible()) scrollView.current?.scrollTo({ y: Math.max(0, formTop.current - 16), animated: false });
     }}>
       <AccountHeading language={language} title={text.title} description={text.introduction} />
       <View style={accountStyles.form} onLayout={(event) => {
         formTop.current = event.nativeEvent.layout.y;
-        if (message) scrollView.current?.scrollTo({ y: Math.max(0, formTop.current - 16), animated: false });
+        if (message && !Keyboard.isVisible()) scrollView.current?.scrollTo({ y: Math.max(0, formTop.current - 16), animated: false });
       }}>
         {message && <AccountNotice language={language} message={message} />}
         <View style={accountStyles.field}>

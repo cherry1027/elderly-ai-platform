@@ -5,6 +5,7 @@ import { useApiBackoff } from '../api/ApiBackoff';
 import type { ConversationMessage } from '../api/conversation-messages';
 import type { StoryProjectsErrorKind } from '../api/story-projects';
 import { LargeButton } from '../components/LargeButton';
+import { StoryDisclosure } from '../components/StoryPresentation';
 import { accessibilityLanguages, type Language } from '../i18n';
 import { colors, headingFont, layout } from '../theme';
 import { transcriptConversationCopy } from './conversation-copy';
@@ -51,6 +52,7 @@ export function ConversationPanel({ language, state, transcripts, onSelect, onPr
   return <View style={styles.panel} accessibilityState={{ busy }}>
     <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.heading}>{text.title}</Text>
     <Text accessibilityLanguage={locale} allowFontScaling style={styles.notice}>{text.notice}</Text>
+    <View style={styles.selectionCard}>
     <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.introduction}</Text>
     <Text accessibilityRole={state.error ? 'alert' : undefined} accessibilityLanguage={locale}
       accessibilityLiveRegion="polite" allowFontScaling style={styles.body}>{status}</Text>
@@ -69,7 +71,10 @@ export function ConversationPanel({ language, state, transcripts, onSelect, onPr
         onPress={() => onSelect(transcript.transcript_id)} onFocus={() => setFocused(transcript.transcript_id)}
         onBlur={() => setFocused(null)} style={[styles.choice, checked && styles.selected, disabled && styles.disabledChoice,
           focused === transcript.transcript_id && styles.focused]}>
-        <Text allowFontScaling style={styles.choiceText}>{text.savedTranscript} {index + 1}</Text>
+        <View style={styles.choiceHeading}>
+          <View accessible={false} style={[styles.radio, checked && styles.radioSelected]} />
+          <Text allowFontScaling style={styles.choiceText}>{text.savedTranscript} {index + 1}</Text>
+        </View>
         {checked && <Text allowFontScaling style={styles.body}>{text.selected}</Text>}
         {processed && <Text allowFontScaling style={styles.body}>{text.processed}</Text>}
         {blocked && <Text allowFontScaling style={styles.body}>{text.blocked}</Text>}
@@ -88,37 +93,49 @@ export function ConversationPanel({ language, state, transcripts, onSelect, onPr
       {state.canRetry && <LargeButton language={language} label={text.retry} disabled={waiting} onPress={onRetry} />}
     </>}
     {state.phase === 'ready' && <LargeButton language={language} label={text.refresh}
-      variant="secondary" disabled={waiting} onPress={onRefresh} />}
+      variant="secondary" density="compact" disabled={waiting} onPress={onRefresh} />}
+    </View>
     <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.subheading}>{text.historyTitle}</Text>
     {!busy && state.complete && !state.messages.length && <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.noMessages}</Text>}
     {state.messages.map(message => {
       const sourceIndex = message.role === 'user'
         ? transcripts.findIndex(transcript => transcript.transcript_id === message.id) : -1;
-      return <View key={message.id} style={styles.message}>
+      return <View key={message.id} style={[styles.message, message.role === 'assistant' && styles.assistant]}>
         <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.subheading}>
           {message.role === 'assistant' ? text.assistantMessage : text.userMessage}
         </Text>
         {sourceIndex >= 0 ? <>
           <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.savedTranscript} {sourceIndex + 1}</Text>
-          <Text accessibilityLanguage={locale} allowFontScaling selectable style={styles.reference}>{text.reference}: {message.id}</Text>
         </> : <Text accessibilityLanguage={accessibilityLanguages[message.language]} allowFontScaling selectable
           style={styles.body}>{message.text}</Text>}
       </View>;
     })}
+    {state.messages.some(message => message.role === 'user' && transcripts.some(row => row.transcript_id === message.id)) &&
+      <StoryDisclosure language={language} label={text.details}>
+        {state.messages.filter(message => message.role === 'user' && transcripts.some(row => row.transcript_id === message.id))
+          .map(message => <Text key={message.id} accessibilityLanguage={locale} allowFontScaling selectable style={styles.reference}>
+            {text.reference}: {message.id}
+          </Text>)}
+      </StoryDisclosure>}
   </View>;
 }
 
 const styles = StyleSheet.create({
-  panel: { width: '100%', gap: 20 },
-  heading: { color: colors.ink, fontFamily: headingFont, fontSize: 30, lineHeight: 40, flexShrink: 1 },
+  panel: { width: '100%', gap: 18 },
+  selectionCard: { width: '100%', gap: 16, padding: 18, backgroundColor: colors.paper,
+    borderRadius: layout.controlRadius, borderWidth: 2, borderColor: colors.border },
+  heading: { color: colors.ink, fontFamily: headingFont, fontSize: 28, lineHeight: 38, flexShrink: 1 },
   subheading: { color: colors.ink, fontSize: 24, lineHeight: 34, fontWeight: '600', flexShrink: 1 },
   body: { color: colors.ink, fontSize: 22, lineHeight: 32, flexShrink: 1 },
-  notice: { color: colors.ink, fontSize: 22, lineHeight: 32, padding: 16, borderWidth: 2,
-    borderColor: colors.forest, borderRadius: layout.controlRadius, backgroundColor: colors.paper },
+  notice: { color: colors.ink, fontSize: 19, lineHeight: 29, padding: 14,
+    borderRadius: 14, backgroundColor: colors.selected },
   choice: { minHeight: layout.minimumTouchTarget, width: '100%', paddingVertical: 16, paddingHorizontal: 20,
-    gap: 8, borderWidth: 2, borderColor: colors.forest, borderRadius: layout.controlRadius, backgroundColor: colors.paper },
-  choiceText: { color: colors.ink, fontSize: 22, lineHeight: 32, fontWeight: '600', flexShrink: 1 },
-  selected: { backgroundColor: colors.selected },
+    gap: 8, borderWidth: 2, borderColor: colors.border, borderRadius: 16, backgroundColor: colors.paper },
+  choiceHeading: { width: '100%', flexDirection: 'row', alignItems: 'center', gap: 12 },
+  radio: { width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: colors.forest },
+  radioSelected: { borderWidth: 7 },
+  choiceText: { color: colors.ink, fontSize: 22, lineHeight: 32, fontWeight: '600', flex: 1, flexShrink: 1 },
+  selected: { backgroundColor: colors.selected, borderColor: colors.forest },
   disabledChoice: { borderColor: colors.muted },
   focused: { borderColor: colors.ink },
   action: { minHeight: layout.minimumTouchTarget, paddingVertical: 16, paddingHorizontal: 24,
@@ -127,7 +144,8 @@ const styles = StyleSheet.create({
   disabledAction: { backgroundColor: colors.muted, borderColor: colors.muted },
   pressed: { backgroundColor: colors.forestPressed },
   actionText: { color: colors.paper, fontSize: 22, lineHeight: 32, fontWeight: '600', textAlign: 'center', flexShrink: 1 },
-  message: { padding: 16, gap: 16, borderWidth: 2, borderColor: colors.border,
+  message: { padding: 18, gap: 12, borderWidth: 2, borderColor: colors.border,
     borderRadius: layout.controlRadius, backgroundColor: colors.paper },
+  assistant: { backgroundColor: colors.selected },
   reference: { color: colors.muted, fontSize: 18, lineHeight: 28, flexShrink: 1 },
 });

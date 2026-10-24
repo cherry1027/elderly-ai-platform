@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
-import { AccessibilityInfo, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView,
+import { useCallback, useEffect, useRef, useState, type ComponentRef, type Ref, type RefObject } from 'react';
+import { AccessibilityInfo, BackHandler, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView,
   StyleSheet, Text, TextInput, View } from 'react-native';
 import { SIMULATED_TRANSCRIPT_NOTICE } from '../api/audio-transcripts';
 import { useApiBackoff } from '../api/ApiBackoff';
 import type { ConversationMessage } from '../api/conversation-messages';
 import { validateMemoryPatchInput, type MemoryFact, type MemoryClarification, type MemoryPatchInput } from '../api/memory-review';
 import type { StoryProjectsErrorKind } from '../api/story-projects';
-import { MemyBrand } from '../components/BrandArtwork';
-import { Screen, screenStyles } from '../components/Screen';
+import { Screen } from '../components/Screen';
+import { StoryHeading } from '../components/StoryPresentation';
+import { useGuardedLeave, type LeaveHandle } from '../navigation/useGuardedLeave';
 import { accessibilityLanguages, type Language } from '../i18n';
 import { colors, headingFont, layout } from '../theme';
 import { memoryReviewCopy } from './memory-review-copy';
@@ -41,11 +42,12 @@ export interface MemoryReviewScreenProps {
   onBack: () => void;
   backLabel?: string;
   onSignOut: () => void;
+  leaveRef?: Ref<LeaveHandle>;
 }
 
-function ReviewButton({ language, label, onPress, disabled = false, primary = false, checked, expanded }: {
+function ReviewButton({ language, label, onPress, disabled = false, primary = false, quiet = false, checked, expanded }: {
   language: Language; label: string; onPress: () => void; disabled?: boolean;
-  primary?: boolean; checked?: boolean; expanded?: boolean;
+  primary?: boolean; quiet?: boolean; checked?: boolean; expanded?: boolean;
 }) {
   const [focused, setFocused] = useState(false);
   return <Pressable accessibilityRole={checked === undefined ? 'button' : 'radio'}
@@ -54,25 +56,36 @@ function ReviewButton({ language, label, onPress, disabled = false, primary = fa
       ...(expanded === undefined ? {} : { expanded }) }} disabled={disabled} onPress={() => { if (!disabled) onPress(); }}
     onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
     style={({ pressed }) => [styles.button, primary ? styles.primary : styles.secondary,
-      checked && styles.selected, disabled && styles.disabled, disabled && primary && styles.disabledPrimary, focused && styles.focused,
+      quiet && styles.quiet, checked && styles.selected, disabled && styles.disabled, disabled && primary && styles.disabledPrimary, focused && styles.focused,
       pressed && !disabled && styles.pressed]}>
-    <Text allowFontScaling style={[styles.buttonText, primary && styles.primaryText]}>{checked ? '✓ ' : ''}{label}</Text>
+    <Text allowFontScaling style={[styles.buttonText, primary && styles.primaryText, quiet && styles.quietText]}>{checked ? '✓ ' : ''}{label}</Text>
   </Pressable>;
 }
 
 /** A calm read-only view until the person explicitly chooses and saves a review. */
 export function MemoryReviewScreen({ language, storyLanguage = language, resetRevision = 0, title, state, onSave, onCaptureReview,
-  onReviewLatest, onRefresh, onBack, onSignOut, backLabel }: MemoryReviewScreenProps) {
+  onReviewLatest, onRefresh, onBack, onSignOut, backLabel, leaveRef }: MemoryReviewScreenProps) {
   const text = memoryReviewCopy[language];
   const { waiting } = useApiBackoff();
   const locale = accessibilityLanguages[language];
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const scrollView = useRef<ScrollView>(null);
+  const [dirty, setDirty] = useState(false);
+  const [discardRevision, setDiscardRevision] = useState(0);
+  const captureDirty = useCallback((value: boolean) => setDirty(value), []);
+  const scrollView = useRef<ComponentRef<typeof ScrollView>>(null);
   const contentY = useRef(0);
   const panelY = useRef(0);
   const busy = state.phase === 'loading' || state.phase === 'saving';
   const accessFailed = ['authentication', 'forbidden', 'not-found'].includes(state.error ?? '');
   const retained = state.retainedReview;
+  const { requestLeave, dialog } = useGuardedLeave({ language, dirty: dirty || !!retained, handleRef: leaveRef,
+    uncertain: state.phase === 'saving' || state.phase === 'uncertain' || state.notice === 'uncertain',
+    onDiscard: () => { setDirty(false); setDiscardRevision(value => value + 1); },
+    onCheckSavedResult: onRefresh, checkDisabled: waiting || busy || accessFailed });
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => { requestLeave(onBack); return true; });
+    return () => subscription.remove();
+  }, [requestLeave, onBack]);
   const index = Math.max(0, state.memories.findIndex(item => item.id === (retained?.memoryId ?? selectedId)));
   // A failed/partial reconciliation must not unmount the retained correction.
   const memory = !accessFailed ? retained?.memory ?? (state.phase !== 'loading' ? state.memories[index] : undefined) : undefined;
@@ -93,14 +106,16 @@ export function MemoryReviewScreen({ language, storyLanguage = language, resetRe
 
   const navigate = (next: number) => {
     if (busy || retained || !state.memories[next]) return;
-    Keyboard.dismiss(); setSelectedId(state.memories[next].id);
-    if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(text.memory + ' ' + (next + 1) + ' ' + text.of + ' ' + state.memories.length);
-    scrollView.current?.scrollTo({ y: Math.max(0, contentY.current + panelY.current - 16), animated: false });
+    requestLeave(() => {
+      Keyboard.dismiss(); setSelectedId(state.memories[next].id);
+      if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(text.memory + ' ' + (next + 1) + ' ' + text.of + ' ' + state.memories.length);
+      scrollView.current?.scrollTo({ y: Math.max(0, contentY.current + panelY.current - 16), animated: false });
+    });
   };
-  return <KeyboardAvoidingView style={styles.keyboard} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-    <Screen scrollViewRef={scrollView} onContentLayout={event => { contentY.current = event.nativeEvent.layout.y; }}>
-      <MemyBrand />
-      <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={screenStyles.heading}>{text.title}</Text>
+  return <><KeyboardAvoidingView style={styles.keyboard} enabled={Platform.OS !== 'ios'} behavior="height">
+    <Screen keyboardAware scrollViewRef={scrollView} onContentLayout={event => { contentY.current = event.nativeEvent.layout.y; }}>
+      <View style={styles.composition}>
+      <StoryHeading language={language} title={text.title} />
       {!accessFailed && <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[storyLanguage]} allowFontScaling selectable style={styles.storyTitle}>{title}</Text>}
       <View style={styles.panel} accessibilityState={{ busy }} onLayout={event => { panelY.current = event.nativeEvent.layout.y; }}>
         <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.introduction}</Text>
@@ -114,9 +129,9 @@ export function MemoryReviewScreen({ language, storyLanguage = language, resetRe
           <Text accessibilityRole="header" accessibilityLiveRegion="polite" accessibilityLanguage={locale} allowFontScaling style={styles.subheading}>
             {state.memories.length ? `${text.memory} ${index + 1} ${text.of} ${state.memories.length}` : text.memory}
           </Text>
-          <MemoryCard key={`${memory.id}:${memory.version}:${resetRevision}`} language={language} memory={memory} state={state}
+          <MemoryCard key={`${memory.id}:${memory.version}:${resetRevision}:${discardRevision}`} language={language} memory={memory} state={state}
             onCaptureReview={draft => { setSelectedId(draft.memoryId); onCaptureReview?.(draft); }}
-            onSave={onSave} scrollView={scrollView} contentY={contentY} panelY={panelY} />
+            onDirtyChange={captureDirty} onSave={onSave} scrollView={scrollView} contentY={contentY} panelY={panelY} />
           {retained?.conflict && <>
             {freshReview && <Text accessibilityLanguage={locale} allowFontScaling style={styles.notice}>{text.retainedConflict}</Text>}
             {freshReview && currentMemory && <>
@@ -130,21 +145,30 @@ export function MemoryReviewScreen({ language, storyLanguage = language, resetRe
             {onReviewLatest && <ReviewButton language={language} label={text.reviewLatest}
               disabled={busy || !freshReview || !currentMemory} onPress={onReviewLatest} />}
           </>}
-          <ReviewButton language={language} label={text.previous} disabled={busy || !!retained || index === 0} onPress={() => navigate(index - 1)} />
-          <ReviewButton language={language} label={text.next} disabled={busy || !!retained || index + 1 >= state.memories.length} onPress={() => navigate(index + 1)} />
+          <View style={styles.paging}>
+            <View style={styles.pageAction}><ReviewButton language={language} label={text.previous} disabled={busy || !!retained || index === 0} onPress={() => navigate(index - 1)} /></View>
+            <View style={styles.pageAction}><ReviewButton language={language} label={text.next} disabled={busy || !!retained || index + 1 >= state.memories.length} onPress={() => navigate(index + 1)} /></View>
+          </View>
         </>}
-        <ReviewButton language={language} label={text.refresh} disabled={waiting || busy || accessFailed} onPress={() => { Keyboard.dismiss(); onRefresh(); }} />
-        <ReviewButton language={language} label={backLabel ?? text.back} onPress={() => { Keyboard.dismiss(); onBack(); }} />
-        <ReviewButton language={language} label={text.signOut} onPress={() => { Keyboard.dismiss(); onSignOut(); }} />
+        <ReviewButton language={language} label={text.refresh} quiet disabled={waiting || busy || accessFailed} onPress={() => {
+          Keyboard.dismiss();
+          // A retained review belongs to the controller's read-only reconciliation.
+          // Refresh must never discard its captured correction or expected version.
+          if (retained) onRefresh(); else requestLeave(onRefresh);
+        }} />
+        <ReviewButton language={language} label={backLabel ?? text.back} quiet onPress={() => requestLeave(onBack)} />
+        <ReviewButton language={language} label={text.signOut} quiet onPress={() => requestLeave(onSignOut)} />
+      </View>
       </View>
     </Screen>
-  </KeyboardAvoidingView>;
+  </KeyboardAvoidingView>{dialog}</>;
 }
 
-function MemoryCard({ language, memory, state, onSave, onCaptureReview, scrollView, contentY, panelY }: {
+function MemoryCard({ language, memory, state, onSave, onCaptureReview, onDirtyChange, scrollView, contentY, panelY }: {
   language: Language; memory: MemoryFact; state: MemoryReviewState; onSave: MemoryReviewScreenProps['onSave'];
   onCaptureReview?: MemoryReviewScreenProps['onCaptureReview'];
-  scrollView: RefObject<ScrollView | null>; contentY: RefObject<number>; panelY: RefObject<number>;
+  onDirtyChange: (dirty: boolean) => void;
+  scrollView: RefObject<ComponentRef<typeof ScrollView> | null>; contentY: RefObject<number>; panelY: RefObject<number>;
 }) {
   const text = memoryReviewCopy[language];
   const { waiting } = useApiBackoff();
@@ -167,9 +191,10 @@ function MemoryCard({ language, memory, state, onSave, onCaptureReview, scrollVi
   const canSave = canReview || (!!retained?.canRetry && !retained.conflict && state.phase === 'ready' && state.complete && !!source);
   const questions = state.clarifications.filter(question => question.fact_id === memory.id &&
     question.session_id === memory.session_id && question.status === 'open');
+  useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
   useEffect(() => { submitted.current = false; }, [state.phase, state.error, state.notice]);
   const revealError = useCallback(() => {
-    if (!validation) return;
+    if (!validation || Keyboard.isVisible()) return;
     scrollView.current?.scrollTo({ y: Math.max(0, contentY.current + panelY.current + cardY.current + correctionY.current - 16), animated: false });
   }, [validation, scrollView, contentY, panelY]);
   useEffect(() => {
@@ -184,7 +209,7 @@ function MemoryCard({ language, memory, state, onSave, onCaptureReview, scrollVi
   }, [validation, attempt, revealError, text.correctionError]);
   const choose = (next: 'confirm' | 'correct' | 'reject') => {
     if (!canReview || submitted.current) return;
-    Keyboard.dismiss(); setAction(next); setValidation(false); setDraft(next === 'correct' ? currentValue : '');
+    Keyboard.dismiss(); setAction(next); setValidation(false); setDraft(next === 'correct' ? currentValue : ''); onDirtyChange(true);
   };
   const save = () => {
     if (waiting || !canSave || !action || submitted.current) return;
@@ -203,9 +228,11 @@ function MemoryCard({ language, memory, state, onSave, onCaptureReview, scrollVi
   };
   return <View style={styles.card} onLayout={event => { cardY.current = event.nativeEvent.layout.y; revealError(); }}>
     <Text accessibilityLanguage={locale} allowFontScaling style={styles.subheading}>{text.types[memory.fact_type]}</Text>
-    <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.current}</Text>
+    <View style={styles.reviewValue}>
+    <Text accessibilityLanguage={locale} allowFontScaling style={styles.label}>{text.current}</Text>
     <Text accessibilityLanguage={source ? accessibilityLanguages[source.language] : locale} allowFontScaling selectable style={styles.value}>{currentValue}</Text>
     <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.status}: {text.statuses[memory.status]}</Text>
+    </View>
     <Text accessibilityLanguage={locale} allowFontScaling style={styles.label}>{text.original}</Text>
     <Text accessibilityLanguage={source ? accessibilityLanguages[source.language] : locale} allowFontScaling selectable style={styles.body}>{memory.value}</Text>
     <Text accessibilityLanguage={locale} allowFontScaling style={styles.label}>{text.evidence}</Text>
@@ -244,7 +271,7 @@ function MemoryCard({ language, memory, state, onSave, onCaptureReview, scrollVi
       <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.correctionHelp}</Text>
       <ReviewButton language={language} label={text.done} disabled={!canReview} onPress={() => Keyboard.dismiss()} />
       <ReviewButton language={language} label={text.cancelCorrection} disabled={!canReview} onPress={() => {
-        Keyboard.dismiss(); setAction(null); setDraft(''); setValidation(false);
+        Keyboard.dismiss(); setAction(null); setDraft(''); setValidation(false); onDirtyChange(false);
       }} />
     </View>}
     {!retained && <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.notSaved}</Text>}
@@ -256,7 +283,10 @@ function MemoryCard({ language, memory, state, onSave, onCaptureReview, scrollVi
 }
 
 const styles = StyleSheet.create({
-  keyboard: { flex: 1 }, panel: { width: '100%', gap: 24 }, card: { width: '100%', gap: 20 }, field: { width: '100%', gap: 16 },
+  keyboard: { flex: 1 }, composition: { width: '100%', gap: 16 }, panel: { width: '100%', gap: 16 },
+  card: { width: '100%', gap: 16, padding: 16, borderWidth: 1, borderColor: colors.border, borderRadius: 20, backgroundColor: colors.paper },
+  field: { width: '100%', gap: 12 }, reviewValue: { gap: 8, padding: 14, borderRadius: 16, backgroundColor: colors.selected },
+  paging: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 }, pageAction: { flexBasis: 180, flexGrow: 1 },
   storyTitle: { color: colors.ink, fontFamily: headingFont, fontSize: 30, lineHeight: 40, textAlign: 'center', flexShrink: 1 },
   subheading: { color: colors.ink, fontSize: 24, lineHeight: 34, fontWeight: '600', flexShrink: 1 },
   body: { color: colors.ink, fontSize: 22, lineHeight: 32, flexShrink: 1 },
@@ -265,10 +295,11 @@ const styles = StyleSheet.create({
   help: { color: colors.muted, fontSize: 20, lineHeight: 30, flexShrink: 1 },
   notice: { color: colors.ink, fontSize: 22, lineHeight: 32, padding: 16, borderWidth: 2,
     borderColor: colors.forest, borderRadius: layout.controlRadius, backgroundColor: colors.paper },
-  button: { width: '100%', minHeight: layout.minimumTouchTarget, paddingVertical: 16, paddingHorizontal: 24,
+  button: { width: '100%', minHeight: layout.minimumTouchTarget, paddingVertical: 10, paddingHorizontal: 16,
     borderWidth: 2, borderRadius: layout.controlRadius, alignItems: 'center', justifyContent: 'center' },
   primary: { backgroundColor: colors.forest, borderColor: colors.forest },
-  secondary: { backgroundColor: colors.paper, borderColor: colors.forest },
+  secondary: { backgroundColor: colors.paper, borderColor: colors.border },
+  quiet: { backgroundColor: 'transparent', borderColor: 'transparent' }, quietText: { textDecorationLine: 'underline' },
   selected: { backgroundColor: colors.selected, borderWidth: 3 },
   disabled: { borderColor: colors.muted }, disabledPrimary: { backgroundColor: colors.muted }, focused: { borderColor: colors.ink }, pressed: { borderColor: colors.ink },
   buttonText: { color: colors.forest, fontSize: 22, lineHeight: 32, fontWeight: '600', textAlign: 'center', flexShrink: 1 },

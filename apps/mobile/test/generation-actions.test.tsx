@@ -40,35 +40,35 @@ it('keeps selected UUIDs separate from pending generation actions and bounds RAM
   store.activate('b'); expect(store.getSelection('b', 'story-199')).toBeUndefined();
   store.select('b', 'new', id); store.clear(); expect(store.getSelection('b', 'new')).toBeUndefined();
 });
-it('provider survives checking/background with same verified owner, and clears when owner changes', () => {
+it('provider survives checking/background with same verified owner, and clears when owner changes', async () => {
   let store!: GenerationStore;
   const snapshot = (status: string, id?: string) => jest.mocked(useAuth).mockReturnValue({
     status, user: id ? { id } : null, appActive: status !== 'checking',
   } as ReturnType<typeof useAuth>);
   function Read({ owner }: { owner: string }) { store = useGenerationActions(owner); return null; }
   snapshot('signed-in', 'a');
-  const view = render(<GenerationActionsProvider><Read owner="a" /></GenerationActionsProvider>);
+  const view = await render(<GenerationActionsProvider><Read owner="a" /></GenerationActionsProvider>);
   store.set('a', 'story', action);
   store.select('a', 'story', action.key);
-  snapshot('checking'); view.rerender(<GenerationActionsProvider><Read owner="a" /></GenerationActionsProvider>);
+  snapshot('checking'); await view.rerender(<GenerationActionsProvider><Read owner="a" /></GenerationActionsProvider>);
   expect(store.get('a', 'story')).toEqual(action);
   expect(store.getSelection('a', 'story')).toBe(action.key);
-  snapshot('signed-in', 'a'); view.rerender(<GenerationActionsProvider><Read owner="a" /></GenerationActionsProvider>);
+  snapshot('signed-in', 'a'); await view.rerender(<GenerationActionsProvider><Read owner="a" /></GenerationActionsProvider>);
   expect(store.get('a', 'story')).toEqual(action);
-  snapshot('signed-in', 'b'); view.rerender(<GenerationActionsProvider><Read owner="b" /></GenerationActionsProvider>);
+  snapshot('signed-in', 'b'); await view.rerender(<GenerationActionsProvider><Read owner="b" /></GenerationActionsProvider>);
   expect(store.get('a', 'story')).toBeUndefined();
   expect(store.get('b', 'story')).toBeUndefined();
   expect(store.getSelection('b', 'story')).toBeUndefined();
 });
-it.each(['signed-out', 'blocked', 'busy'])('provider clears after %s', status => {
+it.each(['signed-out', 'blocked', 'busy'])('provider clears after %s', async status => {
   let store!: GenerationStore;
   function Read() { store = useGenerationActions('a'); return null; }
   jest.mocked(useAuth).mockReturnValue({ status: 'signed-in', user: { id: 'a' } } as ReturnType<typeof useAuth>);
-  const view = render(<GenerationActionsProvider><Read /></GenerationActionsProvider>);
+  const view = await render(<GenerationActionsProvider><Read /></GenerationActionsProvider>);
   store.set('a', 'story', action);
   store.select('a', 'story', action.key);
   jest.mocked(useAuth).mockReturnValue({ status, user: null } as ReturnType<typeof useAuth>);
-  view.rerender(<GenerationActionsProvider><Read /></GenerationActionsProvider>);
+  await view.rerender(<GenerationActionsProvider><Read /></GenerationActionsProvider>);
   expect(store.get('a', 'story')).toBeUndefined();
   expect(store.getSelection('a', 'story')).toBeUndefined();
 });

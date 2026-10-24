@@ -86,16 +86,16 @@ async function openDetails(language: Locale = 'en') {
   jest.mocked(getStoryProject).mockResolvedValue(project(language));
   jest.mocked(continueStoryProject).mockResolvedValue(continuation(language));
   await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language, completed: true }));
-  const flow = renderRouter(routes, { initialUrl: '/' });
+  const flow = await renderRouter(routes, { initialUrl: '/' });
   await openMyStories(language);
   await screen.findByText('Fictional selected story');
-  fireEvent.press(screen.getByRole('button', { name: `${storiesCopy[language].openStory}: Fictional selected story` }));
+  await fireEvent.press(screen.getByRole('button', { name: `${storiesCopy[language].openStory}: Fictional selected story` }));
   await screen.findByRole('button', { name: storyDetailsCopy[language].conversation });
   return flow;
 }
 async function openConversation(language: Locale = 'en') {
   const flow = await openDetails(language);
-  fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy[language].conversation }));
+  await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy[language].conversation }));
   return flow;
 }
 
@@ -103,7 +103,7 @@ it.each<Locale>(['en', 'sv'])('requires an intentional details action before ope
   await openDetails(language);
   expect(listStorySessions).not.toHaveBeenCalled(); expect(continueStoryProject).not.toHaveBeenCalled();
   expect(listSessionTranscripts).not.toHaveBeenCalled();
-  fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy[language].conversation }));
+  await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy[language].conversation }));
   await screen.findByText(conversationCopy[language].ready);
   expect(screen.getByRole('header', { name: conversationCopy[language].title })).toBeOnTheScreen();
   expect(screen.getByText(conversationCopy[language].started)).toBeOnTheScreen();
@@ -119,10 +119,10 @@ it.each<Locale>(['en', 'sv'])('requires an intentional details action before ope
 it.each<Locale>(['en', 'sv'])('returns to fresh details then resumes the same %s session without another POST', async language => {
   await openConversation(language); await screen.findByText(conversationCopy[language].ready);
   jest.mocked(listStorySessions).mockResolvedValue([session(language)]);
-  fireEvent.press(screen.getByRole('button', { name: conversationCopy[language].back }));
+  await fireEvent.press(screen.getByRole('button', { name: conversationCopy[language].back }));
   await screen.findByRole('button', { name: storyDetailsCopy[language].conversation });
   expect(getStoryProject).toHaveBeenCalledTimes(2);
-  fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy[language].conversation }));
+  await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy[language].conversation }));
   await screen.findByText(conversationCopy[language].resumed);
   expect(continueStoryProject).toHaveBeenCalledTimes(1); expect(listStorySessions).toHaveBeenCalledTimes(2);
   expect(await AsyncStorage.getAllKeys()).toEqual([PREFERENCES_KEY]);
@@ -132,7 +132,7 @@ it('reconciles an ambiguous start through a read and resumes the saved session w
   jest.mocked(continueStoryProject).mockRejectedValueOnce(new StoryProjectsError('timeout', undefined, true));
   await openConversation(); await screen.findByText(conversationCopy.en.uncertain);
   jest.mocked(listStorySessions).mockResolvedValueOnce([session()]);
-  fireEvent.press(screen.getByRole('button', { name: conversationCopy.en.check }));
+  await fireEvent.press(screen.getByRole('button', { name: conversationCopy.en.check }));
   await screen.findByText(conversationCopy.en.resumed);
   expect(continueStoryProject).toHaveBeenCalledTimes(1); expect(listStorySessions).toHaveBeenCalledTimes(2);
 });
@@ -142,7 +142,7 @@ it('cancels an in-flight continuation on Sign Out and ignores its late private r
   jest.mocked(continueStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
   await openConversation(); await waitFor(() => expect(continueStoryProject).toHaveBeenCalledTimes(1));
   const signal = jest.mocked(continueStoryProject).mock.calls[0][0].signal!;
-  fireEvent.press(screen.getByRole('button', { name: conversationCopy.en.signOut }));
+  await fireEvent.press(screen.getByRole('button', { name: conversationCopy.en.signOut }));
   await screen.findByRole('header', { name: copy.en.welcomeTitle }); expect(signal.aborted).toBe(true);
   await act(async () => { finish(continuation()); });
   expect(screen.queryByText(conversationCopy.en.ready)).toBeNull();
@@ -151,14 +151,14 @@ it('cancels an in-flight continuation on Sign Out and ignores its late private r
 
 it('drops a ready session when accounts change and requires account B to select its own story', async () => {
   await openConversation(); await screen.findByText(conversationCopy.en.ready);
-  act(() => publish(account('account-b')));
+  await act(() => publish(account('account-b')));
   await openSettings(); await screen.findByText('account-b@example.test'); await openMyStories();
   expect(screen.queryByText(conversationCopy.en.ready)).toBeNull();
   expect(continueStoryProject).toHaveBeenCalledTimes(1); expect(listStorySessions).toHaveBeenCalledTimes(1);
-  fireEvent.press(screen.getByRole('button', { name: `${storiesCopy.en.openStory}: Fictional selected story` }));
+  await fireEvent.press(screen.getByRole('button', { name: `${storiesCopy.en.openStory}: Fictional selected story` }));
   await screen.findByRole('button', { name: storyDetailsCopy.en.conversation });
   jest.mocked(listStorySessions).mockResolvedValueOnce([session()]);
-  fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.conversation }));
+  await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.conversation }));
   await screen.findByText(conversationCopy.en.resumed);
   const call = jest.mocked(listStorySessions).mock.calls[1][0];
   await call.getAccessToken(); expect(auth.getAccessToken).toHaveBeenLastCalledWith('account-b');
@@ -169,11 +169,11 @@ it('removes an in-flight session when foreground authentication needs verificati
   jest.mocked(continueStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
   await openConversation(); await waitFor(() => expect(continueStoryProject).toHaveBeenCalledTimes(1));
   const signal = jest.mocked(continueStoryProject).mock.calls[0][0].signal!;
-  act(() => publish({ status: 'checking', user: null, error: null }));
+  await act(() => publish({ status: 'checking', user: null, error: null }));
   expect(signal.aborted).toBe(true);
   await act(async () => { finish(continuation()); });
   expect(screen.queryByText(conversationCopy.en.ready)).toBeNull();
-  act(() => publish(account())); await openMyStories(); await screen.findByText('Fictional selected story');
+  await act(() => publish(account())); await openMyStories(); await screen.findByText('Fictional selected story');
   expect(screen.queryByRole('header', { name: conversationCopy.en.title })).toBeNull();
   expect(continueStoryProject).toHaveBeenCalledTimes(1);
 });
@@ -183,17 +183,17 @@ it('cancels the session on native route blur and returns to the dashboard withou
   jest.mocked(continueStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
   await openConversation(); await waitFor(() => expect(continueStoryProject).toHaveBeenCalledTimes(1));
   const signal = jest.mocked(continueStoryProject).mock.calls[0][0].signal!;
-  act(() => router.push('/outside' as '/')); await screen.findByText('Another test route');
+  await act(() => router.push('/outside' as '/')); await screen.findByText('Another test route');
   expect(signal.aborted).toBe(true);
   await act(async () => { finish(continuation()); });
-  act(() => router.back()); await openMyStories(); await screen.findByText('Fictional selected story');
+  await act(() => router.back()); await openMyStories(); await screen.findByText('Fictional selected story');
   expect(screen.queryByText(conversationCopy.en.ready)).toBeNull();
   expect(continueStoryProject).toHaveBeenCalledTimes(1);
 });
 
 it.each(['checking', 'signed-out', 'busy', 'blocked'] as const)('cannot trigger continuation through URL parameters for %s authentication', async status => {
   snapshot = { status, user: null, error: null };
-  renderRouter(routes, { initialUrl: `/authenticated?projectId=${id}&sessionId=${sessionId}&continue=true` });
+  await renderRouter(routes, { initialUrl: `/authenticated?projectId=${id}&sessionId=${sessionId}&continue=true` });
   await waitFor(() => expect(auth.restore).toHaveBeenCalled());
   expect(getStoryProject).not.toHaveBeenCalled(); expect(listStorySessions).not.toHaveBeenCalled();
   expect(continueStoryProject).not.toHaveBeenCalled(); expect(auth.getAccessToken).not.toHaveBeenCalled();
@@ -201,7 +201,7 @@ it.each(['checking', 'signed-out', 'busy', 'blocked'] as const)('cannot trigger 
 
 it('does not treat restored-route or URL parameters as conversation intent for a verified account', async () => {
   await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language: 'en', completed: true }));
-  renderRouter(routes, { initialUrl: `/authenticated?projectId=${id}&sessionId=${sessionId}&continue=true` });
+  await renderRouter(routes, { initialUrl: `/authenticated?projectId=${id}&sessionId=${sessionId}&continue=true` });
   await openMyStories(); await screen.findByText('Fictional selected story');
   expect(getStoryProject).not.toHaveBeenCalled(); expect(listStorySessions).not.toHaveBeenCalled();
   expect(continueStoryProject).not.toHaveBeenCalled();
@@ -209,11 +209,11 @@ it('does not treat restored-route or URL parameters as conversation intent for a
 
 it('keeps SAMPLE STORIES navigation separate from real authentication and continuation endpoints', async () => {
   jest.mocked(readStoryPreviewEnabled).mockReturnValue(true);
-  render(<RootLayout />);
+  await render(<RootLayout />);
   expect(screen.getByText('SAMPLE STORIES. Nothing is saved.')).toBeOnTheScreen();
-  fireEvent.press(screen.getByRole('button', { name: 'View sample stories' }));
-  fireEvent.press(screen.getByRole('button', { name: `${storiesCopy.en.openStory}: A made-up summer memory` }));
-  await screen.findByRole('header', { name: storyDetailsCopy.en.title });
+  await fireEvent.press(screen.getByRole('button', { name: 'View sample stories' }));
+  await fireEvent.press(screen.getByRole('button', { name: `${storiesCopy.en.openStory}: A made-up summer memory` }));
+  await screen.findByRole('header', { name: 'A made-up summer memory' });
   expect(screen.queryByRole('button', { name: storyDetailsCopy.en.conversation })).toBeNull();
   expect(createMobileAuth).not.toHaveBeenCalled(); expect(getStoryProject).not.toHaveBeenCalled();
   expect(listStorySessions).not.toHaveBeenCalled(); expect(continueStoryProject).not.toHaveBeenCalled();
@@ -228,9 +228,9 @@ it('preserves auth/onboarding while a first iOS permission popup unmounts the co
     if (event === 'change') activeListeners.add(listener);
     return { remove: () => { activeListeners.delete(listener); } };
   });
-  const publishState = (value: 'active' | 'inactive') => {
+  const publishState = async (value: 'active' | 'inactive') => {
     AppState.currentState = value;
-    act(() => { [...activeListeners].forEach(listener => listener(value)); });
+    await act(() => { [...activeListeners].forEach(listener => listener(value)); });
   };
   let grant!: (value: boolean) => void;
   const permission = new Promise<boolean>(resolve => { grant = resolve; });
@@ -247,24 +247,24 @@ it('preserves auth/onboarding while a first iOS permission popup unmounts the co
     AppState.currentState = 'active';
     await openConversation(); await screen.findByText(conversationCopy.en.ready);
     const preferencesBefore = await AsyncStorage.getItem(PREFERENCES_KEY);
-    fireEvent.press(screen.getByRole('button', { name: audioCopy.en.start }));
+    await fireEvent.press(screen.getByRole('button', { name: audioCopy.en.start }));
     await waitFor(() => expect(first.requestPermission).toHaveBeenCalledTimes(1));
     expect(first.start).not.toHaveBeenCalled();
-    publishState('inactive');
+    await publishState('inactive');
     expect(first.dispose).toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: audioCopy.en.stop })).toBeNull();
     await act(async () => grant(true));
     expect(first.start).not.toHaveBeenCalled();
     jest.mocked(listStorySessions).mockResolvedValueOnce([session()]);
-    publishState('active');
+    await publishState('active');
     await openMyStories();
     await screen.findByText('Fictional selected story');
     expect(next.start).not.toHaveBeenCalled();
-    fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.openStory + ': Fictional selected story' }));
+    await fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.openStory + ': Fictional selected story' }));
     await screen.findByRole('button', { name: storyDetailsCopy.en.conversation });
-    fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.conversation }));
+    await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.conversation }));
     await screen.findByText(conversationCopy.en.resumed);
-    fireEvent.press(screen.getByRole('button', { name: audioCopy.en.start }));
+    await fireEvent.press(screen.getByRole('button', { name: audioCopy.en.start }));
     await screen.findByRole('button', { name: audioCopy.en.stop });
     expect(first.start).not.toHaveBeenCalled(); expect(next.start).toHaveBeenCalledTimes(1);
     expect(auth.signOut).not.toHaveBeenCalled();

@@ -1,10 +1,10 @@
 export const conversationCopy = {
   en: {
-    title: 'My Conversation',
+    title: 'Share Your Memories',
     loading: 'Opening your conversation…',
     ready: 'Your conversation session is ready.',
-    started: 'A new conversation session was started for this story.',
-    resumed: 'Your existing conversation session has been opened.',
+    started: 'This is a new conversation for your story.',
+    resumed: 'You are continuing your saved conversation.',
     scope: 'You can record a fictional test sample and select its saved transcript for an AI simulation. Real speech recognition and spoken replies are not available.',
     language: 'Conversation language', english: 'English', swedish: 'Swedish',
     review: 'Review My Memories',
@@ -26,11 +26,11 @@ export const conversationCopy = {
     },
   },
   sv: {
-    title: 'Mitt samtal',
+    title: 'Dela dina minnen',
     loading: 'Öppnar ditt samtal…',
     ready: 'Din samtalssession är redo.',
-    started: 'En ny samtalssession har startats för den här berättelsen.',
-    resumed: 'Din befintliga samtalssession har öppnats.',
+    started: 'Det här är ett nytt samtal för din berättelse.',
+    resumed: 'Du fortsätter ditt sparade samtal.',
     scope: 'Du kan spela in ett fiktivt test och välja dess sparade transkription för en AI-simulering. Verklig taligenkänning och talade svar är inte tillgängliga.',
     language: 'Samtalets språk', english: 'Engelska', swedish: 'Svenska',
     review: 'Granska mina minnen',

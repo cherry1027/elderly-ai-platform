@@ -132,11 +132,11 @@ beforeEach(async () => {
   jest.mocked(listSessionTranscripts).mockResolvedValue([]);
   jest.mocked(Crypto.randomUUID).mockReset().mockReturnValueOnce(actionKey).mockReturnValue(otherKey);
 });
-afterEach(() => { cleanup(); jest.restoreAllMocks(); });
+afterEach(async () => { await cleanup(); jest.restoreAllMocks(); });
 async function selectStory(language: Language = 'en') {
   await openMyStories(language);
   await screen.findByText(title);
-  fireEvent.press(screen.getByRole('button', { name: storiesCopy[language].openStory + ': ' + title }));
+  await fireEvent.press(screen.getByRole('button', { name: storiesCopy[language].openStory + ': ' + title }));
   await screen.findByRole('button', { name: storyDetailsCopy[language].generate });
 }
 async function openGeneration(language: Language = 'en') {
@@ -144,21 +144,21 @@ async function openGeneration(language: Language = 'en') {
   jest.mocked(getStoryProject).mockResolvedValue(project(language));
   jest.mocked(listStorySessions).mockResolvedValue([session(language)]);
   await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language, completed: true }));
-  const view = renderRouter(routes, { initialUrl: '/' });
+  const view = await renderRouter(routes, { initialUrl: '/' });
   await selectStory(language);
-  fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy[language].generate }));
+  await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy[language].generate }));
   await screen.findByRole('button', { name: storyGenerationCopy[language].generate });
   return view;
 }
 async function confirmGeneration(language: Language = 'en') {
-  fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy[language].generate }));
+  await fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy[language].generate }));
   await screen.findByRole('button', { name: storyGenerationCopy[language].confirm });
-  fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy[language].confirm }));
+  await fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy[language].confirm }));
   await waitFor(() => expect(generateStoryDraft).toHaveBeenCalledTimes(1));
 }
 async function reopenGeneration(language: Language = 'en') {
   await selectStory(language);
-  fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy[language].generate }));
+  await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy[language].generate }));
   await screen.findByRole('header', { name: storyGenerationCopy[language].title });
 }
 
@@ -171,10 +171,10 @@ it.each<Language>(['en', 'sv'])('requires intentional navigation and explicit co
   expect(first).toMatchObject({ projectId, expectedLanguage: language });
   await first.getAccessToken(); expect(auth.getAccessToken).toHaveBeenLastCalledWith('account-a');
 
-  fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy[language].generate }));
+  await fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy[language].generate }));
   await screen.findByRole('button', { name: storyGenerationCopy[language].confirm });
   expect(generateStoryDraft).not.toHaveBeenCalled();
-  fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy[language].cancel }));
+  await fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy[language].cancel }));
   expect(generateStoryDraft).not.toHaveBeenCalled();
   const value = saved(language);
   jest.mocked(generateStoryDraft).mockResolvedValue(value);
@@ -186,11 +186,11 @@ it.each<Language>(['en', 'sv'])('requires intentional navigation and explicit co
     projectId, expectedLanguage: language, idempotencyKey: actionKey,
     input: { language, style: 'warm', confirm_generation: true },
   });
-  fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy[language].refresh }));
+  await fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy[language].refresh }));
   await screen.findByText(value.content);
-  fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy[language].back }));
+  await fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy[language].back }));
   await screen.findByRole('button', { name: storyDetailsCopy[language].generate });
-  fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy[language].generate }));
+  await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy[language].generate }));
   await screen.findByText(value.content);
   expect(generateStoryDraft).toHaveBeenCalledTimes(1);
   expect(Crypto.randomUUID).toHaveBeenCalledTimes(1);
@@ -201,7 +201,7 @@ it.each<Language>(['en', 'sv'])('requires intentional navigation and explicit co
 
 it.each<Language>(['en', 'sv'])('opens existing %s memory review through read-only session retrieval', async language => {
   await openGeneration(language);
-  fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy[language].review }));
+  await fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy[language].review }));
   await screen.findByRole('header', { name: memoryReviewCopy[language].title });
   await screen.findByText(memoryReviewCopy[language].empty);
   expect(listStorySessions).toHaveBeenCalledTimes(1);
@@ -210,7 +210,7 @@ it.each<Language>(['en', 'sv'])('opens existing %s memory review through read-on
   expect(continueStoryProject).not.toHaveBeenCalled();
   expect(generateStoryDraft).not.toHaveBeenCalled(); expect(patchMemory).not.toHaveBeenCalled();
   expect(listSessionTranscripts).not.toHaveBeenCalled(); expect(globalThis.fetch).not.toHaveBeenCalled();
-  fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy[language].back }));
+  await fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy[language].back }));
   await screen.findByRole('button', { name: storyDetailsCopy[language].generate });
   expect(listSessionTranscripts).not.toHaveBeenCalled(); expect(continueStoryProject).not.toHaveBeenCalled();
 });
@@ -218,7 +218,7 @@ it.each<Language>(['en', 'sv'])('opens existing %s memory review through read-on
 it('does not create a session when generation review navigation finds none', async () => {
   await openGeneration();
   jest.mocked(listStorySessions).mockResolvedValue([]);
-  fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy.en.review }));
+  await fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy.en.review }));
   await screen.findByText(conversationCopy.en.errors['not-found']);
   expect(continueStoryProject).not.toHaveBeenCalled(); expect(listMemoryReview).not.toHaveBeenCalled();
   expect(generateStoryDraft).not.toHaveBeenCalled();
@@ -228,7 +228,7 @@ it('sign-out aborts pending generation, clears private data and ignores the late
   const pending = deferred<StoryDraft>(); jest.mocked(generateStoryDraft).mockReturnValueOnce(pending.promise);
   await openGeneration(); await confirmGeneration();
   const signal = jest.mocked(generateStoryDraft).mock.calls[0][0].signal!;
-  fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy.en.signOut }));
+  await fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy.en.signOut }));
   await screen.findByRole('header', { name: copy.en.welcomeTitle });
   expect(signal.aborted).toBe(true); expect(auth.signOut).toHaveBeenCalledTimes(1);
   await act(async () => pending.resolve(draft()));
@@ -241,7 +241,7 @@ it('account B cannot receive account A pending draft or reuse its generation act
   const pending = deferred<StoryDraft>(); jest.mocked(generateStoryDraft).mockReturnValueOnce(pending.promise);
   await openGeneration(); await confirmGeneration();
   const signal = jest.mocked(generateStoryDraft).mock.calls[0][0].signal!;
-  act(() => publish(account('account-b')));
+  await act(() => publish(account('account-b')));
   await openSettings(); await screen.findByText('account-b@example.test'); expect(signal.aborted).toBe(true);
   await act(async () => pending.resolve(draft()));
   expect(screen.queryByText(draft().content)).toBeNull();
@@ -249,8 +249,8 @@ it('account B cannot receive account A pending draft or reuse its generation act
   await screen.findByRole('button', { name: storyGenerationCopy.en.generate });
   expect(screen.queryByRole('button', { name: storyGenerationCopy.en.retry })).toBeNull();
   saved(); jest.mocked(generateStoryDraft).mockResolvedValue(draft());
-  fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy.en.generate }));
-  fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy.en.confirm }));
+  await fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy.en.generate }));
+  await fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy.en.confirm }));
   await screen.findByText(storyGenerationCopy.en.saved);
   expect(jest.mocked(generateStoryDraft).mock.calls[1][0].idempotencyKey).toBe(otherKey);
   await jest.mocked(generateStoryDraft).mock.calls[1][0].getAccessToken();
@@ -261,15 +261,15 @@ it('same-account authentication revalidation hides private view but retains exac
   const pending = deferred<StoryDraft>(); jest.mocked(generateStoryDraft).mockReturnValueOnce(pending.promise);
   await openGeneration(); await confirmGeneration();
   const original = jest.mocked(generateStoryDraft).mock.calls[0][0];
-  act(() => publish({ status: 'checking', user: null, error: null }));
+  await act(() => publish({ status: 'checking', user: null, error: null }));
   expect(original.signal!.aborted).toBe(true);
   expect(screen.queryByRole('header', { name: storyGenerationCopy.en.title })).toBeNull();
-  act(() => publish(account())); await reopenGeneration();
+  await act(() => publish(account())); await reopenGeneration();
   await screen.findByRole('button', { name: storyGenerationCopy.en.retry });
   expect(generateStoryDraft).toHaveBeenCalledTimes(1);
   expect(screen.queryByText(storyGenerationCopy.en.saved)).toBeNull();
   saved();
-  fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy.en.retry }));
+  await fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy.en.retry }));
   await screen.findByText(storyGenerationCopy.en.saved);
   expect(jest.mocked(generateStoryDraft).mock.calls[1][0].idempotencyKey).toBe(original.idempotencyKey);
   expect(jest.mocked(generateStoryDraft).mock.calls[1][0].input).toEqual(original.input);
@@ -281,13 +281,13 @@ it('native route blur cancels a pending write and reopens through GET before sam
   const pending = deferred<StoryDraft>(); jest.mocked(generateStoryDraft).mockReturnValueOnce(pending.promise);
   await openGeneration(); await confirmGeneration();
   const original = jest.mocked(generateStoryDraft).mock.calls[0][0];
-  act(() => router.push('/outside' as '/')); await screen.findByText('Another synthetic route');
+  await act(() => router.push('/outside' as '/')); await screen.findByText('Another synthetic route');
   expect(original.signal!.aborted).toBe(true);
   await act(async () => pending.resolve(draft()));
-  act(() => router.back()); await reopenGeneration();
+  await act(() => router.back()); await reopenGeneration();
   await screen.findByRole('button', { name: storyGenerationCopy.en.retry });
   expect(generateStoryDraft).toHaveBeenCalledTimes(1); saved();
-  fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy.en.retry }));
+  await fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy.en.retry }));
   await screen.findByText(storyGenerationCopy.en.saved);
   expect(jest.mocked(generateStoryDraft).mock.calls[1][0].idempotencyKey).toBe(original.idempotencyKey);
   expect(Crypto.randomUUID).toHaveBeenCalledTimes(1);
@@ -301,29 +301,29 @@ it('actual AuthProvider background unmount retains metadata and foreground never
     if (event === 'change') callbacks.add(callback);
     return { remove: () => { callbacks.delete(callback); } };
   });
-  const state = (value: 'active' | 'inactive') => {
-    AppState.currentState = value; act(() => [...callbacks].forEach(callback => callback(value)));
+  const state = async (value: 'active' | 'inactive') => {
+    AppState.currentState = value; await act(() => [...callbacks].forEach(callback => callback(value)));
   };
   const pending = deferred<StoryDraft>(); jest.mocked(generateStoryDraft).mockReturnValueOnce(pending.promise);
   try {
     AppState.currentState = 'active'; await openGeneration(); await confirmGeneration();
     const original = jest.mocked(generateStoryDraft).mock.calls[0][0];
-    state('inactive'); expect(original.signal!.aborted).toBe(true);
+    await state('inactive'); expect(original.signal!.aborted).toBe(true);
     expect(screen.queryByRole('header', { name: storyGenerationCopy.en.title })).toBeNull();
-    state('active'); await reopenGeneration();
+    await state('active'); await reopenGeneration();
     await screen.findByRole('button', { name: storyGenerationCopy.en.retry });
     expect(generateStoryDraft).toHaveBeenCalledTimes(1); expect(auth.signOut).not.toHaveBeenCalled();
-    saved(); fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy.en.retry }));
+    saved(); await fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy.en.retry }));
     await screen.findByText(storyGenerationCopy.en.saved);
     expect(jest.mocked(generateStoryDraft).mock.calls[1][0].idempotencyKey).toBe(original.idempotencyKey);
     expect(Crypto.randomUUID).toHaveBeenCalledTimes(1);
     await act(async () => pending.resolve(draft()));
-  } finally { cleanup(); change.mockRestore(); AppState.currentState = previous; }
+  } finally { await cleanup(); change.mockRestore(); AppState.currentState = previous; }
 });
 
 it.each(['checking', 'signed-out', 'busy', 'blocked'] as const)('cannot enter generation from URL parameters while %s', async status => {
   snapshot = { status, user: null, error: null };
-  renderRouter(routes, { initialUrl: '/authenticated?projectId=' + projectId + '&generate=true&confirm_generation=true' });
+  await renderRouter(routes, { initialUrl: '/authenticated?projectId=' + projectId + '&generate=true&confirm_generation=true' });
   await waitFor(() => expect(auth.restore).toHaveBeenCalled());
   expect(listStoryDrafts).not.toHaveBeenCalled(); expect(generateStoryDraft).not.toHaveBeenCalled();
   expect(getStoryProject).not.toHaveBeenCalled(); expect(Crypto.randomUUID).not.toHaveBeenCalled();
@@ -331,7 +331,7 @@ it.each(['checking', 'signed-out', 'busy', 'blocked'] as const)('cannot enter ge
 
 it('verified restored URL parameters cannot select a story or approve generation', async () => {
   await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language: 'en', completed: true }));
-  renderRouter(routes, { initialUrl: '/authenticated?projectId=' + projectId + '&generate=true&confirm_generation=true' });
+  await renderRouter(routes, { initialUrl: '/authenticated?projectId=' + projectId + '&generate=true&confirm_generation=true' });
   await openMyStories(); await screen.findByText(title);
   expect(getStoryProject).not.toHaveBeenCalled(); expect(listStoryDrafts).not.toHaveBeenCalled();
   expect(generateStoryDraft).not.toHaveBeenCalled(); expect(Crypto.randomUUID).not.toHaveBeenCalled();
@@ -339,11 +339,11 @@ it('verified restored URL parameters cannot select a story or approve generation
 
 it('SAMPLE STORIES cannot enter saved draft generation or create authentication services', async () => {
   jest.mocked(readStoryPreviewEnabled).mockReturnValue(true);
-  render(<RootLayout />);
+  await render(<RootLayout />);
   expect(screen.getByText('SAMPLE STORIES. Nothing is saved.')).toBeOnTheScreen();
-  fireEvent.press(screen.getByRole('button', { name: 'View sample stories' }));
-  fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.openStory + ': A made-up summer memory' }));
-  await screen.findByRole('header', { name: storyDetailsCopy.en.title });
+  await fireEvent.press(screen.getByRole('button', { name: 'View sample stories' }));
+  await fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.openStory + ': A made-up summer memory' }));
+  await screen.findByRole('header', { name: 'A made-up summer memory' });
   expect(screen.queryByRole('button', { name: storyDetailsCopy.en.generate })).toBeNull();
   expect(createMobileAuth).not.toHaveBeenCalled(); expect(listStoryDrafts).not.toHaveBeenCalled();
   expect(generateStoryDraft).not.toHaveBeenCalled(); expect(globalThis.fetch).not.toHaveBeenCalled();

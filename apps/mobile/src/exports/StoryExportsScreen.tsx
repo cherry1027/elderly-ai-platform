@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import { AccessibilityInfo, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { StoryDraft } from '../api/story-drafts';
 import { useApiBackoff } from '../api/ApiBackoff';
@@ -40,7 +40,7 @@ function StoryExportsView({ language, storyLanguage, title, state, onPrepare, on
   const text = exportCopy[language], locale = accessibilityLanguages[language], contentLocale = accessibilityLanguages[storyLanguage];
   const { waiting } = useApiBackoff();
   const [historyOpen, setHistoryOpen] = useState(false), [selected, setSelected] = useState(0);
-  const submitted = useRef(false), scroll = useRef<ScrollView>(null);
+  const submitted = useRef(false), scroll = useRef<ComponentRef<typeof ScrollView>>(null);
   const position = useRef({ content: 0, panel: 0, notice: 0 });
   const busy = ['loading', 'exporting', 'downloading', 'sharing', 'checking'].includes(state.phase);
   const accessFailed = ['authentication', 'forbidden', 'not-found'].includes(state.error ?? '');

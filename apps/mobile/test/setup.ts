@@ -1,7 +1,11 @@
 import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
 import mockAsyncStorage from '@react-native-async-storage/async-storage/jest/async-storage-mock';
 
-jest.mock('react-native-safe-area-context', () => mockSafeAreaContext);
+jest.mock('react-native-safe-area-context', () => {
+  const { observeComponent } = jest.requireActual<typeof import('./component-probe')>('./component-probe');
+  const actual = jest.requireActual<typeof import('react-native-safe-area-context')>('react-native-safe-area-context');
+  return { ...actual, ...mockSafeAreaContext, SafeAreaView: observeComponent(actual.SafeAreaView) };
+});
 
 jest.mock('@react-native-async-storage/async-storage', () => mockAsyncStorage);
 

@@ -1,6 +1,7 @@
+import { nativeNodes, nativeNode, nativeText } from './native-tree';
 import { fireEvent, render, screen } from '@testing-library/react-native';
 import { Animated, StyleSheet } from 'react-native';
-import { G, Path, Rect, Text as SvgText } from 'react-native-svg';
+
 import { AnimatedMemoryBook } from '../src/components/AnimatedMemoryBook';
 
 describe('the actual native memory book artwork', () => {
@@ -18,41 +19,41 @@ describe('the actual native memory book artwork', () => {
 
   afterEach(() => jest.restoreAllMocks());
 
-  it.each([0, 1, 2] as const)('renders the authored book and valid native vector geometry for scene %s', (scene) => {
-    render(<AnimatedMemoryBook scene={scene} language="en" motion={false} />);
-    const paths = screen.UNSAFE_getAllByType(Path).map((node) => node.props.d as string);
+  it.each([0, 1, 2] as const)('renders the authored book and valid native vector geometry for scene %s', async (scene) => {
+    await render(<AnimatedMemoryBook scene={scene} language="en" motion={false} />);
+    const paths = nativeNodes('path').map((node) => node.props.d as string);
     expect(paths).toContain('M123 204c81-33 171-26 257 16 88-42 178-49 259-16v299c-89-30-175-23-259 19-83-42-171-49-257-19Z');
     expect(paths).toContain('M380 215v269');
     for (const path of paths) {
       expect(path).toMatch(/^[MmLlHhVvCcSsQqTtAaZz0-9eE+.,\s-]+$/);
     }
-    for (const group of screen.UNSAFE_queryAllByType(G)) {
+    for (const group of nativeNodes('svgGroup')) {
       if (typeof group.props.transform === 'string') expect(group.props.transform).not.toContain(':');
     }
     expect(screen.queryAllByRole('button', { includeHiddenElements: true })).toHaveLength(0);
     expect(timing).not.toHaveBeenCalled();
   });
 
-  it('retains memory symbols, a voice/keyboard alternative and separate draft paragraphs', () => {
-    const view = render(<AnimatedMemoryBook scene={0} language="en" motion={false} />);
-    expect(screen.UNSAFE_getAllByType(Rect).some((node) => node.props.x === '94')).toBe(true);
-    view.rerender(<AnimatedMemoryBook scene={1} language="en" motion={false} />);
-    const rectangles = screen.UNSAFE_getAllByType(Rect);
+  it('retains memory symbols, a voice/keyboard alternative and separate draft paragraphs', async () => {
+    const view = await render(<AnimatedMemoryBook scene={0} language="en" motion={false} />);
+    expect(nativeNodes('rect').some((node) => node.props.x === '94')).toBe(true);
+    await view.rerender(<AnimatedMemoryBook scene={1} language="en" motion={false} />);
+    const rectangles = nativeNodes('rect');
     expect(rectangles.some((node) => node.props.x === '255' && node.props.width === '16')).toBe(true);
     expect(rectangles.some((node) => node.props.x === '580' && node.props.width === '76')).toBe(true);
-    view.rerender(<AnimatedMemoryBook scene={2} language="en" motion={false} />);
+    await view.rerender(<AnimatedMemoryBook scene={2} language="en" motion={false} />);
     expect(screen.getByTestId('memory-book-paragraph-1', { includeHiddenElements: true })).toBeOnTheScreen();
     expect(screen.getByTestId('memory-book-paragraph-2', { includeHiddenElements: true })).toBeOnTheScreen();
-    expect(screen.UNSAFE_getByType(SvgText).props.children).toBe('DRAFT');
+    expect(nativeText(nativeNode('svgText'))).toBe('DRAFT');
   });
 
-  it.each([['en', 'DRAFT'], ['sv', 'UTKAST']] as const)('uses the correct decorative %s draft label', (language, label) => {
-    render(<AnimatedMemoryBook scene={2} language={language} motion={false} />);
-    expect(screen.UNSAFE_getByType(SvgText).props.children).toBe(label);
+  it.each([['en', 'DRAFT'], ['sv', 'UTKAST']] as const)('uses the correct decorative %s draft label', async (language, label) => {
+    await render(<AnimatedMemoryBook scene={2} language={language} motion={false} />);
+    expect(nativeText(nativeNode('svgText'))).toBe(label);
   });
 
-  it.each([0, 1, 2] as const)('starts a finite non-blocking native animation for scene %s', (scene) => {
-    render(<AnimatedMemoryBook scene={scene} language="en" motion />);
+  it.each([0, 1, 2] as const)('starts a finite non-blocking native animation for scene %s', async (scene) => {
+    await render(<AnimatedMemoryBook scene={scene} language="en" motion />);
     expect(timing).toHaveBeenCalledTimes(1);
     const configuration = timing.mock.calls[0][1];
     expect(configuration).toEqual(expect.objectContaining({
@@ -65,46 +66,46 @@ describe('the actual native memory book artwork', () => {
     expect(animations[0].start).toHaveBeenCalledTimes(1);
   });
 
-  it('stops the old animation on a scene change and stops the new one on unmount', () => {
-    const view = render(<AnimatedMemoryBook scene={0} language="en" motion />);
-    view.rerender(<AnimatedMemoryBook scene={1} language="en" motion />);
+  it('stops the old animation on a scene change and stops the new one on unmount', async () => {
+    const view = await render(<AnimatedMemoryBook scene={0} language="en" motion />);
+    await view.rerender(<AnimatedMemoryBook scene={1} language="en" motion />);
     expect(animations[0].stop).toHaveBeenCalledTimes(1);
     expect(animations[1].start).toHaveBeenCalledTimes(1);
-    view.unmount();
+    await view.unmount();
     expect(animations[1].stop).toHaveBeenCalledTimes(1);
   });
 
-  it('stops immediately when reduced motion is requested without scheduling another animation', () => {
-    const view = render(<AnimatedMemoryBook scene={0} language="en" motion />);
-    view.rerender(<AnimatedMemoryBook scene={0} language="en" motion={false} />);
+  it('stops immediately when reduced motion is requested without scheduling another animation', async () => {
+    const view = await render(<AnimatedMemoryBook scene={0} language="en" motion />);
+    await view.rerender(<AnimatedMemoryBook scene={0} language="en" motion={false} />);
     expect(animations[0].stop).toHaveBeenCalledTimes(1);
     expect(timing).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId('memory-book-cover-turn', { includeHiddenElements: true })).toHaveStyle({ opacity: 0 });
   });
 
-  it('shows the settled static voice and draft illustrations when motion is disabled', () => {
-    const view = render(<AnimatedMemoryBook scene={1} language="en" motion={false} />);
+  it('shows the settled static voice and draft illustrations when motion is disabled', async () => {
+    const view = await render(<AnimatedMemoryBook scene={1} language="en" motion={false} />);
     expect(screen.getByTestId('memory-book-voice-wave', { includeHiddenElements: true })).toHaveStyle({ opacity: 0 });
-    view.rerender(<AnimatedMemoryBook scene={2} language="en" motion={false} />);
+    await view.rerender(<AnimatedMemoryBook scene={2} language="en" motion={false} />);
     for (const id of ['memory-book-paragraph-1', 'memory-book-paragraph-2']) {
       expect(screen.getByTestId(id, { includeHiddenElements: true })).toHaveStyle({ opacity: 1 });
     }
     expect(timing).not.toHaveBeenCalled();
   });
 
-  it('does not restart animation when translating the same scene or measuring a smaller layout', () => {
-    const view = render(<AnimatedMemoryBook scene={2} language="en" motion />);
-    view.rerender(<AnimatedMemoryBook scene={2} language="sv" motion />);
+  it('does not restart animation when translating the same scene or measuring a smaller layout', async () => {
+    const view = await render(<AnimatedMemoryBook scene={2} language="en" motion />);
+    await view.rerender(<AnimatedMemoryBook scene={2} language="sv" motion />);
     const art = screen.getByTestId('memory-book-scene-3', { includeHiddenElements: true });
-    fireEvent(art, 'layout', { nativeEvent: { layout: { width: 280, height: 240, x: 0, y: 0 } } });
+    await fireEvent(art, 'layout', { nativeEvent: { layout: { width: 280, height: 240, x: 0, y: 0 } } });
     expect(timing).toHaveBeenCalledTimes(1);
-    expect(screen.UNSAFE_getByType(SvgText).props.children).toBe('UTKAST');
+    expect(nativeText(nativeNode('svgText'))).toBe('UTKAST');
   });
 
-  it('keeps all scenes decorative and responsive without application network operations', () => {
-    const view = render(<AnimatedMemoryBook scene={0} language="en" motion={false} />);
+  it('keeps all scenes decorative and responsive without application network operations', async () => {
+    const view = await render(<AnimatedMemoryBook scene={0} language="en" motion={false} />);
     for (const scene of [0, 1, 2] as const) {
-      view.rerender(<AnimatedMemoryBook scene={scene} language="sv" motion={false} />);
+      await view.rerender(<AnimatedMemoryBook scene={scene} language="sv" motion={false} />);
       const art = screen.getByTestId(`memory-book-scene-${scene + 1}`, { includeHiddenElements: true });
       expect(art.props.accessible).toBe(false);
       expect(art.props.accessibilityElementsHidden).toBe(true);

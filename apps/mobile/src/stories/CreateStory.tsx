@@ -5,6 +5,7 @@ import { readMobileApiConfig } from '../api/config';
 import { createStoryProject, StoryProjectsError, validateCreateStoryInput, type CreateStoryProjectInput } from '../api/story-projects';
 import type { Language } from '../i18n';
 import { CreateStoryScreen, type CreateStoryState } from '../screens/CreateStoryScreen';
+import type { LeaveHandle } from '../navigation/useGuardedLeave';
 
 interface Props {
   language: Language;
@@ -22,6 +23,7 @@ export function CreateStory({ language, user, getAccessToken, onBack, onSignOut 
   const working = useRef(false);
   const finished = useRef(false);
   const request = useRef<AbortController | null>(null);
+  const formLeave = useRef<LeaveHandle | null>(null);
   useEffect(() => {
     alive.current = true;
     working.current = false;
@@ -42,7 +44,9 @@ export function CreateStory({ language, user, getAccessToken, onBack, onSignOut 
     destination();
   }, []);
   useEffect(() => {
-    const listener = BackHandler.addEventListener('hardwareBackPress', () => { leave(onBack); return true; });
+    const listener = BackHandler.addEventListener('hardwareBackPress', () => {
+      formLeave.current?.requestLeave(() => leave(onBack)); return true;
+    });
     return () => listener.remove();
   }, [leave, onBack]);
 
@@ -79,6 +83,6 @@ export function CreateStory({ language, user, getAccessToken, onBack, onSignOut 
 
   // Account changes are fenced in render, before the previous effect cleans up.
   const state: CreateStoryState = result.owner === user.id ? result.state : { status: 'idle' };
-  return <CreateStoryScreen key={user.id} language={language} state={state} serviceAvailable={Boolean(config)}
+  return <CreateStoryScreen key={user.id} leaveRef={formLeave} language={language} state={state} serviceAvailable={Boolean(config)}
     onSubmit={submit} onBack={() => leave(onBack)} onSignOut={() => leave(onSignOut)} />;
 }

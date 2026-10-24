@@ -1,5 +1,7 @@
+import { getComponent, getComponents } from './component-probe';
+import { nativeNodes, nativeNode, nativeRef } from './native-tree';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
-import { AccessibilityInfo, ScrollView, StyleSheet, Text } from 'react-native';
+import { AccessibilityInfo, StyleSheet, Text } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AnimatedMemoryBook } from '../src/components/AnimatedMemoryBook';
 import { accessibilityLanguages, type Language } from '../src/i18n';
@@ -24,8 +26,8 @@ describe('native introduction screens', () => {
     ([0, 1, 2] as const).map((scene) => ({ language, scene }))
   ));
 
-  it.each(cases)('shows approved translated content for $language scene $scene', ({ language, scene }) => {
-    render(<IntroductionScreen language={language} scene={scene} {...callbacks()} />);
+  it.each(cases)('shows approved translated content for $language scene $scene', async ({ language, scene }) => {
+    await render(<IntroductionScreen language={language} scene={scene} {...callbacks()} />);
     const text = introCopy[language];
     expect(screen.getByRole('header', { name: text.scenes[scene].title })).toBeOnTheScreen();
     expect(screen.getByText(text.scenes[scene].eyebrow)).toBeOnTheScreen();
@@ -39,54 +41,54 @@ describe('native introduction screens', () => {
     );
   });
 
-  it.each([0, 1] as IntroScene[])('offers controlled Next and Skip on scene %s', (scene) => {
+  it.each([0, 1] as IntroScene[])('offers controlled Next and Skip on scene %s', async (scene) => {
     const actions = callbacks();
-    render(<IntroductionScreen language="en" scene={scene} {...actions} />);
+    await render(<IntroductionScreen language="en" scene={scene} {...actions} />);
     expect(actions.onNext).not.toHaveBeenCalled();
-    fireEvent.press(screen.getByRole('button', { name: 'Next' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Next' }));
     expect(actions.onNext).toHaveBeenCalledTimes(1);
-    fireEvent.press(screen.getByRole('button', { name: 'Skip' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Skip' }));
     expect(actions.onSkip).toHaveBeenCalledTimes(1);
     expect(actions.onEnter).not.toHaveBeenCalled();
   });
 
-  it('offers Back on the first scene so language can be corrected, and on later scenes', () => {
+  it('offers Back on the first scene so language can be corrected, and on later scenes', async () => {
     const actions = callbacks();
-    const view = render(<IntroductionScreen language="en" scene={0} {...actions} />);
-    fireEvent.press(screen.getByRole('button', { name: 'Back' }));
+    const view = await render(<IntroductionScreen language="en" scene={0} {...actions} />);
+    await fireEvent.press(screen.getByRole('button', { name: 'Back' }));
     expect(actions.onBack).toHaveBeenCalledTimes(1);
-    view.rerender(<IntroductionScreen language="en" scene={1} {...actions} />);
-    fireEvent.press(screen.getByRole('button', { name: 'Back' }));
+    await view.rerender(<IntroductionScreen language="en" scene={1} {...actions} />);
+    await fireEvent.press(screen.getByRole('button', { name: 'Back' }));
     expect(actions.onBack).toHaveBeenCalledTimes(2);
   });
 
-  it.each<Language>(['en', 'sv'])('offers Enter, Back and Skip on the final %s scene', (language) => {
+  it.each<Language>(['en', 'sv'])('offers Enter, Back and Skip on the final %s scene', async (language) => {
     const actions = callbacks();
-    render(<IntroductionScreen language={language} scene={2} {...actions} />);
+    await render(<IntroductionScreen language={language} scene={2} {...actions} />);
     const text = introCopy[language];
     expect(screen.queryByRole('button', { name: text.next })).toBeNull();
-    fireEvent.press(screen.getByRole('button', { name: text.enter }));
-    fireEvent.press(screen.getByRole('button', { name: text.back }));
-    fireEvent.press(screen.getByRole('button', { name: text.skip }));
+    await fireEvent.press(screen.getByRole('button', { name: text.enter }));
+    await fireEvent.press(screen.getByRole('button', { name: text.back }));
+    await fireEvent.press(screen.getByRole('button', { name: text.skip }));
     expect(actions.onEnter).toHaveBeenCalledTimes(1);
     expect(actions.onBack).toHaveBeenCalledTimes(1);
     expect(actions.onSkip).toHaveBeenCalledTimes(1);
     expect(actions.onNext).not.toHaveBeenCalled();
   });
 
-  it('passes system motion permission to the native illustration without advancing', () => {
+  it('passes system motion permission to the native illustration without advancing', async () => {
     jest.mocked(useReducedMotion).mockReturnValue(false);
     const actions = callbacks();
-    render(<IntroductionScreen language="en" scene={0} {...actions} />);
+    await render(<IntroductionScreen language="en" scene={0} {...actions} />);
     expect(jest.mocked(AnimatedMemoryBook)).toHaveBeenLastCalledWith(
       { scene: 0, language: 'en', motion: true }, undefined,
     );
     for (const action of Object.values(actions)) expect(action).not.toHaveBeenCalled();
   });
 
-  it.each(cases)('keeps $language scene $scene readable, scrollable and safe for large text', ({ language, scene }) => {
-    render(<IntroductionScreen language={language} scene={scene} {...callbacks()} />);
-    for (const node of screen.UNSAFE_getAllByType(Text)) {
+  it.each(cases)('keeps $language scene $scene readable, scrollable and safe for large text', async ({ language, scene }) => {
+    await render(<IntroductionScreen language={language} scene={scene} {...callbacks()} />);
+    for (const node of nativeNodes('text')) {
       expect(node.props.allowFontScaling).toBe(true);
       expect(node.props.numberOfLines).toBeUndefined();
       expect(node.props.maxFontSizeMultiplier).toBeUndefined();
@@ -96,16 +98,16 @@ describe('native introduction screens', () => {
       expect(button).toHaveStyle({ minHeight: 56, width: '100%' });
       expect(button.props.accessibilityLanguage).toBe(accessibilityLanguages[language]);
     }
-    expect(screen.UNSAFE_getByType(SafeAreaView).props.edges).toEqual(['top', 'bottom', 'left', 'right']);
-    expect(screen.UNSAFE_getByType(ScrollView).props.scrollEnabled).not.toBe(false);
+    expect(getComponent(SafeAreaView).props.edges).toEqual(['top', 'bottom', 'left', 'right']);
+    expect(nativeNode('scroll').props.scrollEnabled).not.toBe(false);
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 });
 
 describe('native Welcome introduction controls', () => {
-  it.each<Language>(['en', 'sv'])('explains unavailable future actions without fake controls in %s', (language) => {
+  it.each<Language>(['en', 'sv'])('explains unavailable future actions without fake controls in %s', async (language) => {
     const onReplayIntroduction = jest.fn();
-    render(<WelcomeScreen language={language} onChangeLanguage={jest.fn()} onReplayIntroduction={onReplayIntroduction} />);
+    await render(<WelcomeScreen language={language} onChangeLanguage={jest.fn()} onReplayIntroduction={onReplayIntroduction} />);
     const text = introCopy[language];
     expect(screen.getByText(text.unavailable)).toBeOnTheScreen();
     for (const label of [text.login, text.register, text.guest]) {
@@ -113,14 +115,14 @@ describe('native Welcome introduction controls', () => {
     }
     expect(onReplayIntroduction).not.toHaveBeenCalled();
     expect(globalThis.fetch).not.toHaveBeenCalled();
-    fireEvent.press(screen.getByRole('button', { name: text.replay }));
+    await fireEvent.press(screen.getByRole('button', { name: text.replay }));
     expect(onReplayIntroduction).toHaveBeenCalledTimes(1);
   });
 
-  it.each<Language>(['en', 'sv'])('displays an honest %s note only when device storage is unavailable', (language) => {
-    const view = render(<WelcomeScreen language={language} onChangeLanguage={jest.fn()} />);
+  it.each<Language>(['en', 'sv'])('displays an honest %s note only when device storage is unavailable', async (language) => {
+    const view = await render(<WelcomeScreen language={language} onChangeLanguage={jest.fn()} />);
     expect(screen.queryByText(introCopy[language].storageNote)).toBeNull();
-    view.rerender(<WelcomeScreen language={language} onChangeLanguage={jest.fn()} storageUnavailable />);
+    await view.rerender(<WelcomeScreen language={language} onChangeLanguage={jest.fn()} storageUnavailable />);
     expect(screen.getByText(introCopy[language].storageNote)).toBeOnTheScreen();
   });
 });
@@ -139,38 +141,37 @@ describe('scene heading focus for native screen readers', () => {
 
   afterEach(() => jest.restoreAllMocks());
 
-  function renderScene() {
-    return render(<IntroductionScreen language="en" scene={0} {...callbacks()} />);
+  async function renderScene() {
+    return await render(<IntroductionScreen language="en" scene={0} {...callbacks()} />);
   }
 
-  function layOutHeading() {
-    fireEvent(screen.getByRole('header'), 'layout', {
+  async function layOutHeading() {
+    await fireEvent(screen.getByRole('header'), 'layout', {
       nativeEvent: { layout: { x: 0, y: 0, width: 300, height: 90 } },
     });
   }
 
   it('focuses the laid-out native heading only when a screen reader is enabled', async () => {
     jest.spyOn(AccessibilityInfo, 'isScreenReaderEnabled').mockResolvedValue(true);
-    renderScene();
+    await renderScene();
     await act(async () => {});
     expect(requestAnimationFrame).not.toHaveBeenCalled();
-    layOutHeading();
+    await layOutHeading();
     expect(requestAnimationFrame).toHaveBeenCalledTimes(1);
-    act(() => frame(0));
-    const expectedHeading = screen.UNSAFE_getAllByType(Text)
-      .find((node) => node.props.accessibilityRole === 'header')?.instance;
+    await act(() => frame(0));
+    const expectedHeading = nativeRef(getComponents(Text)
+      .find(node => node.props.accessibilityRole === 'header')?.props.ref);
     const calls = jest.mocked(AccessibilityInfo.sendAccessibilityEvent).mock.calls;
     expect(calls).toHaveLength(1);
     expect(calls[0]?.[1]).toBe('focus');
-    // RN's Text mock assigns its composite instance to ref. Check identity
-    // without asking Jest to recursively serialize that instance's Fiber tree.
+    // Compare the public native ref forwarded by the real Text boundary.
     expect(calls[0]?.[0] === expectedHeading).toBe(true);
   });
 
   it('does not move regular keyboard focus when a screen reader is disabled', async () => {
     jest.spyOn(AccessibilityInfo, 'isScreenReaderEnabled').mockResolvedValue(false);
-    renderScene();
-    layOutHeading();
+    await renderScene();
+    await layOutHeading();
     await act(async () => {});
     expect(requestAnimationFrame).not.toHaveBeenCalled();
     expect(AccessibilityInfo.sendAccessibilityEvent).not.toHaveBeenCalled();
@@ -178,12 +179,12 @@ describe('scene heading focus for native screen readers', () => {
 
   it('does not refocus after language or repeated layout changes', async () => {
     jest.spyOn(AccessibilityInfo, 'isScreenReaderEnabled').mockResolvedValue(true);
-    const view = renderScene();
-    layOutHeading();
+    const view = await renderScene();
+    await layOutHeading();
     await act(async () => {});
-    act(() => frame(0));
-    view.rerender(<IntroductionScreen language="sv" scene={0} {...callbacks()} />);
-    layOutHeading();
+    await act(() => frame(0));
+    await view.rerender(<IntroductionScreen language="sv" scene={0} {...callbacks()} />);
+    await layOutHeading();
     expect(requestAnimationFrame).toHaveBeenCalledTimes(1);
     expect(AccessibilityInfo.sendAccessibilityEvent).toHaveBeenCalledTimes(1);
   });
@@ -193,9 +194,9 @@ describe('scene heading focus for native screen readers', () => {
     jest.spyOn(AccessibilityInfo, 'isScreenReaderEnabled').mockReturnValue(new Promise((done) => {
       resolve = done;
     }));
-    const view = renderScene();
-    layOutHeading();
-    view.unmount();
+    const view = await renderScene();
+    await layOutHeading();
+    await view.unmount();
     await act(async () => resolve(true));
     expect(requestAnimationFrame).not.toHaveBeenCalled();
     expect(AccessibilityInfo.sendAccessibilityEvent).not.toHaveBeenCalled();
@@ -203,19 +204,19 @@ describe('scene heading focus for native screen readers', () => {
 
   it('cancels pending frame work and guards even a stale callback after unmount', async () => {
     jest.spyOn(AccessibilityInfo, 'isScreenReaderEnabled').mockResolvedValue(true);
-    const view = renderScene();
-    layOutHeading();
+    const view = await renderScene();
+    await layOutHeading();
     await act(async () => {});
-    view.unmount();
+    await view.unmount();
     expect(cancelAnimationFrame).toHaveBeenCalledWith(7);
-    act(() => frame(0));
+    await act(() => frame(0));
     expect(AccessibilityInfo.sendAccessibilityEvent).not.toHaveBeenCalled();
   });
 
   it('leaves focus unchanged when the device query fails', async () => {
     jest.spyOn(AccessibilityInfo, 'isScreenReaderEnabled').mockRejectedValue(new Error('Unavailable'));
-    renderScene();
-    layOutHeading();
+    await renderScene();
+    await layOutHeading();
     await act(async () => {});
     expect(requestAnimationFrame).not.toHaveBeenCalled();
     expect(AccessibilityInfo.sendAccessibilityEvent).not.toHaveBeenCalled();
@@ -226,10 +227,10 @@ describe('scene heading focus for native screen readers', () => {
     jest.mocked(AccessibilityInfo.sendAccessibilityEvent).mockImplementation(() => {
       throw new Error('Unavailable');
     });
-    renderScene();
-    layOutHeading();
+    await renderScene();
+    await layOutHeading();
     await act(async () => {});
-    expect(() => act(() => frame(0))).not.toThrow();
+    await expect(act(() => frame(0))).resolves.toBeUndefined();
     expect(screen.getByRole('button', { name: 'Next' })).toBeOnTheScreen();
   });
 });

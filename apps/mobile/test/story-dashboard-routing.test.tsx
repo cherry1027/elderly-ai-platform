@@ -52,7 +52,7 @@ beforeEach(async () => {
 });
 it.each(['signed-out', 'checking', 'blocked', 'busy'] as const)('does not create a dashboard or issue requests for %s authentication', async status => {
   snapshot = { status, user: null, error: null };
-  renderRouter(routes, { initialUrl: '/authenticated' });
+  await renderRouter(routes, { initialUrl: '/authenticated' });
   await waitFor(() => expect(auth.restore).toHaveBeenCalled());
   expect(listStoryProjects).not.toHaveBeenCalled(); expect(auth.getAccessToken).not.toHaveBeenCalled();
   expect(screen.queryByRole('header', { name: storiesCopy.en.title })).toBeNull();
@@ -60,14 +60,14 @@ it.each(['signed-out', 'checking', 'blocked', 'busy'] as const)('does not create
 it('reaches the dashboard only after verified login and passes the current account to the token service', async () => {
   snapshot = { status: 'signed-out', user: null, error: null };
   await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language: 'en', completed: true }));
-  renderRouter(routes, { initialUrl: '/' });
+  await renderRouter(routes, { initialUrl: '/' });
   await screen.findByRole('header', { name: copy.en.welcomeTitle });
   expect(listStoryProjects).not.toHaveBeenCalled();
-  fireEvent.press(screen.getByRole('button', { name: 'Log In' }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Log In' }));
   await screen.findByLabelText(authCopy.en.email);
-  fireEvent.changeText(screen.getByLabelText(authCopy.en.email), 'account-a@example.test');
-  fireEvent.changeText(screen.getByLabelText(authCopy.en.password), 'synthetic-password');
-  fireEvent.press(screen.getByRole('button', { name: authCopy.en.signIn }));
+  await fireEvent.changeText(screen.getByLabelText(authCopy.en.email), 'account-a@example.test');
+  await fireEvent.changeText(screen.getByLabelText(authCopy.en.password), 'synthetic-password');
+  await fireEvent.press(screen.getByRole('button', { name: authCopy.en.signIn }));
   await openMyStories();
   await screen.findByRole('header', { name: storiesCopy.en.title });
   await waitFor(() => expect(listStoryProjects).toHaveBeenCalledTimes(1));
@@ -77,10 +77,10 @@ it('reaches the dashboard only after verified login and passes the current accou
 it('aborts a pending request and ignores its late success after Sign Out', async () => {
   let finish!: (rows: StoryProject[]) => void;
   jest.mocked(listStoryProjects).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-  renderRouter(routes, { initialUrl: '/' }); await openMyStories(); await screen.findByRole('header', { name: storiesCopy.en.title });
+  await renderRouter(routes, { initialUrl: '/' }); await openMyStories(); await screen.findByRole('header', { name: storiesCopy.en.title });
   const signal = jest.mocked(listStoryProjects).mock.calls[0][0].signal!;
   await openSettings();
-  fireEvent.press(screen.getByRole('button', { name: authCopy.en.signOut }));
+  await fireEvent.press(screen.getByRole('button', { name: authCopy.en.signOut }));
   await screen.findByRole('header', { name: copy.en.welcomeTitle });
   expect(signal.aborted).toBe(true);
   await act(async () => { finish([project('Private old story')]); });
@@ -88,13 +88,13 @@ it('aborts a pending request and ignores its late success after Sign Out', async
 });
 it('never carries completed rows or late work into another verified account', async () => {
   jest.mocked(listStoryProjects).mockResolvedValueOnce([project('Account A story')]);
-  renderRouter(routes, { initialUrl: '/' }); await openMyStories(); await screen.findByText('Account A story');
+  await renderRouter(routes, { initialUrl: '/' }); await openMyStories(); await screen.findByText('Account A story');
   let finish!: (rows: StoryProject[]) => void;
   jest.mocked(listStoryProjects).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-  fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.refresh }));
+  await fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.refresh }));
   const signal = jest.mocked(listStoryProjects).mock.calls[1][0].signal!;
   jest.mocked(listStoryProjects).mockResolvedValueOnce([project('Account B story')]);
-  act(() => publish(account('account-b')));
+  await act(() => publish(account('account-b')));
   await openMyStories(); await screen.findByText('Account B story'); expect(signal.aborted).toBe(true);
   await act(async () => { finish([project('Late account A story')]); });
   expect(screen.queryByText('Late account A story')).toBeNull(); expect(screen.queryByText('Account A story')).toBeNull();
@@ -103,32 +103,32 @@ it('never carries completed rows or late work into another verified account', as
 });
 it('hides projects and cancels loading while account verification is pending again', async () => {
   jest.mocked(listStoryProjects).mockResolvedValueOnce([project('Private story')]);
-  renderRouter(routes, { initialUrl: '/' }); await openMyStories(); await screen.findByText('Private story');
+  await renderRouter(routes, { initialUrl: '/' }); await openMyStories(); await screen.findByText('Private story');
   const signal = jest.mocked(listStoryProjects).mock.calls[0][0].signal!;
-  act(() => publish({ status: 'checking', user: null, error: null }));
+  await act(() => publish({ status: 'checking', user: null, error: null }));
   expect(screen.queryByText('Private story')).toBeNull(); expect(signal.aborted).toBe(true);
 });
 it('preserves secure sign-out cleanup failure handling without retaining private rows', async () => {
   jest.mocked(listStoryProjects).mockResolvedValueOnce([project('Private story')]);
-  renderRouter(routes, { initialUrl: '/' }); await openMyStories(); await screen.findByText('Private story');
+  await renderRouter(routes, { initialUrl: '/' }); await openMyStories(); await screen.findByText('Private story');
   jest.mocked(auth.signOut).mockImplementationOnce(async () => {
     publish({ status: 'blocked', user: null, error: 'cleanup' }); throw new AuthError('cleanup');
   });
   await openSettings();
-  fireEvent.press(screen.getByRole('button', { name: authCopy.en.signOut }));
+  await fireEvent.press(screen.getByRole('button', { name: authCopy.en.signOut }));
   await screen.findByText(authCopy.en.errors.cleanup);
   expect(screen.queryByText('Private story')).toBeNull(); expect(screen.queryByText('account-a@example.test')).toBeNull();
 });
 it('clears prior rows on a rejected refresh and requires normal sign-in after a 401', async () => {
   jest.mocked(listStoryProjects).mockResolvedValueOnce([project('Private story')]);
-  renderRouter(routes, { initialUrl: '/' }); await openMyStories(); await screen.findByText('Private story');
+  await renderRouter(routes, { initialUrl: '/' }); await openMyStories(); await screen.findByText('Private story');
   jest.mocked(listStoryProjects).mockRejectedValueOnce(new StoryProjectsError('authentication', 401));
-  fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.refresh }));
+  await fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.refresh }));
   await screen.findByText(storiesCopy.en.errors.authentication);
   expect(screen.queryByText('Private story')).toBeNull();
   expect(screen.getByRole('button', { name: storiesCopy.en.refresh })).toBeDisabled();
   await openSettings();
-  fireEvent.press(screen.getByRole('button', { name: authCopy.en.signOut }));
+  await fireEvent.press(screen.getByRole('button', { name: authCopy.en.signOut }));
   await screen.findByRole('header', { name: copy.en.welcomeTitle });
   expect(globalThis.fetch).not.toHaveBeenCalled();
 });

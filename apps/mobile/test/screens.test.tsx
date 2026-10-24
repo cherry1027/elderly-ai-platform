@@ -1,5 +1,7 @@
+import { getComponent } from './component-probe';
+import { nativeNodes, nativeNode } from './native-tree';
 import { fireEvent, render, screen } from '@testing-library/react-native';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LargeButton } from '../src/components/LargeButton';
 import { accessibilityLanguages, copy, type Language } from '../src/i18n';
@@ -9,8 +11,8 @@ import { colors, layout } from '../src/theme';
 import { introCopy } from '../src/intro-copy';
 
 describe('language selection', () => {
-  it('shows readable language self-names with an explicitly checked English default', () => {
-    render(<LanguageScreen language="en" onSelectLanguage={jest.fn()} onContinue={jest.fn()} />);
+  it('shows readable language self-names with an explicitly checked English default', async () => {
+    await render(<LanguageScreen language="en" onSelectLanguage={jest.fn()} onContinue={jest.fn()} />);
 
     expect(screen.getByRole('radio', { name: 'English' }).props.accessibilityState).toEqual({ checked: true });
     expect(screen.getByRole('radio', { name: 'Svenska' }).props.accessibilityState).toEqual({ checked: false });
@@ -19,19 +21,19 @@ describe('language selection', () => {
     expect(screen.getByText('Memy')).toBeOnTheScreen();
   });
 
-  it('requests the selected language and updates checked states when the parent supplies it', () => {
+  it('requests the selected language and updates checked states when the parent supplies it', async () => {
     const onSelectLanguage = jest.fn();
     const onContinue = jest.fn();
-    const view = render(
+    const view = await render(
       <LanguageScreen language="en" onSelectLanguage={onSelectLanguage} onContinue={onContinue} />,
     );
 
-    fireEvent.press(screen.getByRole('radio', { name: 'Svenska' }));
+    await fireEvent.press(screen.getByRole('radio', { name: 'Svenska' }));
     expect(onSelectLanguage).toHaveBeenCalledTimes(1);
     expect(onSelectLanguage).toHaveBeenCalledWith('sv');
     expect(onContinue).not.toHaveBeenCalled();
 
-    view.rerender(
+    await view.rerender(
       <LanguageScreen language="sv" onSelectLanguage={onSelectLanguage} onContinue={onContinue} />,
     );
     expect(screen.getByRole('radio', { name: 'Svenska' }).props.accessibilityState).toEqual({ checked: true });
@@ -39,55 +41,55 @@ describe('language selection', () => {
     expect(screen.getByText('Valt')).toBeOnTheScreen();
     expect(screen.getByRole('header', { name: 'Välj ditt språk' })).toBeOnTheScreen();
 
-    fireEvent.press(screen.getByRole('radio', { name: 'English' }));
+    await fireEvent.press(screen.getByRole('radio', { name: 'English' }));
     expect(onSelectLanguage).toHaveBeenLastCalledWith('en');
   });
 
-  it.each<Language>(['en', 'sv'])('offers one working primary Continue action in %s', (language) => {
+  it.each<Language>(['en', 'sv'])('offers one working primary Continue action in %s', async (language) => {
     const onContinue = jest.fn();
-    render(<LanguageScreen language={language} onSelectLanguage={jest.fn()} onContinue={onContinue} />);
+    await render(<LanguageScreen language={language} onSelectLanguage={jest.fn()} onContinue={onContinue} />);
 
     const next = screen.getByRole('button', { name: copy[language].continue });
     expect(screen.getAllByRole('button')).toHaveLength(1);
     expect(next.props.accessibilityLanguage).toBe(accessibilityLanguages[language]);
-    fireEvent.press(next);
+    await fireEvent.press(next);
     expect(onContinue).toHaveBeenCalledTimes(1);
   });
 
-  it('announces each language choice using its own pronunciation locale', () => {
-    render(<LanguageScreen language="sv" onSelectLanguage={jest.fn()} onContinue={jest.fn()} />);
+  it('announces each language choice using its own pronunciation locale', async () => {
+    await render(<LanguageScreen language="sv" onSelectLanguage={jest.fn()} onContinue={jest.fn()} />);
 
     expect(screen.getByRole('radio', { name: 'Svenska' }).props.accessibilityLanguage).toBe('sv-SE');
     expect(screen.getByRole('radio', { name: 'English' }).props.accessibilityLanguage).toBe('en-GB');
   });
 
-  it('provides a visible focus treatment without changing the selected language', () => {
-    render(<LanguageScreen language="en" onSelectLanguage={jest.fn()} onContinue={jest.fn()} />);
+  it('provides a visible focus treatment without changing the selected language', async () => {
+    await render(<LanguageScreen language="en" onSelectLanguage={jest.fn()} onContinue={jest.fn()} />);
 
     const swedish = screen.getByRole('radio', { name: 'Svenska' });
-    fireEvent(swedish, 'focus');
+    await fireEvent(swedish, 'focus');
     expect(swedish).toHaveStyle({ borderColor: colors.ink });
     expect(swedish.props.accessibilityState).toEqual({ checked: false });
-    fireEvent(swedish, 'blur');
+    await fireEvent(swedish, 'blur');
     expect(swedish).toHaveStyle({ borderColor: colors.border });
   });
 
-  it.each<Language>(['en', 'sv'])('offers an optional returning Back action without presenting it as cancelling selected preferences in %s', language => {
+  it.each<Language>(['en', 'sv'])('offers an optional returning Back action without presenting it as cancelling selected preferences in %s', async language => {
     const onBack = jest.fn(), onSelectLanguage = jest.fn(), onContinue = jest.fn();
-    render(<LanguageScreen language={language} onSelectLanguage={onSelectLanguage} onContinue={onContinue} onBack={onBack} />);
+    await render(<LanguageScreen language={language} onSelectLanguage={onSelectLanguage} onContinue={onContinue} onBack={onBack} />);
     const back = screen.getByRole('button', { name: introCopy[language].back });
     expect(back).toHaveStyle({ minHeight: 56 });
     expect(back.props.accessibilityLanguage).toBe(accessibilityLanguages[language]);
     expect(screen.queryByRole('button', { name: /cancel|avbryt/i })).toBeNull();
-    fireEvent.press(back);
+    await fireEvent.press(back);
     expect(onBack).toHaveBeenCalledTimes(1); expect(onContinue).not.toHaveBeenCalled(); expect(onSelectLanguage).not.toHaveBeenCalled();
   });
 });
 
 describe('Welcome', () => {
-  it.each<Language>(['en', 'sv'])('renders the approved %s wording and working language-change action', (language) => {
+  it.each<Language>(['en', 'sv'])('renders the approved %s wording and working language-change action', async (language) => {
     const onChangeLanguage = jest.fn();
-    render(<WelcomeScreen language={language} onChangeLanguage={onChangeLanguage} />);
+    await render(<WelcomeScreen language={language} onChangeLanguage={onChangeLanguage} />);
 
     const heading = screen.getByRole('header', { name: copy[language].welcomeTitle });
     expect(heading.props.accessibilityLanguage).toBe(accessibilityLanguages[language]);
@@ -98,12 +100,12 @@ describe('Welcome', () => {
 
     const buttons = screen.getAllByRole('button');
     expect(buttons.filter((button) => !button.props.accessibilityState?.disabled)).toHaveLength(1);
-    fireEvent.press(screen.getByRole('button', { name: copy[language].changeLanguage }));
+    await fireEvent.press(screen.getByRole('button', { name: copy[language].changeLanguage }));
     expect(onChangeLanguage).toHaveBeenCalledTimes(1);
   });
 
-  it('does not enable unavailable authentication, guest or story-creation actions', () => {
-    render(<WelcomeScreen language="en" onChangeLanguage={jest.fn()} />);
+  it('does not enable unavailable authentication, guest or story-creation actions', async () => {
+    await render(<WelcomeScreen language="en" onChangeLanguage={jest.fn()} />);
 
     for (const name of ['Log In', 'Create Account', 'Continue as Guest']) {
       expect(screen.queryByRole('button', { name })).toBeNull();
@@ -112,9 +114,9 @@ describe('Welcome', () => {
     expect(screen.getAllByRole('button').filter((button) => !button.props.accessibilityState?.disabled)).toHaveLength(1);
   });
 
-  it.each<Language>(['en', 'sv'])('offers only an explicitly supplied primary action with honest account unavailability in %s', language => {
+  it.each<Language>(['en', 'sv'])('offers only an explicitly supplied primary action with honest account unavailability in %s', async language => {
     const onPress = jest.fn(), label = language === 'sv' ? 'Öppna exempelberättelser' : 'Open sample stories';
-    render(<WelcomeScreen language={language} onChangeLanguage={jest.fn()} primaryAction={{ label, onPress }} />);
+    await render(<WelcomeScreen language={language} onChangeLanguage={jest.fn()} primaryAction={{ label, onPress }} />);
     const primary = screen.getByRole('button', { name: label });
     expect(primary).toHaveStyle({ minHeight: 56 }); expect(primary.props.accessibilityLanguage).toBe(accessibilityLanguages[language]);
     expect(onPress).not.toHaveBeenCalled();
@@ -124,7 +126,7 @@ describe('Welcome', () => {
     for (const name of [introCopy[language].login, introCopy[language].register, introCopy[language].guest]) {
       expect(screen.queryByRole('button', { name })).toBeNull();
     }
-    fireEvent.press(primary); expect(onPress).toHaveBeenCalledTimes(1); expect(globalThis.fetch).not.toHaveBeenCalled();
+    await fireEvent.press(primary); expect(onPress).toHaveBeenCalledTimes(1); expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 });
 
@@ -136,12 +138,12 @@ describe('readability and flexible native layout', () => {
     { name: 'Swedish Welcome', language: 'sv', welcome: true },
   ] as const;
 
-  it.each(cases)('$name keeps all text scalable without truncation or shrink-to-fit', ({ language, welcome }) => {
-    render(welcome
+  it.each(cases)('$name keeps all text scalable without truncation or shrink-to-fit', async ({ language, welcome }) => {
+    await render(welcome
       ? <WelcomeScreen language={language} onChangeLanguage={jest.fn()} />
       : <LanguageScreen language={language} onSelectLanguage={jest.fn()} onContinue={jest.fn()} />);
 
-    for (const text of screen.UNSAFE_getAllByType(Text)) {
+    for (const text of nativeNodes('text')) {
       expect(text.props.allowFontScaling).toBe(true);
       expect(text.props.maxFontSizeMultiplier).toBeUndefined();
       expect(text.props.adjustsFontSizeToFit).not.toBe(true);
@@ -152,8 +154,8 @@ describe('readability and flexible native layout', () => {
     }
   });
 
-  it.each(cases)('$name provides large targets, four safe edges and vertical scrolling', ({ language, welcome }) => {
-    render(welcome
+  it.each(cases)('$name provides large targets, four safe edges and vertical scrolling', async ({ language, welcome }) => {
+    await render(welcome
       ? <WelcomeScreen language={language} onChangeLanguage={jest.fn()} />
       : <LanguageScreen language={language} onSelectLanguage={jest.fn()} onContinue={jest.fn()} />);
 
@@ -164,16 +166,16 @@ describe('readability and flexible native layout', () => {
       expect(style.maxHeight).toBeUndefined();
     }
     expect(layout.minimumTouchTarget).toBeGreaterThanOrEqual(56);
-    expect(screen.UNSAFE_getByType(SafeAreaView).props.edges).toEqual(['top', 'bottom', 'left', 'right']);
-    const scrollView = screen.UNSAFE_getByType(ScrollView);
+    expect(getComponent(SafeAreaView).props.edges).toEqual(['top', 'bottom', 'left', 'right']);
+    const scrollView = nativeNode('scroll');
     expect(scrollView.props.scrollEnabled).not.toBe(false);
     expect(StyleSheet.flatten(scrollView.props.contentContainerStyle)).toMatchObject({ flexGrow: 1 });
   });
 
-  it('uses percentage width and a readable maximum instead of assuming phone dimensions', () => {
-    render(<WelcomeScreen language="sv" onChangeLanguage={jest.fn()} />);
+  it('uses percentage width and a readable maximum instead of assuming phone dimensions', async () => {
+    await render(<WelcomeScreen language="sv" onChangeLanguage={jest.fn()} />);
 
-    const content = screen.UNSAFE_getAllByType(View).find((node) => {
+    const content = nativeNodes('view').find((node) => {
       const style = StyleSheet.flatten(node.props.style);
       return style?.maxWidth === layout.contentWidth && style?.flexGrow === 1;
     });
@@ -183,17 +185,17 @@ describe('readability and flexible native layout', () => {
     // remain on the Android device verification checklist.
   });
 
-  it.each(['primary', 'secondary'] as const)('%s buttons retain readable labels and visible keyboard focus', (variant) => {
+  it.each(['primary', 'secondary'] as const)('%s buttons retain readable labels and visible keyboard focus', async (variant) => {
     const onPress = jest.fn();
-    render(<LargeButton label="Change language" language="en" onPress={onPress} variant={variant} />);
+    await render(<LargeButton label="Change language" language="en" onPress={onPress} variant={variant} />);
     const button = screen.getByRole('button', { name: 'Change language' });
 
     expect(button).toHaveStyle({ minHeight: 56 });
-    fireEvent(button, 'focus');
+    await fireEvent(button, 'focus');
     expect(button).toHaveStyle({ borderColor: colors.ink });
-    fireEvent(button, 'blur');
+    await fireEvent(button, 'blur');
     expect(button).toHaveStyle({ borderColor: colors.forest });
-    fireEvent.press(button);
+    await fireEvent.press(button);
     expect(onPress).toHaveBeenCalledTimes(1);
   });
 });

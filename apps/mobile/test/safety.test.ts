@@ -94,7 +94,7 @@ describe('development-only mobile application boundaries', () => {
   });
 
   it('uses Router and foreground-only audio configuration', () => {
-    expect(config.plugins).toEqual(['expo-router', ['expo-audio', expect.objectContaining({
+    expect(config.plugins).toEqual(['expo-router', 'expo-asset', ['expo-audio', expect.objectContaining({
       recordAudioAndroid: true, enableBackgroundRecording: false, enableBackgroundPlayback: false,
       microphonePermission: expect.any(String),
     })]]);

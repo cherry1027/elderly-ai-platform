@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ComponentRef } from 'react';
 import { AccessibilityInfo, StyleSheet, Text, View } from 'react-native';
 import { AnimatedMemoryBook } from '../components/AnimatedMemoryBook';
 import { MemyBrand } from '../components/BrandArtwork';
@@ -25,7 +25,7 @@ export function IntroductionScreen({
   const current = text.scenes[scene];
   const locale = accessibilityLanguages[language];
   const reducedMotion = useReducedMotion();
-  const heading = useRef<Text>(null);
+  const heading = useRef<ComponentRef<typeof Text>>(null);
   const headingLaidOut = useRef(false);
   const requestHeadingFocus = useRef<(() => void) | undefined>(undefined);
 

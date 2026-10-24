@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useLayoutEffect } from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { AppState, Pressable, Text, type AppStateStatus } from 'react-native';
 import { AuthProvider, useAuth } from '../src/auth/AuthProvider';
@@ -53,70 +53,74 @@ afterEach(() => jest.restoreAllMocks());
 describe('native auth provider with mocked services', () => {
   it('waits for verified restoration before exposing any account', async () => {
     jest.mocked(current.auth.restore).mockImplementation(() => new Promise(() => {}));
-    render(<AuthProvider><Probe /></AuthProvider>);
+    await render(<AuthProvider><Probe /></AuthProvider>);
     expect(screen.getByText('checking')).toBeOnTheScreen();
     expect(screen.getByText('no account')).toBeOnTheScreen();
     await act(async () => { await Promise.resolve(); });
     expect(current.auth.restore).toHaveBeenCalledTimes(1);
-    act(() => current.publish({ status: 'signed-in', user: userA, error: null }));
+    await act(() => current.publish({ status: 'signed-in', user: userA, error: null }));
     expect(screen.getByText(userA.email)).toBeOnTheScreen();
   });
   it('does not create an SDK client for missing or unapproved development configuration', async () => {
     jest.mocked(readMobileAuthConfig).mockImplementation(() => { throw new AuthError('configuration'); });
-    render(<AuthProvider><Probe /></AuthProvider>);
+    await render(<AuthProvider><Probe /></AuthProvider>);
     await screen.findByText('configuration');
     expect(createMobileAuth).not.toHaveBeenCalled();
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
   it('forwards login and reflects sign-out without retaining the old account', async () => {
-    render(<AuthProvider><Probe /></AuthProvider>);
+    await render(<AuthProvider><Probe /></AuthProvider>);
     await screen.findByText('signed-out');
-    fireEvent.press(screen.getByRole('button', { name: 'Log in' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Log in' }));
     await screen.findByText(userA.email);
-    fireEvent.press(screen.getByRole('button', { name: 'Log out' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Log out' }));
     await screen.findByText('no account');
     expect(screen.queryByText(userA.email)).toBeNull();
   });
   it('hides account details in background and keeps them hidden during foreground revalidation', async () => {
-    render(<AuthProvider><Probe /></AuthProvider>);
+    await render(<AuthProvider><Probe /></AuthProvider>);
     await screen.findByText('signed-out');
-    act(() => current.publish({ status: 'signed-in', user: userA, error: null }));
-    act(() => stateChanged('background'));
+    await act(() => current.publish({ status: 'signed-in', user: userA, error: null }));
+    await act(() => stateChanged('background'));
     expect(screen.queryByText(userA.email)).toBeNull();
     expect(screen.getByText('private background')).toBeOnTheScreen();
     expect(current.auth.setForeground).toHaveBeenLastCalledWith(false);
-    act(() => stateChanged('active'));
+    await act(() => stateChanged('active'));
     expect(screen.getByText('checking')).toBeOnTheScreen();
     expect(screen.queryByText(userA.email)).toBeNull();
     expect(current.auth.setForeground).toHaveBeenLastCalledWith(true);
   });
   it('cleans up subscriptions, native events and refresh service on unmount', async () => {
-    const view = render(<AuthProvider><Probe /></AuthProvider>);
-    await screen.findByText('signed-out'); view.unmount();
+    const view = await render(<AuthProvider><Probe /></AuthProvider>);
+    await screen.findByText('signed-out'); await view.unmount();
     expect(current.unsubscribe).toHaveBeenCalledTimes(1);
     expect(current.auth.dispose).toHaveBeenCalledTimes(1);
     expect(remove).toHaveBeenCalledTimes(1);
   });
   it('provides a stable token callback without retaining tokens in provider state', async () => {
     let read!: MobileAuth['getAccessToken'];
+    let beforeInitialization!: Promise<string | null>;
     function TokenProbe() {
       const auth = useAuth();
-      useEffect(() => { read = auth.getAccessToken; }, [auth.getAccessToken]);
+      const readToken = auth.getAccessToken;
+      // Async rendering flushes passive initialization before returning. Capture
+      // this pre-initialization call at the actual earlier layout boundary.
+      useLayoutEffect(() => { beforeInitialization = readToken(userA.id); }, [readToken]);
+      useEffect(() => { read = readToken; }, [readToken]);
       return <Text>{auth.status}</Text>;
     }
-    const view = render(<AuthProvider><TokenProbe /></AuthProvider>);
+    const view = await render(<AuthProvider><TokenProbe /></AuthProvider>);
     const first = read;
-    const beforeInitialization = read(userA.id);
     expect(current.auth.getAccessToken).not.toHaveBeenCalled();
     await act(async () => { await expect(beforeInitialization).resolves.toBeNull(); });
     await screen.findByText('signed-out');
-    act(() => current.publish({ status: 'signed-in', user: userA, error: null }));
+    await act(() => current.publish({ status: 'signed-in', user: userA, error: null }));
     jest.mocked(current.auth.getAccessToken).mockResolvedValueOnce('synthetic-access-token');
     await expect(read(userA.id)).resolves.toBe('synthetic-access-token');
     expect(current.auth.getAccessToken).toHaveBeenCalledWith(userA.id);
     expect(read).toBe(first);
     expect(screen.queryByText('synthetic-access-token')).toBeNull();
-    view.unmount();
+    await view.unmount();
     await expect(read(userA.id)).resolves.toBeNull();
     expect(current.auth.getAccessToken).toHaveBeenCalledTimes(1);
   });
@@ -128,7 +132,7 @@ describe('native auth provider with mocked services', () => {
       return null;
     }
     jest.mocked(readMobileAuthConfig).mockImplementation(() => { throw new AuthError('configuration'); });
-    render(<AuthProvider><TokenProbe /><Probe /></AuthProvider>);
+    await render(<AuthProvider><TokenProbe /><Probe /></AuthProvider>);
     await screen.findByText('configuration');
     await expect(read(userA.id)).resolves.toBeNull();
     expect(createMobileAuth).not.toHaveBeenCalled();

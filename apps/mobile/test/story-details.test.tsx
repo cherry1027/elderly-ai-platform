@@ -1,11 +1,26 @@
+import { getComponent, maybeComponent } from './component-probe';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { BackHandler } from 'react-native';
+import { leaveCopy } from '../src/navigation/useGuardedLeave';
 import { StoryDetails } from '../src/stories/StoryDetails';
 import { EditStoryScreen } from '../src/screens/EditStoryScreen';
 import { StoryDetailsScreen } from '../src/screens/StoryDetailsScreen';
 import { readMobileApiConfig } from '../src/api/config';
 import { getStoryProject, updateStoryProject, StoryProjectsError, type StoryProject } from '../src/api/story-projects';
 import { storyDetailsCopy } from '../src/story-details-copy';
+
+
+jest.mock('../src/screens/EditStoryScreen', () => {
+  const actual = jest.requireActual<typeof import('../src/screens/EditStoryScreen')>('../src/screens/EditStoryScreen');
+  const { observeComponent } = jest.requireActual<typeof import('./component-probe')>('./component-probe');
+  return { ...actual, EditStoryScreen: observeComponent(actual.EditStoryScreen) };
+});
+
+jest.mock('../src/screens/StoryDetailsScreen', () => {
+  const actual = jest.requireActual<typeof import('../src/screens/StoryDetailsScreen')>('../src/screens/StoryDetailsScreen');
+  const { observeComponent } = jest.requireActual<typeof import('./component-probe')>('./component-probe');
+  return { ...actual, StoryDetailsScreen: observeComponent(actual.StoryDetailsScreen) };
+});
 
 jest.mock('../src/api/config', () => ({ readMobileApiConfig: jest.fn() }));
 jest.mock('../src/api/story-projects', () => ({ ...jest.requireActual('../src/api/story-projects'),
@@ -19,17 +34,18 @@ const text = storyDetailsCopy.en;
 const project = (overrides: Partial<StoryProject> = {}): StoryProject => ({ id, title: 'Fresh server title',
   description: 'Fresh description', language: 'sv', status: 'draft',
   created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', ...overrides });
-const open = (props: Partial<React.ComponentProps<typeof StoryDetails>> = {}) => render(<StoryDetails
+const open = async (props: Partial<React.ComponentProps<typeof StoryDetails>> = {}) => await render(<StoryDetails
   language="en" user={user} projectId={id} getAccessToken={token} onBack={onBack} onSignOut={onSignOut} {...props} />);
 async function edit() {
   await screen.findByText('Fresh server title');
-  fireEvent.press(screen.getByRole('button', { name: text.edit }));
+  await fireEvent.press(screen.getByRole('button', { name: text.more }));
+  await fireEvent.press(screen.getByRole('button', { name: text.edit }));
   expect(screen.getByRole('header', { name: text.editTitle })).toBeOnTheScreen();
 }
-function save(title = '  Corrected title  ', description = 'Private draft\nSecond line') {
-  fireEvent.changeText(screen.getByLabelText(text.titleLabel), title);
-  fireEvent.changeText(screen.getByLabelText(text.descriptionLabel), description);
-  fireEvent.press(screen.getByRole('button', { name: text.save }));
+async function save(title = '  Corrected title  ', description = 'Private draft\nSecond line') {
+  await fireEvent.changeText(screen.getByLabelText(text.titleLabel), title);
+  await fireEvent.changeText(screen.getByLabelText(text.descriptionLabel), description);
+  await fireEvent.press(screen.getByRole('button', { name: text.save }));
 }
 beforeEach(() => {
   jest.mocked(readMobileApiConfig).mockReturnValue({ baseUrl: 'http://192.168.20.30:8000' });
@@ -38,7 +54,7 @@ beforeEach(() => {
 });
 
 it('loads the selected UUID afresh with the expected verified owner and never edits merely by opening', async () => {
-  open(); await screen.findByText('Fresh server title');
+  await open(); await screen.findByText('Fresh server title');
   expect(getStoryProject).toHaveBeenCalledTimes(1);
   const call = jest.mocked(getStoryProject).mock.calls[0][0];
   expect(call.projectId).toBe(id);
@@ -48,46 +64,46 @@ it('loads the selected UUID afresh with the expected verified owner and never ed
 });
 
 it.each(['', '../other', `${id}?owner=other`, 'not-a-uuid'])('rejects an invalid selection before token or network operations (%#)', async projectId => {
-  open({ projectId });
+  await open({ projectId });
   expect(screen.getByRole('alert')).toHaveTextContent(text.errors.validation);
   expect(getStoryProject).not.toHaveBeenCalled(); expect(updateStoryProject).not.toHaveBeenCalled();
   expect(token).not.toHaveBeenCalled(); expect(globalThis.fetch).not.toHaveBeenCalled();
 });
 
 it('cannot load, edit, save or fabricate a project when configuration is absent', async () => {
-  jest.mocked(readMobileApiConfig).mockReturnValue(null); open();
+  jest.mocked(readMobileApiConfig).mockReturnValue(null); await open();
   expect(screen.getByRole('alert')).toHaveTextContent(text.errors.configuration);
   expect(screen.queryByRole('button', { name: text.edit })).toBeNull();
-  fireEvent.press(screen.getByRole('button', { name: text.refresh }));
+  await fireEvent.press(screen.getByRole('button', { name: text.refresh }));
   expect(getStoryProject).not.toHaveBeenCalled(); expect(updateStoryProject).not.toHaveBeenCalled();
   expect(token).not.toHaveBeenCalled(); expect(screen.queryByText(text.saved)).toBeNull();
 });
 
 it.each(['forbidden', 'not-found', 'network', 'timeout', 'invalid-response'] as const)('reports a safe %s GET failure and permits an explicit fresh read', async kind => {
   jest.mocked(getStoryProject).mockRejectedValueOnce(new StoryProjectsError(kind));
-  open(); await screen.findByText(text.errors[kind]);
+  await open(); await screen.findByText(text.errors[kind]);
   expect(screen.queryByRole('button', { name: text.edit })).toBeNull();
-  fireEvent.press(screen.getByRole('button', { name: text.refresh }));
+  await fireEvent.press(screen.getByRole('button', { name: text.refresh }));
   await screen.findByText('Fresh server title'); expect(getStoryProject).toHaveBeenCalledTimes(2);
   expect(updateStoryProject).not.toHaveBeenCalled();
 });
 
 it('keeps a rejected authenticated GET closed until normal sign-out', async () => {
   jest.mocked(getStoryProject).mockRejectedValueOnce(new StoryProjectsError('authentication', 401));
-  open(); await screen.findByText(text.errors.authentication);
+  await open(); await screen.findByText(text.errors.authentication);
   expect(screen.queryByRole('button', { name: text.refresh })).toBeNull();
   expect(screen.queryByRole('button', { name: text.edit })).toBeNull();
-  fireEvent.press(screen.getByRole('button', { name: text.signOut }));
+  await fireEvent.press(screen.getByRole('button', { name: text.signOut }));
   expect(onSignOut).toHaveBeenCalledTimes(1); expect(getStoryProject).toHaveBeenCalledTimes(1);
 });
 
 it('preserves current language and shows a saved result only after the PATCH confirms it', async () => {
   let finish!: (value: StoryProject) => void;
   jest.mocked(updateStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-  open(); await edit(); save();
+  await open(); await edit(); await save();
   await waitFor(() => expect(updateStoryProject).toHaveBeenCalledTimes(1));
   expect(screen.queryByText(text.saved)).toBeNull();
-  fireEvent.press(screen.getByRole('button', { name: text.saving }));
+  await fireEvent.press(screen.getByRole('button', { name: text.saving }));
   expect(updateStoryProject).toHaveBeenCalledTimes(1);
   const call = jest.mocked(updateStoryProject).mock.calls[0][0];
   expect(call.projectId).toBe(id); expect(call.expectedLanguage).toBe('sv');
@@ -101,22 +117,22 @@ it('preserves current language and shows a saved result only after the PATCH con
 });
 
 it('turns an empty description into explicit null without changing the story language', async () => {
-  open(); await edit(); save('Corrected title', '');
+  await open(); await edit(); await save('Corrected title', '');
   await waitFor(() => expect(updateStoryProject).toHaveBeenCalledTimes(1));
   expect(jest.mocked(updateStoryProject).mock.calls[0][0].input).toEqual({ title: 'Corrected title', description: null });
 });
 
 it('validates again at the controller boundary before the PATCH transport', async () => {
-  open(); await edit();
-  const submit = screen.UNSAFE_getByType(EditStoryScreen).props.onSubmit;
-  act(() => submit({ title: '\u200b', description: null }));
+  await open(); await edit();
+  const submit = getComponent(EditStoryScreen).props.onSubmit;
+  await act(() => submit({ title: '\u200b', description: null }));
   expect(updateStoryProject).not.toHaveBeenCalled(); expect(token).not.toHaveBeenCalled();
   expect(screen.queryByText(text.saved)).toBeNull();
 });
 
 it.each(['forbidden', 'validation', 'conflict'] as const)('preserves drafts after a definitive %s PATCH rejection', async kind => {
   jest.mocked(updateStoryProject).mockRejectedValueOnce(new StoryProjectsError(kind));
-  open(); await edit(); save(); await screen.findByText(text.errors[kind]);
+  await open(); await edit(); await save(); await screen.findByText(text.errors[kind]);
   expect(screen.getByLabelText(text.titleLabel).props.value).toBe('  Corrected title  ');
   expect(screen.getByLabelText(text.descriptionLabel).props.value).toBe('Private draft\nSecond line');
   expect(screen.getByRole('button', { name: text.save })).toBeEnabled();
@@ -125,32 +141,35 @@ it.each(['forbidden', 'validation', 'conflict'] as const)('preserves drafts afte
 
 it.each(['network', 'timeout', 'unavailable', 'invalid-response'] as const)('blocks blind retry after an uncertain %s PATCH and reconciles through a fresh GET', async kind => {
   jest.mocked(updateStoryProject).mockRejectedValueOnce(new StoryProjectsError(kind, undefined, true));
-  open(); await edit(); save(); await screen.findByText(text.uncertain);
+  await open(); await edit(); await save(); await screen.findByText(text.uncertain);
   const saveButton = screen.getByRole('button', { name: text.save });
-  expect(saveButton).toBeDisabled(); fireEvent.press(saveButton);
+  expect(saveButton).toBeDisabled(); await fireEvent.press(saveButton);
   expect(updateStoryProject).toHaveBeenCalledTimes(1);
-  fireEvent.press(screen.getByRole('button', { name: text.cancel }));
+  await fireEvent.press(screen.getByRole('button', { name: text.cancel }));
+  expect(getStoryProject).toHaveBeenCalledTimes(1);
+  await fireEvent.press(screen.getByRole('button', { name: leaveCopy.en.check }));
   await screen.findByText('Fresh server title'); expect(getStoryProject).toHaveBeenCalledTimes(2);
   expect(screen.queryByText(text.saved)).toBeNull(); expect(updateStoryProject).toHaveBeenCalledTimes(1);
 });
 
 it('locks a rejected PATCH session and does not silently GET or PATCH with it again', async () => {
   jest.mocked(updateStoryProject).mockRejectedValueOnce(new StoryProjectsError('authentication', 401));
-  open(); await edit(); save(); await screen.findByText(text.errors.authentication);
+  await open(); await edit(); await save(); await screen.findByText(text.errors.authentication);
   expect(screen.getByRole('button', { name: text.save })).toBeDisabled();
-  fireEvent.press(screen.getByRole('button', { name: text.cancel }));
+  await fireEvent.press(screen.getByRole('button', { name: text.cancel }));
+  await fireEvent.press(screen.getByRole('button', { name: leaveCopy.en.discard }));
   expect(screen.queryByLabelText(text.titleLabel)).toBeNull();
   expect(screen.queryByRole('button', { name: text.refresh })).toBeNull();
   expect(getStoryProject).toHaveBeenCalledTimes(1); expect(updateStoryProject).toHaveBeenCalledTimes(1);
-  fireEvent.press(screen.getByRole('button', { name: text.signOut })); expect(onSignOut).toHaveBeenCalledTimes(1);
+  await fireEvent.press(screen.getByRole('button', { name: text.signOut })); expect(onSignOut).toHaveBeenCalledTimes(1);
 });
 
 it.each(['back', 'signOut'] as const)('aborts pending GET immediately on %s and ignores its late private result', async action => {
   let finish!: (value: StoryProject) => void;
   jest.mocked(getStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-  open(); await waitFor(() => expect(getStoryProject).toHaveBeenCalledTimes(1));
+  await open(); await waitFor(() => expect(getStoryProject).toHaveBeenCalledTimes(1));
   const signal = jest.mocked(getStoryProject).mock.calls[0][0].signal!;
-  fireEvent.press(screen.getByRole('button', { name: text[action] }));
+  await fireEvent.press(screen.getByRole('button', { name: text[action] }));
   expect(signal.aborted).toBe(true);
   await act(async () => { finish(project({ title: 'Late private metadata' })); });
   expect(screen.queryByText('Late private metadata')).toBeNull();
@@ -160,12 +179,12 @@ it.each(['back', 'signOut'] as const)('aborts pending GET immediately on %s and 
 it.each(['account', 'project'] as const)('fences a pending PATCH and private drafts when the selected %s changes', async change => {
   let finish!: (value: StoryProject) => void;
   jest.mocked(updateStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-  const view = open(); await edit(); save(); await waitFor(() => expect(updateStoryProject).toHaveBeenCalledTimes(1));
+  const view = await open(); await edit(); await save(); await waitFor(() => expect(updateStoryProject).toHaveBeenCalledTimes(1));
   const signal = jest.mocked(updateStoryProject).mock.calls[0][0].signal!;
   const nextUser = change === 'account' ? { id: 'account-b', email: 'b@example.test' } : user;
   const selected = change === 'project' ? nextId : id;
   jest.mocked(getStoryProject).mockResolvedValueOnce(project({ id: selected, title: 'Fresh next selection' }));
-  view.rerender(<StoryDetails language="en" user={nextUser} projectId={selected} getAccessToken={token} onBack={onBack} onSignOut={onSignOut} />);
+  await view.rerender(<StoryDetails language="en" user={nextUser} projectId={selected} getAccessToken={token} onBack={onBack} onSignOut={onSignOut} />);
   expect(screen.queryByLabelText(text.titleLabel)).toBeNull();
   await screen.findByText('Fresh next selection'); expect(signal.aborted).toBe(true);
   await act(async () => { finish(project({ title: 'Late old update' })); });
@@ -175,13 +194,13 @@ it.each(['account', 'project'] as const)('fences a pending PATCH and private dra
 });
 
 it('ignores a stale Edit callback belonging to the previous account', async () => {
-  const view = open(); await screen.findByText('Fresh server title');
-  const oldEdit = screen.UNSAFE_getByType(StoryDetailsScreen).props.onEdit;
+  const view = await open(); await screen.findByText('Fresh server title');
+  const oldEdit = getComponent(StoryDetailsScreen).props.onEdit;
   jest.mocked(getStoryProject).mockResolvedValueOnce(project({ title: 'Account B details' }));
-  view.rerender(<StoryDetails language="en" user={{ id: 'account-b', email: 'b@example.test' }} projectId={id}
+  await view.rerender(<StoryDetails language="en" user={{ id: 'account-b', email: 'b@example.test' }} projectId={id}
     getAccessToken={token} onBack={onBack} onSignOut={onSignOut} />);
   await screen.findByText('Account B details');
-  act(() => oldEdit());
+  await act(() => oldEdit());
   expect(screen.getByText('Account B details')).toBeOnTheScreen();
   expect(screen.queryByLabelText(text.titleLabel)).toBeNull(); expect(updateStoryProject).not.toHaveBeenCalled();
 });
@@ -196,9 +215,11 @@ it('cancels an edit with Android Back and reloads before another edit', async ()
   try {
     let finish!: (value: StoryProject) => void;
     jest.mocked(updateStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-    open(); await edit(); save(); await waitFor(() => expect(updateStoryProject).toHaveBeenCalledTimes(1));
+    await open(); await edit(); await save(); await waitFor(() => expect(updateStoryProject).toHaveBeenCalledTimes(1));
     const signal = jest.mocked(updateStoryProject).mock.calls[0][0].signal!;
-    act(() => { expect(hardwareBack?.()).toBe(true); });
+    await act(() => { expect(hardwareBack?.()).toBe(true); });
+    expect(signal.aborted).toBe(false);
+    await fireEvent.press(screen.getByRole('button', { name: leaveCopy.en.leave }));
     await screen.findByText('Fresh server title'); expect(signal.aborted).toBe(true);
     expect(getStoryProject).toHaveBeenCalledTimes(2); expect(onBack).not.toHaveBeenCalled();
     await act(async () => { finish(project({ title: 'Late update after Back' })); });
@@ -209,9 +230,11 @@ it('cancels an edit with Android Back and reloads before another edit', async ()
 it('clears private edit data on Sign Out even when the parent callback does not unmount it', async () => {
   let finish!: (value: StoryProject) => void;
   jest.mocked(updateStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-  open(); await edit(); save(); await waitFor(() => expect(updateStoryProject).toHaveBeenCalledTimes(1));
+  await open(); await edit(); await save(); await waitFor(() => expect(updateStoryProject).toHaveBeenCalledTimes(1));
   const signal = jest.mocked(updateStoryProject).mock.calls[0][0].signal!;
-  fireEvent.press(screen.getByRole('button', { name: text.signOut }));
+  await fireEvent.press(screen.getByRole('button', { name: text.signOut }));
+  expect(signal.aborted).toBe(false);
+  await fireEvent.press(screen.getByRole('button', { name: leaveCopy.en.leave }));
   expect(signal.aborted).toBe(true); expect(onSignOut).toHaveBeenCalledTimes(1);
   expect(screen.queryByLabelText(text.titleLabel)).toBeNull();
   expect(screen.queryByText('Fresh server title')).toBeNull();
@@ -223,9 +246,10 @@ it('clears private edit data on Sign Out even when the parent callback does not 
 it('aborts a pending PATCH on unmount and publishes no late success or logs', async () => {
   let finish!: (value: StoryProject) => void;
   jest.mocked(updateStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-  const view = open(); await edit(); save(); await waitFor(() => expect(updateStoryProject).toHaveBeenCalledTimes(1));
+  const view = await open(); await edit(); await save(); await waitFor(() => expect(updateStoryProject).toHaveBeenCalledTimes(1));
   const signal = jest.mocked(updateStoryProject).mock.calls[0][0].signal!;
-  view.unmount(); expect(signal.aborted).toBe(true);
+  await view.unmount(); expect(signal.aborted).toBe(true);
   await act(async () => { finish(project({ title: 'Late detached result' })); });
-  expect(view.toJSON()).toBeNull(); expect(globalThis.fetch).not.toHaveBeenCalled();
+  expect(maybeComponent(EditStoryScreen)).toBeNull(); expect(maybeComponent(StoryDetailsScreen)).toBeNull();
+  expect(globalThis.fetch).not.toHaveBeenCalled();
 });

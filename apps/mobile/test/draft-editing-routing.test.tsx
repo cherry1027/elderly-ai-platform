@@ -1,3 +1,5 @@
+import { requireCallback } from './root-shell-helpers';
+import { getComponent, maybeComponent } from './component-probe';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { Alert, AppState, BackHandler } from 'react-native';
 import * as Crypto from 'expo-crypto';
@@ -14,6 +16,9 @@ import { storyGenerationCopy } from '../src/generation/story-generation-copy';
 import { draftEditingCopy } from '../src/generation/draft-editing-copy';
 import type { Language } from '../src/i18n';
 
+jest.mock('../src/generation/DraftEditorScreen', () => { const actual = jest.requireActual<typeof import('../src/generation/DraftEditorScreen')>('../src/generation/DraftEditorScreen'); return { ...actual, DraftEditorScreen: jest.requireActual<typeof import('./component-probe')>('./component-probe').observeComponent(actual.DraftEditorScreen) }; });
+jest.mock('../src/generation/DraftHistoryScreen', () => { const actual = jest.requireActual<typeof import('../src/generation/DraftHistoryScreen')>('../src/generation/DraftHistoryScreen'); return { ...actual, DraftHistoryScreen: jest.requireActual<typeof import('./component-probe')>('./component-probe').observeComponent(actual.DraftHistoryScreen) }; });
+jest.mock('../src/generation/StoryDraftScreen', () => { const actual = jest.requireActual<typeof import('../src/generation/StoryDraftScreen')>('../src/generation/StoryDraftScreen'); return { ...actual, StoryDraftScreen: jest.requireActual<typeof import('./component-probe')>('./component-probe').observeComponent(actual.StoryDraftScreen) }; });
 jest.mock('../src/api/story-drafts', () => ({ ...jest.requireActual('../src/api/story-drafts'),
   listStoryDrafts: jest.fn(), getStoryDraft: jest.fn(), getStoryVerification: jest.fn(),
   generateStoryDraft: jest.fn(), editStoryDraft: jest.fn(), listDraftHistory: jest.fn() }));
@@ -86,21 +91,21 @@ beforeEach(() => {
   jest.spyOn(Alert, 'alert').mockImplementation(() => {});
   saved();
 });
-afterEach(() => { cleanup(); jest.restoreAllMocks(); });
-const draftView = () => screen.UNSAFE_getByType(StoryDraftScreen).props;
+afterEach(async () => { await cleanup(); jest.restoreAllMocks(); });
+const draftView = () => getComponent(StoryDraftScreen).props;
 async function ready() { await waitFor(() => expect(draftView().state.phase).toBe('ready')); }
 async function openEditor(language: Language = 'en') {
-  const view = render(<GenerateStory {...props(language)} />);
+  const view = await render(<GenerateStory {...props(language)} />);
   await ready();
-  fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy[language].edit }));
-  await waitFor(() => expect(screen.UNSAFE_getByType(DraftEditorScreen).props.state.phase).toBe('editing'));
+  await fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy[language].edit }));
+  await waitFor(() => expect(getComponent(DraftEditorScreen).props.state.phase).toBe('editing'));
   return view;
 }
-function dismissWarning(keepEditing: boolean) {
+async function dismissWarning(keepEditing: boolean) {
   const buttons = jest.mocked(Alert.alert).mock.calls.at(-1)?.[2];
   const button = buttons?.find(item => item.style === (keepEditing ? 'cancel' : 'destructive'));
   expect(button?.onPress).toBeDefined();
-  act(() => { button!.onPress!(); });
+  await act(() => { button!.onPress!(); });
 }
 
 it.each<Language>(['en', 'sv'])('enters the saved %s editor with GET only and correct owner/draft scope', async language => {
@@ -112,7 +117,7 @@ it.each<Language>(['en', 'sv'])('enters the saved %s editor with GET only and co
   const call = jest.mocked(getStoryDraft).mock.calls.at(-1)![0];
   expect(call).toMatchObject({ projectId, draftId, expectedLanguage: language });
   await call.getAccessToken(); expect(token).toHaveBeenLastCalledWith('account-a');
-  fireEvent.press(screen.getByRole('button', { name: draftEditingCopy[language].back }));
+  await fireEvent.press(screen.getByRole('button', { name: draftEditingCopy[language].back }));
   await ready();
   expect(Alert.alert).not.toHaveBeenCalled(); expect(back).not.toHaveBeenCalled();
   expect(generateStoryDraft).not.toHaveBeenCalled();
@@ -122,14 +127,14 @@ it.each<Language>(['en', 'sv'])('enters the saved %s editor with GET only and co
 
 it.each<Language>(['en', 'sv'])('opens and closes actual saved %s revision history without editing or generating', async language => {
   const value = draft({ language }); saved(value);
-  render(<GenerateStory {...props(language)} />); await ready();
-  fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy[language].history }));
-  await waitFor(() => expect(screen.UNSAFE_getByType(DraftHistoryScreen).props.state.phase).toBe('ready'));
+  await render(<GenerateStory {...props(language)} />); await ready();
+  await fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy[language].history }));
+  await waitFor(() => expect(getComponent(DraftHistoryScreen).props.state.phase).toBe('ready'));
   expect(listDraftHistory).toHaveBeenCalledWith(expect.objectContaining({
     projectId, draftId, expectedLanguage: language, offset: 0,
   }));
   expect(screen.getByText(value.original_content)).toBeOnTheScreen();
-  fireEvent.press(screen.getByRole('button', { name: draftEditingCopy[language].back }));
+  await fireEvent.press(screen.getByRole('button', { name: draftEditingCopy[language].back }));
   await ready();
   expect(screen.getByText(value.content)).toBeOnTheScreen();
   expect(generateStoryDraft).not.toHaveBeenCalled(); expect(editStoryDraft).not.toHaveBeenCalled();
@@ -141,15 +146,15 @@ it('returns from a confirmed manual save to freshly read backend preview without
   const value = draft({ revision: 3, content: localWording,
     verification: { ...draft().verification, checked_revision: 3 } });
   jest.mocked(editStoryDraft).mockResolvedValue(value);
-  fireEvent.changeText(screen.getByLabelText(draftEditingCopy.en.field), localWording);
-  fireEvent.press(screen.getByRole('button', { name: draftEditingCopy.en.save }));
+  await fireEvent.changeText(screen.getByLabelText(draftEditingCopy.en.field), localWording);
+  await fireEvent.press(screen.getByRole('button', { name: draftEditingCopy.en.save }));
   await screen.findByText(draftEditingCopy.en.saved);
   expect(jest.mocked(editStoryDraft).mock.calls[0][0]).toMatchObject({
     projectId, expectedLanguage: 'en', baseline: { draft_id: draftId, revision: 2 },
     input: { content: localWording, expected_revision: 2 },
   });
   saved(value);
-  fireEvent.press(screen.getByRole('button', { name: draftEditingCopy.en.back }));
+  await fireEvent.press(screen.getByRole('button', { name: draftEditingCopy.en.back }));
   await ready();
   expect(screen.getByText(localWording)).toBeOnTheScreen();
   expect(screen.getByText(storyGenerationCopy.en.statuses.needs_review)).toBeOnTheScreen();
@@ -158,34 +163,34 @@ it('returns from a confirmed manual save to freshly read backend preview without
 
 it('an uncertain generation cannot enter editor or history even through stale presentation callbacks', async () => {
   jest.mocked(generateStoryDraft).mockRejectedValueOnce(new StoryProjectsError('timeout', undefined, true));
-  render(<GenerateStory {...props()} />); await ready();
-  const oldEdit = draftView().onEdit, oldHistory = draftView().onHistory;
-  act(() => draftView().onGenerate());
+  await render(<GenerateStory {...props()} />); await ready();
+  const oldEdit = requireCallback(draftView().onEdit), oldHistory = requireCallback(draftView().onHistory);
+  await act(() => requireCallback(draftView().onGenerate)());
   await waitFor(() => expect(draftView().state.phase).toBe('uncertain'));
   expect(screen.queryByRole('button', { name: storyGenerationCopy.en.edit })).toBeNull();
   expect(screen.queryByRole('button', { name: storyGenerationCopy.en.history })).toBeNull();
-  act(() => { oldEdit(); oldHistory(); });
-  expect(screen.UNSAFE_queryByType(DraftEditorScreen)).toBeNull();
-  expect(screen.UNSAFE_queryByType(DraftHistoryScreen)).toBeNull();
+  await act(() => { oldEdit(); oldHistory(); });
+  expect(maybeComponent(DraftEditorScreen)).toBeNull();
+  expect(maybeComponent(DraftHistoryScreen)).toBeNull();
   expect(listDraftHistory).not.toHaveBeenCalled(); expect(editStoryDraft).not.toHaveBeenCalled();
 });
 
 it('parent Android Back handler cannot bypass the child unsaved-wording warning', async () => {
   await openEditor();
-  fireEvent.changeText(screen.getByLabelText(draftEditingCopy.en.field), localWording);
-  act(() => {
+  await fireEvent.changeText(screen.getByLabelText(draftEditingCopy.en.field), localWording);
+  await act(() => {
     for (const callback of [...backCallbacks].reverse()) if (callback({} as Parameters<BackCallback>[0])) break;
   });
   expect(Alert.alert).toHaveBeenCalledTimes(1); expect(back).not.toHaveBeenCalled();
   expect(screen.getByLabelText(draftEditingCopy.en.field).props.value).toBe(localWording);
-  dismissWarning(true);
+  await dismissWarning(true);
   expect(screen.getByLabelText(draftEditingCopy.en.field).props.value).toBe(localWording);
-  act(() => {
+  await act(() => {
     for (const callback of [...backCallbacks].reverse()) if (callback({} as Parameters<BackCallback>[0])) break;
   });
   expect(Alert.alert).toHaveBeenCalledTimes(2);
-  dismissWarning(false); await ready();
-  expect(screen.UNSAFE_queryByType(DraftEditorScreen)).toBeNull();
+  await dismissWarning(false); await ready();
+  expect(maybeComponent(DraftEditorScreen)).toBeNull();
   expect(screen.getByText(initialWording)).toBeOnTheScreen();
   expect(back).not.toHaveBeenCalled(); expect(editStoryDraft).not.toHaveBeenCalled();
 });
@@ -194,11 +199,11 @@ it('sign-out cancels pending manual save and cannot show its late content', asyn
   const pending = deferred<StoryDraft>();
   jest.mocked(editStoryDraft).mockReturnValueOnce(pending.promise);
   await openEditor();
-  fireEvent.changeText(screen.getByLabelText(draftEditingCopy.en.field), localWording);
-  fireEvent.press(screen.getByRole('button', { name: draftEditingCopy.en.save }));
+  await fireEvent.changeText(screen.getByLabelText(draftEditingCopy.en.field), localWording);
+  await fireEvent.press(screen.getByRole('button', { name: draftEditingCopy.en.save }));
   await waitFor(() => expect(editStoryDraft).toHaveBeenCalledTimes(1));
   const signal = jest.mocked(editStoryDraft).mock.calls[0][0].signal!;
-  fireEvent.press(screen.getByRole('button', { name: draftEditingCopy.en.signOut }));
+  await fireEvent.press(screen.getByRole('button', { name: draftEditingCopy.en.signOut }));
   expect(signOut).toHaveBeenCalledTimes(1); expect(signal.aborted).toBe(true);
   expect(screen.queryByLabelText(draftEditingCopy.en.field)).toBeNull();
   await act(async () => pending.resolve(draft({ content: localWording })));
@@ -207,19 +212,23 @@ it('sign-out cancels pending manual save and cannot show its late content', asyn
 });
 
 it('unmount cancels selected editor GET and never publishes its late prose', async () => {
-  const view = render(<GenerateStory {...props()} />); await ready();
+  const view = await render(<GenerateStory {...props()} />); await ready();
   const pending = deferred<StoryDraft>();
   let pendingSignal: AbortSignal | undefined;
   jest.mocked(getStoryDraft).mockImplementationOnce(options => {
     pendingSignal = options.signal; return pending.promise;
   });
-  fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy.en.edit }));
+  await fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy.en.edit }));
   await waitFor(() => expect(pendingSignal).toBeDefined());
-  expect(screen.UNSAFE_getByType(DraftEditorScreen).props.state.phase).toBe('loading');
+  expect(getComponent(DraftEditorScreen).props.state.phase).toBe('loading');
   const signal = pendingSignal!;
-  view.unmount(); expect(signal.aborted).toBe(true);
+  await view.unmount(); expect(signal.aborted).toBe(true);
   await act(async () => pending.resolve(draft({ content: 'Late account A fictional prose.' })));
-  expect(view.toJSON()).toBeNull();
+  // RNTL 14 intentionally rejects snapshots after unmount; committed private
+  // boundaries must still be absent after the cancelled response resolves.
+  expect(maybeComponent(DraftEditorScreen)).toBeNull();
+  expect(maybeComponent(StoryDraftScreen)).toBeNull();
+  expect(() => view.toJSON()).toThrow(/unmounted/);
   expect(signal.aborted).toBe(true);
   expect(editStoryDraft).not.toHaveBeenCalled(); expect(generateStoryDraft).not.toHaveBeenCalled();
 });
@@ -227,20 +236,20 @@ it('unmount cancels selected editor GET and never publishes its late prose', asy
 it('owner changes unmount the editor, cancel pending PATCH and re-scope all subsequent reads', async () => {
   const pending = deferred<StoryDraft>(); jest.mocked(editStoryDraft).mockReturnValueOnce(pending.promise);
   const view = await openEditor();
-  fireEvent.changeText(screen.getByLabelText(draftEditingCopy.en.field), localWording);
-  fireEvent.press(screen.getByRole('button', { name: draftEditingCopy.en.save }));
+  await fireEvent.changeText(screen.getByLabelText(draftEditingCopy.en.field), localWording);
+  await fireEvent.press(screen.getByRole('button', { name: draftEditingCopy.en.save }));
   await waitFor(() => expect(editStoryDraft).toHaveBeenCalledTimes(1));
   const signal = jest.mocked(editStoryDraft).mock.calls[0][0].signal!;
   const other = draft({ draft_id: '20000000-0000-4000-8000-000000000002',
     content: 'Account B fictional saved wording.' });
   saved(other);
-  view.rerender(<GenerateStory {...props()} user={{ id: 'account-b', email: 'account-b@example.test' }} />);
+  await view.rerender(<GenerateStory {...props()} user={{ id: 'account-b', email: 'account-b@example.test' }} />);
   await ready(); expect(signal.aborted).toBe(true);
   expect(screen.queryByLabelText(draftEditingCopy.en.field)).toBeNull();
   await act(async () => pending.resolve(draft({ content: localWording })));
   expect(screen.queryByText(localWording)).toBeNull();
-  fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy.en.edit }));
-  await waitFor(() => expect(screen.UNSAFE_getByType(DraftEditorScreen).props.state.phase).toBe('editing'));
+  await fireEvent.press(screen.getByRole('button', { name: storyGenerationCopy.en.edit }));
+  await waitFor(() => expect(getComponent(DraftEditorScreen).props.state.phase).toBe('editing'));
   const read = jest.mocked(getStoryDraft).mock.calls.at(-1)![0];
   expect(read.draftId).toBe(other.draft_id);
   await read.getAccessToken(); expect(token).toHaveBeenLastCalledWith('account-b');

@@ -1,3 +1,4 @@
+import { getComponent, maybeComponent } from './component-probe';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { BackHandler } from 'react-native';
 import { Conversation } from '../src/stories/Conversation';
@@ -9,7 +10,17 @@ import {
 } from '../src/api/story-projects';
 import { conversationCopy } from '../src/conversation-copy';
 import { MemoryReview } from '../src/memories/MemoryReview';
-jest.mock('../src/memories/MemoryReview', () => ({ MemoryReview: jest.fn(() => null) }));
+
+jest.mock('../src/screens/ConversationScreen', () => {
+  const actual = jest.requireActual<typeof import('../src/screens/ConversationScreen')>('../src/screens/ConversationScreen');
+  const { observeComponent } = jest.requireActual<typeof import('./component-probe')>('./component-probe');
+  return { ...actual, ConversationScreen: observeComponent(actual.ConversationScreen) };
+});
+
+jest.mock('../src/memories/MemoryReview', () => {
+  const { observeComponent } = jest.requireActual<typeof import('./component-probe')>('./component-probe');
+  return { MemoryReview: observeComponent((_props: React.ComponentProps<typeof import('../src/memories/MemoryReview').MemoryReview>) => null) };
+});
 
 
 jest.mock('../src/audio/SessionRecording', () => ({ SessionRecording: () => null }));
@@ -37,7 +48,7 @@ const continued = (overrides: Partial<StoryContinuation> = {}): StoryContinuatio
   project_id: id, language: 'en', session: session(), session_created: true,
   latest_draft: null, generation_triggered: false, ...overrides,
 });
-const open = (props: Partial<React.ComponentProps<typeof Conversation>> = {}) => render(<Conversation
+const open = async (props: Partial<React.ComponentProps<typeof Conversation>> = {}) => await render(<Conversation
   language="en" user={user} project={project()} getAccessToken={token} onBack={onBack} onSignOut={onSignOut} {...props} />);
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -45,7 +56,7 @@ function deferred<T>() {
   const promise = new Promise<T>((resolvePromise, rejectPromise) => { resolve = resolvePromise; reject = rejectPromise; });
   return { promise, resolve, reject };
 }
-function currentState() { return screen.UNSAFE_getByType(ConversationScreen).props.state; }
+function currentState() { return getComponent(ConversationScreen).props.state; }
 
 beforeEach(() => {
   jest.mocked(readMobileApiConfig).mockReset().mockReturnValue({ baseUrl: 'http://192.168.20.30:8000' });
@@ -57,7 +68,7 @@ beforeEach(() => {
 
 it.each(['en', 'sv'] as const)('reconciles before starting a session with the current owner and story language in %s', async language => {
   jest.mocked(continueStoryProject).mockResolvedValueOnce(continued({ language, session: session({ language }) }));
-  open({ language, project: project({ language }) });
+  await open({ language, project: project({ language }) });
   await screen.findByText(conversationCopy[language].started);
   expect(listStorySessions).toHaveBeenCalledTimes(1); expect(continueStoryProject).toHaveBeenCalledTimes(1);
   expect(jest.mocked(listStorySessions).mock.invocationCallOrder[0]).toBeLessThan(
@@ -73,14 +84,14 @@ it.each(['en', 'sv'] as const)('reconciles before starting a session with the cu
 
 it('reopens the existing active session without another write', async () => {
   jest.mocked(listStorySessions).mockResolvedValueOnce([session()]);
-  open(); await screen.findByText(text.resumed);
+  await open(); await screen.findByText(text.resumed);
   expect(continueStoryProject).not.toHaveBeenCalled();
   expect(currentState()).toMatchObject({ status: 'ready', resumed: true, session: { id: sessionId } });
 });
 
 it('does not repeat requests when equivalent project metadata is replaced by a parent render', async () => {
-  const view = open(); await screen.findByText(text.started);
-  view.rerender(<Conversation language="en" user={user} project={project({ description: 'Changed metadata only' })}
+  const view = await open(); await screen.findByText(text.started);
+  await view.rerender(<Conversation language="en" user={user} project={project({ description: 'Changed metadata only' })}
     getAccessToken={token} onBack={onBack} onSignOut={onSignOut} />);
   await act(async () => { await Promise.resolve(); });
   expect(screen.getByText(text.started)).toBeOnTheScreen();
@@ -91,7 +102,7 @@ it('uses the canonical continue endpoint when the read page contains only comple
   jest.mocked(listStorySessions).mockResolvedValueOnce([session({ status: 'completed', ended_at: '2026-01-02T00:00:00Z' })]);
   jest.mocked(continueStoryProject).mockResolvedValueOnce(continued({ session_created: false,
     session: session({ id: nextSessionId }) }));
-  open(); await screen.findByText(text.resumed);
+  await open(); await screen.findByText(text.resumed);
   expect(continueStoryProject).toHaveBeenCalledTimes(1);
   expect(currentState()).toMatchObject({ resumed: true, session: { id: nextSessionId } });
 });
@@ -99,12 +110,12 @@ it('uses the canonical continue endpoint when the read page contains only comple
 it.each(['network', 'timeout', 'unavailable', 'invalid-response'] as const)(
   'waits for explicit retry after an uncertain %s POST and reconciles an existing session without a second POST', async kind => {
     jest.mocked(continueStoryProject).mockRejectedValueOnce(new StoryProjectsError(kind, undefined, true));
-    open(); await screen.findByText(text.uncertain);
+    await open(); await screen.findByText(text.uncertain);
     expect(listStorySessions).toHaveBeenCalledTimes(1); expect(continueStoryProject).toHaveBeenCalledTimes(1);
     await act(async () => { await Promise.resolve(); });
     expect(listStorySessions).toHaveBeenCalledTimes(1); expect(continueStoryProject).toHaveBeenCalledTimes(1);
     jest.mocked(listStorySessions).mockResolvedValueOnce([session()]);
-    fireEvent.press(screen.getByRole('button', { name: text.check }));
+    await fireEvent.press(screen.getByRole('button', { name: text.check }));
     await screen.findByText(text.resumed);
     expect(listStorySessions).toHaveBeenCalledTimes(2); expect(continueStoryProject).toHaveBeenCalledTimes(1);
     expect(screen.queryByText(text.uncertain)).toBeNull();
@@ -112,8 +123,8 @@ it.each(['network', 'timeout', 'unavailable', 'invalid-response'] as const)(
 
 it('reconciles again before an explicit second POST when no active session can be read', async () => {
   jest.mocked(continueStoryProject).mockRejectedValueOnce(new StoryProjectsError('timeout', undefined, true));
-  open(); await screen.findByText(text.uncertain);
-  fireEvent.press(screen.getByRole('button', { name: text.check }));
+  await open(); await screen.findByText(text.uncertain);
+  await fireEvent.press(screen.getByRole('button', { name: text.check }));
   await screen.findByText(text.started);
   expect(listStorySessions).toHaveBeenCalledTimes(2); expect(continueStoryProject).toHaveBeenCalledTimes(2);
   expect(jest.mocked(listStorySessions).mock.invocationCallOrder[1]).toBeLessThan(
@@ -122,9 +133,9 @@ it('reconciles again before an explicit second POST when no active session can b
 
 it('keeps uncertainty visible and never writes when a retry reconciliation GET fails', async () => {
   jest.mocked(continueStoryProject).mockRejectedValueOnce(new StoryProjectsError('timeout', undefined, true));
-  open(); await screen.findByText(text.uncertain);
+  await open(); await screen.findByText(text.uncertain);
   jest.mocked(listStorySessions).mockRejectedValueOnce(new StoryProjectsError('network'));
-  fireEvent.press(screen.getByRole('button', { name: text.check }));
+  await fireEvent.press(screen.getByRole('button', { name: text.check }));
   await screen.findByText(text.errors.network);
   expect(screen.getByText(text.uncertain)).toBeOnTheScreen();
   expect(continueStoryProject).toHaveBeenCalledTimes(1);
@@ -132,11 +143,11 @@ it('keeps uncertainty visible and never writes when a retry reconciliation GET f
 
 it('blocks duplicate retry taps while the reconciliation read is running', async () => {
   jest.mocked(listStorySessions).mockRejectedValueOnce(new StoryProjectsError('network'));
-  open(); await screen.findByText(text.errors.network);
+  await open(); await screen.findByText(text.errors.network);
   const pending = deferred<ConversationSession[]>();
   jest.mocked(listStorySessions).mockReturnValueOnce(pending.promise);
-  const retry = screen.UNSAFE_getByType(ConversationScreen).props.onCheck;
-  act(() => { retry(); retry(); retry(); });
+  const retry = getComponent(ConversationScreen).props.onCheck;
+  await act(() => { retry(); retry(); retry(); });
   await waitFor(() => expect(listStorySessions).toHaveBeenCalledTimes(2));
   expect(continueStoryProject).not.toHaveBeenCalled();
   await act(async () => { pending.resolve([session()]); });
@@ -146,25 +157,25 @@ it('blocks duplicate retry taps while the reconciliation read is running', async
 
 it.each(['authentication', 'forbidden', 'not-found', 'validation'] as const)('blocks retry after a definitive %s read failure', async kind => {
   jest.mocked(listStorySessions).mockRejectedValueOnce(new StoryProjectsError(kind, kind === 'authentication' ? 401 : undefined));
-  open(); await screen.findByText(text.errors[kind]);
+  await open(); await screen.findByText(text.errors[kind]);
   expect(screen.queryByRole('button', { name: text.check })).toBeNull();
-  const retry = screen.UNSAFE_getByType(ConversationScreen).props.onCheck;
-  act(() => retry());
+  const retry = getComponent(ConversationScreen).props.onCheck;
+  await act(() => retry());
   expect(listStorySessions).toHaveBeenCalledTimes(1); expect(continueStoryProject).not.toHaveBeenCalled();
-  fireEvent.press(screen.getByRole('button', { name: text.signOut }));
+  await fireEvent.press(screen.getByRole('button', { name: text.signOut }));
   expect(onSignOut).toHaveBeenCalledTimes(1);
 });
 
 it('blocks retry after a rejected authenticated POST without silently retrying the session', async () => {
   jest.mocked(continueStoryProject).mockRejectedValueOnce(new StoryProjectsError('authentication', 401));
-  open(); await screen.findByText(text.errors.authentication);
+  await open(); await screen.findByText(text.errors.authentication);
   expect(screen.queryByRole('button', { name: text.check })).toBeNull();
-  act(() => screen.UNSAFE_getByType(ConversationScreen).props.onCheck());
+  await act(() => getComponent(ConversationScreen).props.onCheck());
   expect(listStorySessions).toHaveBeenCalledTimes(1); expect(continueStoryProject).toHaveBeenCalledTimes(1);
 });
 
-it('makes no token or API operation when development API configuration is missing', () => {
-  jest.mocked(readMobileApiConfig).mockReturnValue(null); open();
+it('makes no token or API operation when development API configuration is missing', async () => {
+  jest.mocked(readMobileApiConfig).mockReturnValue(null); await open();
   expect(screen.getByRole('alert')).toHaveTextContent(text.errors.configuration);
   expect(listStorySessions).not.toHaveBeenCalled(); expect(continueStoryProject).not.toHaveBeenCalled();
   expect(token).not.toHaveBeenCalled(); expect(globalThis.fetch).not.toHaveBeenCalled();
@@ -174,18 +185,18 @@ it('makes no token or API operation when development API configuration is missin
 it.each(['back', 'signOut', 'unmount'] as const)('aborts a pending read on %s and never starts a session afterward', async action => {
   const pending = deferred<ConversationSession[]>();
   jest.mocked(listStorySessions).mockReturnValueOnce(pending.promise);
-  const view = open(); await waitFor(() => expect(listStorySessions).toHaveBeenCalledTimes(1));
+  const view = await open(); await waitFor(() => expect(listStorySessions).toHaveBeenCalledTimes(1));
   const signal = jest.mocked(listStorySessions).mock.calls[0][0].signal!;
-  if (action === 'unmount') view.unmount();
-  else fireEvent.press(screen.getByRole('button', { name: text[action] }));
+  if (action === 'unmount') await view.unmount();
+  else await fireEvent.press(screen.getByRole('button', { name: text[action] }));
   expect(signal.aborted).toBe(true);
   await act(async () => { pending.resolve([]); });
   expect(continueStoryProject).not.toHaveBeenCalled();
-  if (action === 'unmount') expect(view.toJSON()).toBeNull();
+  if (action === 'unmount') expect(maybeComponent(ConversationScreen)).toBeNull();
   else {
     expect(action === 'back' ? onBack : onSignOut).toHaveBeenCalledTimes(1);
     expect(screen.queryByText(text.ready)).toBeNull();
-    act(() => screen.UNSAFE_getByType(ConversationScreen).props.onCheck());
+    await act(() => getComponent(ConversationScreen).props.onCheck());
     expect(listStorySessions).toHaveBeenCalledTimes(1);
   }
 });
@@ -193,13 +204,13 @@ it.each(['back', 'signOut', 'unmount'] as const)('aborts a pending read on %s an
 it.each(['back', 'signOut', 'unmount'] as const)('ignores a late successful POST after %s without publishing session data', async action => {
   const pending = deferred<StoryContinuation>();
   jest.mocked(continueStoryProject).mockReturnValueOnce(pending.promise);
-  const view = open(); await waitFor(() => expect(continueStoryProject).toHaveBeenCalledTimes(1));
+  const view = await open(); await waitFor(() => expect(continueStoryProject).toHaveBeenCalledTimes(1));
   const signal = jest.mocked(continueStoryProject).mock.calls[0][0].signal!;
-  if (action === 'unmount') view.unmount();
-  else fireEvent.press(screen.getByRole('button', { name: text[action] }));
+  if (action === 'unmount') await view.unmount();
+  else await fireEvent.press(screen.getByRole('button', { name: text[action] }));
   expect(signal.aborted).toBe(true);
   await act(async () => { pending.resolve(continued()); });
-  if (action === 'unmount') expect(view.toJSON()).toBeNull();
+  if (action === 'unmount') expect(maybeComponent(ConversationScreen)).toBeNull();
   else {
     expect(screen.queryByText(text.ready)).toBeNull(); expect(screen.queryByText('A fictional memory')).toBeNull();
     expect(action === 'back' ? onBack : onSignOut).toHaveBeenCalledTimes(1);
@@ -209,12 +220,12 @@ it.each(['back', 'signOut', 'unmount'] as const)('ignores a late successful POST
 it.each(['account', 'project'] as const)('fences a late result after a selected %s change', async change => {
   const pending = deferred<StoryContinuation>();
   jest.mocked(continueStoryProject).mockReturnValueOnce(pending.promise);
-  const view = open(); await waitFor(() => expect(continueStoryProject).toHaveBeenCalledTimes(1));
+  const view = await open(); await waitFor(() => expect(continueStoryProject).toHaveBeenCalledTimes(1));
   const signal = jest.mocked(continueStoryProject).mock.calls[0][0].signal!;
   const nextUser = change === 'account' ? { id: 'account-b', email: 'b@example.test' } : user;
   const selected = change === 'project' ? nextId : id;
   jest.mocked(listStorySessions).mockResolvedValueOnce([session({ id: nextSessionId, project_id: selected })]);
-  view.rerender(<Conversation language="en" user={nextUser} project={project({ id: selected, title: 'Next selected story' })}
+  await view.rerender(<Conversation language="en" user={nextUser} project={project({ id: selected, title: 'Next selected story' })}
     getAccessToken={token} onBack={onBack} onSignOut={onSignOut} />);
   expect(screen.queryByText('A fictional memory')).toBeNull();
   await screen.findByText('Next selected story'); expect(signal.aborted).toBe(true);
@@ -227,13 +238,13 @@ it.each(['account', 'project'] as const)('fences a late result after a selected 
 
 it('rejects an old retry callback captured before an account change', async () => {
   jest.mocked(listStorySessions).mockRejectedValueOnce(new StoryProjectsError('network'));
-  const view = open(); await screen.findByText(text.errors.network);
-  const oldRetry = screen.UNSAFE_getByType(ConversationScreen).props.onCheck;
+  const view = await open(); await screen.findByText(text.errors.network);
+  const oldRetry = getComponent(ConversationScreen).props.onCheck;
   jest.mocked(listStorySessions).mockResolvedValueOnce([session({ id: nextSessionId })]);
-  view.rerender(<Conversation language="en" user={{ id: 'account-b', email: 'b@example.test' }}
+  await view.rerender(<Conversation language="en" user={{ id: 'account-b', email: 'b@example.test' }}
     project={project({ title: 'Account B story' })} getAccessToken={token} onBack={onBack} onSignOut={onSignOut} />);
   await screen.findByText('Account B story');
-  act(() => oldRetry());
+  await act(() => oldRetry());
   expect(listStorySessions).toHaveBeenCalledTimes(2); expect(continueStoryProject).not.toHaveBeenCalled();
   expect(currentState()).toMatchObject({ status: 'ready', session: { id: nextSessionId } });
 });
@@ -248,9 +259,9 @@ it('cancels pending work and returns to the story on Android hardware Back', asy
   try {
     const pending = deferred<ConversationSession[]>();
     jest.mocked(listStorySessions).mockReturnValueOnce(pending.promise);
-    open(); await waitFor(() => expect(listStorySessions).toHaveBeenCalledTimes(1));
+    await open(); await waitFor(() => expect(listStorySessions).toHaveBeenCalledTimes(1));
     const signal = jest.mocked(listStorySessions).mock.calls[0][0].signal!;
-    act(() => { expect(hardwareBack?.()).toBe(true); });
+    await act(() => { expect(hardwareBack?.()).toBe(true); });
     expect(signal.aborted).toBe(true); expect(onBack).toHaveBeenCalledTimes(1);
     await act(async () => { pending.resolve([]); });
     expect(continueStoryProject).not.toHaveBeenCalled(); expect(screen.queryByText(text.ready)).toBeNull();
@@ -259,38 +270,38 @@ it('cancels pending work and returns to the story on Android hardware Back', asy
 
 it.each(['en', 'sv'] as const)('opens memory review intentionally for this owned session in %s and returns without creating another session', async language => {
   jest.mocked(listStorySessions).mockResolvedValueOnce([session({ language })]);
-  open({ language, project: project({ language }) });
+  await open({ language, project: project({ language }) });
   await screen.findByText(conversationCopy[language].resumed);
   expect(MemoryReview).not.toHaveBeenCalled();
-  fireEvent.press(screen.getByRole('button', { name: conversationCopy[language].review }));
-  const review = screen.UNSAFE_getByType(MemoryReview).props;
+  await fireEvent.press(screen.getByRole('button', { name: conversationCopy[language].review }));
+  const review = getComponent(MemoryReview).props;
   expect(review).toMatchObject({ language, projectId: id, ownerId: user.id, sessionId, sessionLanguage: language });
-  act(() => review.onBack());
+  await act(() => review.onBack());
   await screen.findByText(conversationCopy[language].resumed);
   expect(listStorySessions).toHaveBeenCalledTimes(1); expect(continueStoryProject).not.toHaveBeenCalled();
 });
 
 it('signs out from review through the existing private-data cleanup path', async () => {
   jest.mocked(listStorySessions).mockResolvedValueOnce([session()]);
-  open(); await screen.findByText(text.resumed);
-  fireEvent.press(screen.getByRole('button', { name: text.review }));
-  act(() => screen.UNSAFE_getByType(MemoryReview).props.onSignOut());
-  expect(onSignOut).toHaveBeenCalledTimes(1); expect(screen.UNSAFE_queryByType(MemoryReview)).toBeNull();
+  await open(); await screen.findByText(text.resumed);
+  await fireEvent.press(screen.getByRole('button', { name: text.review }));
+  await act(() => getComponent(MemoryReview).props.onSignOut());
+  expect(onSignOut).toHaveBeenCalledTimes(1); expect(maybeComponent(MemoryReview)).toBeNull();
 });
 
 it('memory-review navigation opens existing saved session read-only without creating one', async () => {
   jest.mocked(listStorySessions).mockResolvedValueOnce([session({ status: 'completed', ended_at: '2026-01-02T00:00:00Z' })]);
-  open({ reviewOnOpen: true });
+  await open({ reviewOnOpen: true });
   await waitFor(() => expect(MemoryReview).toHaveBeenCalled());
-  expect(screen.UNSAFE_getByType(MemoryReview).props.sessionId).toBe(sessionId);
+  expect(getComponent(MemoryReview).props.sessionId).toBe(sessionId);
   expect(continueStoryProject).not.toHaveBeenCalled();
-  act(() => screen.UNSAFE_getByType(MemoryReview).props.onBack());
+  await act(() => getComponent(MemoryReview).props.onBack());
   expect(onBack).toHaveBeenCalledTimes(1);
-  expect(screen.UNSAFE_queryByType(MemoryReview)).toBeNull();
+  expect(maybeComponent(MemoryReview)).toBeNull();
   expect(screen.queryByText(text.ready)).toBeNull();
 });
 it('memory-review navigation with no existing session never creates a session', async () => {
-  open({ reviewOnOpen: true });
+  await open({ reviewOnOpen: true });
   await screen.findByText(text.errors['not-found']);
   expect(continueStoryProject).not.toHaveBeenCalled(); expect(MemoryReview).not.toHaveBeenCalled();
 });

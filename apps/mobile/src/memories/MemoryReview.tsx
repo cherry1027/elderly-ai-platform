@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type Ref } from 'react';
 import { AppState } from 'react-native';
 import { listConversationMessages, type ConversationMessage } from '../api/conversation-messages';
 import { listMemoryReview, patchMemory, validateMemoryPatchInput, type MemoryFact, type MemoryPatchInput } from '../api/memory-review';
@@ -6,6 +6,7 @@ import { StoryProjectsError, type StoryProjectsErrorKind } from '../api/story-pr
 import { readStoryPreviewEnabled } from '../development/story-preview-config';
 import type { Language } from '../i18n';
 import { MemoryReviewScreen, type MemoryReviewState, type MemoryReviewDraft } from './MemoryReviewScreen';
+import type { LeaveHandle } from '../navigation/useGuardedLeave';
 
 interface Props {
   language: Language;
@@ -19,6 +20,7 @@ interface Props {
   onBack: () => void;
   backLabel?: string;
   onSignOut: () => void;
+  leaveRef?: Ref<LeaveHandle>;
 }
 const empty = (phase: MemoryReviewState['phase'], error?: StoryProjectsErrorKind): MemoryReviewState => ({
   phase, memories: [], clarifications: [], sources: [], complete: false, ...(error ? { error } : {}),
@@ -61,7 +63,7 @@ function retained(attempt: PendingReview, canRetry = false): NonNullable<MemoryR
     canRetry, conflict: attempt.conflict };
 }
 function ScopedMemoryReview({ language, title, ownerId, projectId, sessionId, sessionLanguage,
-  baseUrl, getAccessToken, onBack, onSignOut, backLabel }: Props) {
+  baseUrl, getAccessToken, onBack, onSignOut, backLabel, leaveRef }: Props) {
   const [state, setState] = useState<MemoryReviewState>(() => empty('loading'));
   const [screenRevision, setScreenRevision] = useState(0);
   const latest = useRef(state);
@@ -254,5 +256,5 @@ function ScopedMemoryReview({ language, title, ownerId, projectId, sessionId, se
   return <MemoryReviewScreen resetRevision={screenRevision} language={language} storyLanguage={sessionLanguage} title={title} state={state}
     onCaptureReview={draft => { captured.current = Object.freeze({ ...draft }); }}
     onSave={save} onRefresh={() => refresh(pendingWrite.current ? 'uncertain' : undefined)} onReviewLatest={reviewLatest}
-    backLabel={backLabel} onBack={() => leave(onBack)} onSignOut={() => leave(onSignOut)} />;
+    backLabel={backLabel} leaveRef={leaveRef} onBack={() => leave(onBack)} onSignOut={() => leave(onSignOut)} />;
 }

@@ -27,8 +27,8 @@ function auth(status = 'signed-in', id: string | null = owner, appActive = true)
 function language(value: 'en' | 'sv' = 'en') {
   jest.mocked(useLanguage).mockReturnValue({ language: value } as ReturnType<typeof useLanguage>);
 }
-function admission(seconds = '10') {
-  act(() => { apiBackoff.capture().record(origin, parseRetryAdvice(429, 'RATE_LIMITED', seconds)!); });
+async function admission(seconds = '10') {
+  await act(() => { apiBackoff.capture().record(origin, parseRetryAdvice(429, 'RATE_LIMITED', seconds)!); });
 }
 beforeEach(() => {
   jest.useFakeTimers(); jest.setSystemTime(1_000_000); apiBackoff.clear(); jest.clearAllMocks(); auth(); language();
@@ -38,86 +38,86 @@ beforeEach(() => {
   });
   jest.spyOn(AccessibilityInfo, 'announceForAccessibilityWithOptions').mockImplementation(() => {});
 });
-afterEach(() => { cleanup(); apiBackoff.clear(); jest.restoreAllMocks(); jest.useRealTimers(); });
+afterEach(async () => { await cleanup(); apiBackoff.clear(); jest.restoreAllMocks(); jest.useRealTimers(); });
 
-it('keeps ordinary Screen usable outside optional provider without authentication or configuration', () => {
-  render(<Screen><Text>Local content</Text></Screen>);
+it('keeps ordinary Screen usable outside optional provider without authentication or configuration', async () => {
+  await render(<Screen><Text>Local content</Text></Screen>);
   expect(current?.waiting ?? false).toBe(false); expect(useAuth).not.toHaveBeenCalled();
 });
-it('shows English wait metadata and disables explicit requests while retaining page content', () => {
-  const view = render(tree()); admission();
+it('shows English wait metadata and disables explicit requests while retaining page content', async () => {
+  const view = await render(tree()); await admission();
   expect(view.getByText(/Memy needs a short wait/)).toBeTruthy(); expect(view.getByText('The service requested a pause of 10 seconds.')).toBeTruthy();
   expect(view.getByRole('button', { name: 'Try action' })).toBeDisabled(); expect(view.getByText('one')).toBeTruthy();
   expect(current.waiting).toBe(true); expect(send).not.toHaveBeenCalled();
 });
-it('shows Swedish wait and explicit-action expiry copy', () => {
-  language('sv'); const view = render(tree()); admission('2');
+it('shows Swedish wait and explicit-action expiry copy', async () => {
+  language('sv'); const view = await render(tree()); await admission('2');
   expect(view.getByText(/Memy behöver en kort paus/)).toBeTruthy(); expect(view.getByText('Tjänsten begärde en paus på 2 sekunder.')).toBeTruthy();
-  act(() => jest.advanceTimersByTime(2000));
+  await act(() => jest.advanceTimersByTime(2000));
   expect(view.getByText(/Du kan försöka igen nu/)).toBeTruthy(); expect(current.waiting).toBe(false); expect(send).not.toHaveBeenCalled();
 });
-it('announces once on waiting and once at expiry, without ticking announcements or automatic requests', () => {
-  const view = render(tree()); admission('10');
+it('announces once on waiting and once at expiry, without ticking announcements or automatic requests', async () => {
+  const view = await render(tree()); await admission('10');
   expect(AccessibilityInfo.announceForAccessibilityWithOptions).toHaveBeenCalledTimes(1);
-  act(() => jest.advanceTimersByTime(9000));
+  await act(() => jest.advanceTimersByTime(9000));
   expect(AccessibilityInfo.announceForAccessibilityWithOptions).toHaveBeenCalledTimes(1);
-  act(() => jest.advanceTimersByTime(1000));
+  await act(() => jest.advanceTimersByTime(1000));
   expect(AccessibilityInfo.announceForAccessibilityWithOptions).toHaveBeenCalledTimes(2);
   expect(view.getByRole('button', { name: 'Try action' })).not.toBeDisabled(); expect(send).not.toHaveBeenCalled();
   expect(globalThis.fetch).not.toHaveBeenCalled();
 });
-it('retains wait through screen remount and does not repeat the announcement', () => {
-  const view = render(tree('one')); admission(); const deadline = current.advice?.retryAt;
-  view.rerender(tree('two')); expect(current.waiting).toBe(true); expect(current.advice?.retryAt).toBe(deadline);
+it('retains wait through screen remount and does not repeat the announcement', async () => {
+  const view = await render(tree('one')); await admission(); const deadline = current.advice?.retryAt;
+  await view.rerender(tree('two')); expect(current.waiting).toBe(true); expect(current.advice?.retryAt).toBe(deadline);
   expect(AccessibilityInfo.announceForAccessibilityWithOptions).toHaveBeenCalledTimes(1); expect(send).not.toHaveBeenCalled();
 });
-it('retains same-owner deadline through hidden background and temporary checking', () => {
-  const view = render(tree()); admission(); const deadline = current.advice?.retryAt;
-  auth('checking', null, false); view.rerender(tree());
+it('retains same-owner deadline through hidden background and temporary checking', async () => {
+  const view = await render(tree()); await admission(); const deadline = current.advice?.retryAt;
+  auth('checking', null, false); await view.rerender(tree());
   expect(current.waiting).toBe(true); expect(view.queryByTestId('api-backoff-banner')).toBeNull();
-  auth(); view.rerender(tree());
+  auth(); await view.rerender(tree());
   expect(current.advice?.retryAt).toBe(deadline); expect(current.waiting).toBe(true); expect(send).not.toHaveBeenCalled();
 });
-it('uses elapsed foreground wall-clock time without replaying a request', () => {
-  const view = render(tree()); admission();
-  auth('checking', null, false); view.rerender(tree());
+it('uses elapsed foreground wall-clock time without replaying a request', async () => {
+  const view = await render(tree()); await admission();
+  auth('checking', null, false); await view.rerender(tree());
   jest.setSystemTime(1_030_000);
-  act(() => onState('active')); auth(); view.rerender(tree());
+  await act(() => onState('active')); auth(); await view.rerender(tree());
   expect(current.waiting).toBe(false); expect(view.getByText(/You can try again now/)).toBeTruthy(); expect(send).not.toHaveBeenCalled();
 });
-it('rearms expiry after the wall clock moves backward instead of leaving controls disabled', () => {
-  const view = render(tree()); admission('10');
+it('rearms expiry after the wall clock moves backward instead of leaving controls disabled', async () => {
+  const view = await render(tree()); await admission('10');
   jest.setSystemTime(990_000);
-  act(() => jest.advanceTimersByTime(10_000));
+  await act(() => jest.advanceTimersByTime(10_000));
   expect(current.waiting).toBe(true);
-  act(() => jest.advanceTimersByTime(10_000));
+  await act(() => jest.advanceTimersByTime(10_000));
   expect(current.waiting).toBe(false); expect(view.getByText(/You can try again now/)).toBeTruthy();
   expect(send).not.toHaveBeenCalled();
 });
-it('rearms a future deadline on foreground after the wall clock moves backward', () => {
-  render(tree()); admission('10');
-  jest.setSystemTime(995_000); act(() => onState('active'));
-  act(() => jest.advanceTimersByTime(14_999)); expect(current.waiting).toBe(true);
-  act(() => jest.advanceTimersByTime(1)); expect(current.waiting).toBe(false); expect(send).not.toHaveBeenCalled();
+it('rearms a future deadline on foreground after the wall clock moves backward', async () => {
+  await render(tree()); await admission('10');
+  jest.setSystemTime(995_000); await act(() => onState('active'));
+  await act(() => jest.advanceTimersByTime(14_999)); expect(current.waiting).toBe(true);
+  await act(() => jest.advanceTimersByTime(1)); expect(current.waiting).toBe(false); expect(send).not.toHaveBeenCalled();
 });
-it.each(['signed-out', 'blocked', 'busy'])('clears cooldown and revokes old response scope on %s', status => {
-  const view = render(tree()); admission(); const stale = apiBackoff.capture();
-  auth(status, null); view.rerender(tree());
+it.each(['signed-out', 'blocked', 'busy'])('clears cooldown and revokes old response scope on %s', async status => {
+  const view = await render(tree()); await admission(); const stale = apiBackoff.capture();
+  auth(status, null); await view.rerender(tree());
   expect(stale.isCurrent()).toBe(false); expect(current.waiting).toBe(false); expect(view.queryByTestId('api-backoff-banner')).toBeNull();
-  auth(); view.rerender(tree()); expect(view.queryByTestId('api-backoff-banner')).toBeNull();
+  auth(); await view.rerender(tree()); expect(view.queryByTestId('api-backoff-banner')).toBeNull();
 });
-it('does not show an expired old-owner banner on direct account replacement', () => {
-  const view = render(tree()); admission(); const stale = apiBackoff.capture();
-  auth('signed-in', '20000000-0000-4000-8000-000000000001'); view.rerender(tree());
+it('does not show an expired old-owner banner on direct account replacement', async () => {
+  const view = await render(tree()); await admission(); const stale = apiBackoff.capture();
+  auth('signed-in', '20000000-0000-4000-8000-000000000001'); await view.rerender(tree());
   expect(stale.isCurrent()).toBe(false); expect(current.waiting).toBe(false); expect(current.expired).toBe(false);
   expect(view.queryByTestId('api-backoff-banner')).toBeNull();
 });
-it('does not show another API origin’s wait', () => {
-  const view = render(tree());
-  act(() => apiBackoff.capture().record('http://192.168.1.31:8000', parseRetryAdvice(429, 'RATE_LIMITED', '10')!));
+it('does not show another API origin’s wait', async () => {
+  const view = await render(tree());
+  await act(() => apiBackoff.capture().record('http://192.168.1.31:8000', parseRetryAdvice(429, 'RATE_LIMITED', '10')!));
   expect(current.waiting).toBe(false); expect(view.queryByTestId('api-backoff-banner')).toBeNull();
 });
-it('clears all process-local scope on provider unmount', () => {
-  const view = render(tree()); admission(); const lease = apiBackoff.capture(); view.unmount();
+it('clears all process-local scope on provider unmount', async () => {
+  const view = await render(tree()); await admission(); const lease = apiBackoff.capture(); await view.unmount();
   expect(lease.isCurrent()).toBe(false); expect(apiBackoff.getAdvice(origin)).toBeUndefined();
 });

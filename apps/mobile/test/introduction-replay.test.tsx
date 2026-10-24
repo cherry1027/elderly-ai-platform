@@ -1,3 +1,5 @@
+import './native-tree';
+import { getComponent } from './component-probe';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, screen, waitFor } from '@testing-library/react-native';
 import { renderRouter } from 'expo-router/testing-library';
@@ -15,6 +17,12 @@ import { useLanguage } from '../src/language';
 import { introCopy } from '../src/intro-copy';
 import { type Language } from '../src/i18n';
 import { PREFERENCES_KEY } from '../src/onboarding/preferences';
+
+jest.mock('../src/screens/IntroductionScreen', () => {
+  const actual = jest.requireActual<typeof import('../src/screens/IntroductionScreen')>('../src/screens/IntroductionScreen');
+  const { observeComponent } = jest.requireActual<typeof import('./component-probe')>('./component-probe');
+  return { ...actual, IntroductionScreen: observeComponent(actual.IntroductionScreen) };
+});
 
 jest.mock('../src/auth/client', () => ({ createMobileAuth: jest.fn() }));
 jest.mock('../src/auth/config', () => ({ readMobileAuthConfig: jest.fn(() => ({
@@ -72,8 +80,8 @@ afterEach(() => { sources.splice(0).forEach(value => value.dispose()); jest.rest
 
 async function replay(language: Language) {
   await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language, completed: true }));
-  const flow = renderRouter(routes, { initialUrl: '/authenticated' });
-  fireEvent.press(await screen.findByRole('button', { name: introCopy[language].replay }));
+  const flow = await renderRouter(routes, { initialUrl: '/authenticated' });
+  await fireEvent.press(await screen.findByRole('button', { name: introCopy[language].replay }));
   await screen.findByRole('header', { name: introCopy[language].scenes[0].title });
   return flow;
 }
@@ -181,10 +189,10 @@ describe('actual Introduction router with verified Settings intent and mocked au
   it.each<Language>(['en', 'sv'])('shows all three scenes and returns directly to Settings in %s', async language => {
     const flow = await replay(language);
     for (const scene of [1, 2] as const) {
-      fireEvent.press(screen.getByRole('button', { name: introCopy[language].next }));
+      await fireEvent.press(screen.getByRole('button', { name: introCopy[language].next }));
       await screen.findByRole('header', { name: introCopy[language].scenes[scene].title });
     }
-    fireEvent.press(screen.getByRole('button', { name: introCopy[language].enter }));
+    await fireEvent.press(screen.getByRole('button', { name: introCopy[language].enter }));
     await screen.findByText('Returned directly');
     expect(flow.getPathname()).toBe('/authenticated');
     expect(screen.queryByText('Public Welcome')).toBeNull();
@@ -195,7 +203,7 @@ describe('actual Introduction router with verified Settings intent and mocked au
   it.each((['en', 'sv'] as const).flatMap(language => ['back', 'skip'].map(action => ({ language, action }))))(
     '$action returns directly to Settings without changing completion in $language', async ({ language, action }) => {
       const flow = await replay(language);
-      fireEvent.press(screen.getByRole('button', { name: action === 'back' ? introCopy[language].back : introCopy[language].skip }));
+      await fireEvent.press(screen.getByRole('button', { name: action === 'back' ? introCopy[language].back : introCopy[language].skip }));
       await screen.findByText('Returned directly');
       expect(flow.getPathname()).toBe('/authenticated');
       expect(screen.queryByText('Public Welcome')).toBeNull();
@@ -209,7 +217,7 @@ describe('actual Introduction router with verified Settings intent and mocked au
       return original(event, handler);
     });
     const flow = await replay(language);
-    act(() => { expect(back?.()).toBe(true); });
+    await act(() => { expect(back?.()).toBe(true); });
     await screen.findByText('Returned directly');
     expect(flow.getPathname()).toBe('/authenticated');
     expect(screen.queryByText('Public Welcome')).toBeNull();
@@ -217,41 +225,41 @@ describe('actual Introduction router with verified Settings intent and mocked au
   it('uses local scene Back before returning and never writes completion for authenticated replay', async () => {
     await replay('en');
     jest.mocked(AsyncStorage.setItem).mockClear();
-    fireEvent.press(screen.getByRole('button', { name: introCopy.en.next }));
+    await fireEvent.press(screen.getByRole('button', { name: introCopy.en.next }));
     await screen.findByRole('header', { name: introCopy.en.scenes[1].title });
-    fireEvent.press(screen.getByRole('button', { name: introCopy.en.back }));
+    await fireEvent.press(screen.getByRole('button', { name: introCopy.en.back }));
     await screen.findByRole('header', { name: introCopy.en.scenes[0].title });
-    fireEvent.press(screen.getByRole('button', { name: introCopy.en.skip }));
+    await fireEvent.press(screen.getByRole('button', { name: introCopy.en.skip }));
     await screen.findByText('Returned directly');
     expect(AsyncStorage.setItem).not.toHaveBeenCalled();
   });
   it('hides replay while checking and resumes the same-owner scenes safely', async () => {
     await replay('sv');
-    const captured = screen.UNSAFE_getByType(IntroductionScreen).props.onSkip;
-    act(() => publish({ status: 'checking', user: null, error: null }));
+    const captured = getComponent(IntroductionScreen).props.onSkip;
+    await act(() => publish({ status: 'checking', user: null, error: null }));
     await waitFor(() => expect(screen.queryByRole('button', { name: introCopy.sv.skip })).toBeNull());
-    act(() => captured());
+    await act(() => captured());
     expect(screen.queryByText('Returned directly')).toBeNull();
-    act(() => publish({ status: 'signed-in', user: a, error: null }));
+    await act(() => publish({ status: 'signed-in', user: a, error: null }));
     await screen.findByRole('header', { name: introCopy.sv.scenes[0].title });
-    fireEvent.press(screen.getByRole('button', { name: introCopy.sv.skip }));
+    await fireEvent.press(screen.getByRole('button', { name: introCopy.sv.skip }));
     await screen.findByText('Returned directly');
   });
   it.each(['signed-out', 'blocked'] as const)('revokes replay on %s and rejects its captured return action', async status => {
     const flow = await replay('en');
-    const captured = screen.UNSAFE_getByType(IntroductionScreen).props.onSkip;
-    act(() => publish({ status, user: null, error: status === 'blocked' ? 'cleanup' : null }));
+    const captured = getComponent(IntroductionScreen).props.onSkip;
+    await act(() => publish({ status, user: null, error: status === 'blocked' ? 'cleanup' : null }));
     await screen.findByRole('header', { name: 'Public Welcome' });
-    act(() => captured());
+    await act(() => captured());
     expect(flow.getPathname()).toBe('/welcome');
     expect(screen.queryByText('Returned directly')).toBeNull();
   });
   it('does not restore the old Settings intent to a different verified account', async () => {
     const flow = await replay('en');
-    const captured = screen.UNSAFE_getByType(IntroductionScreen).props.onSkip;
-    act(() => publish({ status: 'signed-in', user: b, error: null }));
+    const captured = getComponent(IntroductionScreen).props.onSkip;
+    await act(() => publish({ status: 'signed-in', user: b, error: null }));
     await screen.findByText(b.id);
-    act(() => captured());
+    await act(() => captured());
     expect(flow.getPathname()).toBe('/authenticated');
     expect(screen.queryByText('Returned directly')).toBeNull();
     expect(screen.queryByText(a.id)).toBeNull();
@@ -262,7 +270,7 @@ describe('actual Introduction router with verified Settings intent and mocked au
     // Change that clock after mounting; elapsed time alone must not navigate.
     jest.setSystemTime(Date.now() + INTRODUCTION_REPLAY_TTL_MS);
     expect(screen.getByRole('header', { name: introCopy.sv.scenes[0].title })).toBeVisible();
-    fireEvent.press(screen.getByRole('button', { name: introCopy.sv.skip }));
+    await fireEvent.press(screen.getByRole('button', { name: introCopy.sv.skip }));
     await screen.findByRole('header', { name: 'Settings sv' });
     expect(flow.getPathname()).toBe('/authenticated');
     expect(screen.queryByText('Returned directly')).toBeNull();
@@ -270,8 +278,8 @@ describe('actual Introduction router with verified Settings intent and mocked au
   });
   it('does not trust a forged Settings return query as replay authority', async () => {
     await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language: 'en', completed: true }));
-    const flow = renderRouter(routes, { initialUrl: '/introduction?scene=0&returnTo=settings&ownerId=fictional-owner-a' });
-    fireEvent.press(await screen.findByRole('button', { name: introCopy.en.skip }));
+    const flow = await renderRouter(routes, { initialUrl: '/introduction?scene=0&returnTo=settings&ownerId=fictional-owner-a' });
+    await fireEvent.press(await screen.findByRole('button', { name: introCopy.en.skip }));
     await screen.findByRole('header', { name: 'Public Welcome' });
     expect(flow.getPathname()).toBe('/welcome');
     expect(screen.queryByText('Returned directly')).toBeNull();

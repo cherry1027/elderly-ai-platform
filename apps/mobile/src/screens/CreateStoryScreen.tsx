@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ComponentRef, type Ref } from 'react';
 import { useApiBackoff } from '../api/ApiBackoff';
 import { AccessibilityInfo, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import {
@@ -11,6 +11,7 @@ import { Screen, screenStyles } from '../components/Screen';
 import { createStoryCopy } from '../create-story-copy';
 import { accessibilityLanguages, type Language } from '../i18n';
 import { colors, headingFont, layout } from '../theme';
+import { useGuardedLeave, type LeaveHandle } from '../navigation/useGuardedLeave';
 
 export type CreateStoryState =
   | { status: 'idle' }
@@ -25,9 +26,10 @@ interface CreateStoryScreenProps {
   onSubmit: (input: CreateStoryProjectInput) => void;
   onBack: () => void;
   onSignOut: () => void;
+  leaveRef?: Ref<LeaveHandle>;
 }
 
-export function CreateStoryScreen({ language, state, serviceAvailable, onSubmit, onBack, onSignOut }: CreateStoryScreenProps) {
+export function CreateStoryScreen({ language, state, serviceAvailable, onSubmit, onBack, onSignOut, leaveRef }: CreateStoryScreenProps) {
   const text = createStoryCopy[language];
   const { waiting } = useApiBackoff();
   const [title, setTitle] = useState('');
@@ -35,7 +37,7 @@ export function CreateStoryScreen({ language, state, serviceAvailable, onSubmit,
   const [validation, setValidation] = useState<CreateStoryInputError['kind'] | null>(null);
   const [validationAttempt, setValidationAttempt] = useState(0);
   const [focused, setFocused] = useState<string | null>(null);
-  const scrollView = useRef<ScrollView>(null);
+  const scrollView = useRef<ComponentRef<typeof ScrollView>>(null);
   const layoutOffsets = useRef({ content: 0, form: 0, title: 0 });
   const revealPending = useRef(false);
   const submitted = useRef(false);
@@ -43,13 +45,18 @@ export function CreateStoryScreen({ language, state, serviceAvailable, onSubmit,
   const uncertain = state.status === 'error' && state.uncertain;
   const authenticationFailed = state.status === 'error' && state.error === 'authentication';
   const disabled = saving || uncertain || authenticationFailed || state.status === 'success';
+  const clearDraft = () => { setTitle(''); clearValidation(); Keyboard.dismiss(); };
+  const guard = useGuardedLeave({ language, handleRef: leaveRef,
+    dirty: state.status !== 'success' && (title !== '' || projectLanguage !== language),
+    uncertain: saving || uncertain, onDiscard: clearDraft, onCheckSavedResult: onBack,
+    checkDisabled: waiting || saving || authenticationFailed });
 
   // The controller owns request cancellation and the API lock. This also ignores
   // repeated native button events before its next state reaches the form.
   useEffect(() => { submitted.current = false; }, [state]);
 
   const revealTitleError = useCallback(() => {
-    if (!revealPending.current) return;
+    if (!revealPending.current || Keyboard.isVisible()) return;
     const { content, form, title: field } = layoutOffsets.current;
     scrollView.current?.scrollTo({ y: Math.max(0, content + form + field - 16), animated: false });
   }, []);
@@ -93,11 +100,11 @@ export function CreateStoryScreen({ language, state, serviceAvailable, onSubmit,
   }
 
   function leave(callback: () => void) {
-    setTitle(''); clearValidation(); Keyboard.dismiss(); callback();
+    guard.requestLeave(() => { clearDraft(); callback(); });
   }
 
-  return <KeyboardAvoidingView style={styles.keyboard} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-    <Screen scrollViewRef={scrollView} onContentLayout={event => {
+  return <KeyboardAvoidingView style={styles.keyboard} enabled={Platform.OS !== 'ios'} behavior="height">
+    <Screen keyboardAware scrollViewRef={scrollView} onContentLayout={event => {
       layoutOffsets.current.content = event.nativeEvent.layout.y; revealTitleError();
     }}>
       <MemyBrand />
@@ -134,7 +141,7 @@ export function CreateStoryScreen({ language, state, serviceAvailable, onSubmit,
               accessibilityLabel={text.titleLabel} accessibilityHint={validation ? `${text.validation[validation]} ${text.titleHelp}` : text.titleHelp}
               accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling editable={!disabled}
               style={[styles.input, focused === 'title' && styles.focused]} autoCapitalize="sentences"
-              autoCorrect returnKeyType="done" onSubmitEditing={() => Keyboard.dismiss()}
+              autoCorrect returnKeyType="done" submitBehavior="blurAndSubmit" onSubmitEditing={() => Keyboard.dismiss()}
               onFocus={() => setFocused('title')} onBlur={() => setFocused(null)} />
             <Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.help}>{text.titleHelp}</Text>
           </View>
@@ -173,6 +180,7 @@ export function CreateStoryScreen({ language, state, serviceAvailable, onSubmit,
         <LargeButton label={text.signOut} language={language} variant="secondary" onPress={() => leave(onSignOut)} />
       </View>
     </Screen>
+    {guard.dialog}
   </KeyboardAvoidingView>;
 }
 

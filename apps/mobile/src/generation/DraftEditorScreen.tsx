@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ComponentRef } from 'react';
 import { AccessibilityInfo, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView,
   StyleSheet, Text, TextInput, View } from 'react-native';
 import type { StoryDraft } from '../api/story-drafts';
@@ -43,7 +43,7 @@ export function DraftEditorScreen({ language, storyLanguage, title, state, onCha
   onRetry, onUseLatest, onKeepMine, onBack, onSignOut }: DraftEditorScreenProps) {
   const text = draftEditingCopy[language], locale = accessibilityLanguages[language];
   const { waiting } = useApiBackoff();
-  const scroll = useRef<ScrollView>(null);
+  const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
   const positions = useRef({ content: 0, form: 0, notice: 0 });
   const submitted = useRef(false);
   const [focused, setFocused] = useState(false);

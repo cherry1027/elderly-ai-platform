@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ComponentRef, type Ref } from 'react';
 import { useApiBackoff } from '../api/ApiBackoff';
 import { AccessibilityInfo, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import {
@@ -11,6 +11,7 @@ import { Screen, screenStyles } from '../components/Screen';
 import { accessibilityLanguages, type Language } from '../i18n';
 import { storyDetailsCopy } from '../story-details-copy';
 import { colors, headingFont, layout } from '../theme';
+import { useGuardedLeave, type LeaveHandle } from '../navigation/useGuardedLeave';
 
 export type EditStoryState =
   | { status: 'idle' }
@@ -26,6 +27,7 @@ interface EditStoryScreenProps {
   onSubmit: (input: UpdateStoryProjectInput) => void;
   onBack: () => void;
   onSignOut: () => void;
+  leaveRef?: Ref<LeaveHandle>;
 }
 
 function fieldError(error: unknown): FieldError {
@@ -34,7 +36,7 @@ function fieldError(error: unknown): FieldError {
   return { field: 'title', kind: 'payload' };
 }
 
-export function EditStoryScreen({ language, project, state, onSubmit, onBack, onSignOut }: EditStoryScreenProps) {
+export function EditStoryScreen({ language, project, state, onSubmit, onBack, onSignOut, leaveRef }: EditStoryScreenProps) {
   const text = storyDetailsCopy[language];
   const { waiting } = useApiBackoff();
   const [title, setTitle] = useState(project.title);
@@ -42,7 +44,7 @@ export function EditStoryScreen({ language, project, state, onSubmit, onBack, on
   const [validation, setValidation] = useState<FieldError | null>(null);
   const [validationAttempt, setValidationAttempt] = useState(0);
   const [focused, setFocused] = useState<string | null>(null);
-  const scrollView = useRef<ScrollView>(null);
+  const scrollView = useRef<ComponentRef<typeof ScrollView>>(null);
   const offsets = useRef({ content: 0, form: 0, title: 0, description: 0 });
   const revealPending = useRef<FieldError['field'] | null>(null);
   const serviceRevealPending = useRef(false);
@@ -52,11 +54,19 @@ export function EditStoryScreen({ language, project, state, onSubmit, onBack, on
   const disabled = saving || uncertain || (state.status === 'error' && state.error === 'authentication');
   const message = validation ? validation.kind === 'payload' ? text.errors.validation : text.validation[validation.kind] : null;
   const serviceMessage = state.status === 'error' ? state.error === 'configuration' ? text.unavailable : text.errors[state.error] : null;
+  const clearDraft = () => {
+    serviceRevealPending.current = false;
+    setTitle(''); setDescription(''); clearValidation(); Keyboard.dismiss();
+  };
+  const guard = useGuardedLeave({ language, handleRef: leaveRef,
+    dirty: title !== project.title || description !== (project.description ?? ''), uncertain: saving || uncertain,
+    onDiscard: clearDraft, onCheckSavedResult: onBack,
+    checkDisabled: waiting || saving || (state.status === 'error' && state.error === 'authentication') });
 
   useEffect(() => { submitted.current = false; }, [state]);
   const revealError = useCallback(() => {
     const field = revealPending.current;
-    if (!field && !serviceRevealPending.current) return;
+    if (Keyboard.isVisible() || (!field && !serviceRevealPending.current)) return;
     scrollView.current?.scrollTo({ y: Math.max(0, offsets.current.content + offsets.current.form + (field ? offsets.current[field] : 0) - 16), animated: false });
   }, []);
   useEffect(() => {
@@ -98,8 +108,7 @@ export function EditStoryScreen({ language, project, state, onSubmit, onBack, on
     clearValidation(); submitted.current = true; Keyboard.dismiss(); onSubmit(input);
   }
   function leave(callback: () => void) {
-    serviceRevealPending.current = false;
-    setTitle(''); setDescription(''); clearValidation(); Keyboard.dismiss(); callback();
+    guard.requestLeave(() => { clearDraft(); callback(); });
   }
 
   function alert(field: FieldError['field']) {
@@ -108,8 +117,8 @@ export function EditStoryScreen({ language, project, state, onSubmit, onBack, on
       accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.notice}>{message}</Text> : null;
   }
 
-  return <KeyboardAvoidingView style={styles.keyboard} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-    <Screen scrollViewRef={scrollView} onContentLayout={event => { offsets.current.content = event.nativeEvent.layout.y; revealError(); }}>
+  return <KeyboardAvoidingView style={styles.keyboard} enabled={Platform.OS !== 'ios'} behavior="height">
+    <Screen keyboardAware scrollViewRef={scrollView} onContentLayout={event => { offsets.current.content = event.nativeEvent.layout.y; revealError(); }}>
       <MemyBrand />
       <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]}
         allowFontScaling style={[screenStyles.heading, styles.heading]}>{text.editTitle}</Text>
@@ -128,7 +137,7 @@ export function EditStoryScreen({ language, project, state, onSubmit, onBack, on
             accessibilityLabel={text.titleLabel} accessibilityHint={validation?.field === 'title' ? `${message} ${text.titleHelp}` : text.titleHelp}
             accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling editable={!disabled}
             style={[styles.input, focused === 'title' && styles.focused]} autoCapitalize="sentences" autoCorrect
-            returnKeyType="done" onSubmitEditing={() => Keyboard.dismiss()}
+            returnKeyType="done" submitBehavior="blurAndSubmit" onSubmitEditing={() => Keyboard.dismiss()}
             onFocus={() => { serviceRevealPending.current = false; setFocused('title'); }} onBlur={() => setFocused(null)} />
           <Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.help}>{text.titleHelp}</Text>
         </View>
@@ -170,6 +179,7 @@ export function EditStoryScreen({ language, project, state, onSubmit, onBack, on
         <LargeButton label={text.signOut} language={language} variant="secondary" onPress={() => leave(onSignOut)} />
       </View>
     </Screen>
+    {guard.dialog}
   </KeyboardAvoidingView>;
 }
 

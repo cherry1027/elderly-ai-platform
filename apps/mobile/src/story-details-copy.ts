@@ -3,7 +3,12 @@ import { createStoryCopy } from './create-story-copy';
 export const storyDetailsCopy = {
   en: {
     title: 'My Story', editTitle: 'Edit Story', edit: 'Edit Story',
-    conversation: 'Start / Continue Conversation', generate: 'Generate My Story',
+    conversation: 'Share Memories', generate: 'My Autobiography', review: 'Review Memories',
+    introduction: 'Choose how you would like to work on your story.',
+    shareHelp: 'Start or continue sharing memories in this story’s language.',
+    reviewHelp: 'Check saved memories and their original sources. Opening review does not start a new conversation.',
+    autobiographyHelp: 'Read your selected saved autobiography, or choose explicitly when to create one.',
+    more: 'More Story Actions', metadataHelp: 'Change the story name and description, not the autobiography text.',
     loading: 'Opening your story…', refresh: 'Reload story', back: 'Back to My Stories',
     cancel: 'Cancel changes', signOut: 'Sign Out', save: 'Save Changes', saving: 'Saving…',
     saved: 'Your changes were saved.', descriptionLabel: 'Description (optional)',
@@ -33,7 +38,12 @@ export const storyDetailsCopy = {
   },
   sv: {
     title: 'Min berättelse', editTitle: 'Redigera berättelse', edit: 'Redigera berättelse',
-    conversation: 'Starta / Fortsätt samtal', generate: 'Skapa mitt berättelseutkast',
+    conversation: 'Dela minnen', generate: 'Min självbiografi', review: 'Granska minnen',
+    introduction: 'Välj hur du vill arbeta med din berättelse.',
+    shareHelp: 'Börja eller fortsätt dela minnen på berättelsens språk.',
+    reviewHelp: 'Granska sparade minnen och deras ursprungliga källor. Granskningen startar inte ett nytt samtal.',
+    autobiographyHelp: 'Läs din valda sparade självbiografi eller välj själv när du vill skapa en.',
+    more: 'Fler berättelseåtgärder', metadataHelp: 'Ändra berättelsens namn och beskrivning, inte självbiografins text.',
     loading: 'Öppnar din berättelse…', refresh: 'Ladda om berättelsen', back: 'Tillbaka till Mina berättelser',
     cancel: 'Avbryt ändringar', signOut: 'Logga ut', save: 'Spara ändringar', saving: 'Sparar…',
     saved: 'Dina ändringar har sparats.', descriptionLabel: 'Beskrivning (valfritt)',

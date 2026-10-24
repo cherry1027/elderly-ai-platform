@@ -20,6 +20,7 @@ import Confirm from '../src/app/auth/confirm';
 import { PREFERENCES_KEY } from '../src/onboarding/preferences';
 import { storiesCopy } from '../src/stories-copy';
 import { storyDetailsCopy } from '../src/story-details-copy';
+import { leaveCopy } from '../src/navigation/useGuardedLeave';
 import { copy, type Language as Locale } from '../src/i18n';
 import { AuthError } from '../src/auth/errors';
 import { authCopy } from '../src/auth-copy';
@@ -59,30 +60,32 @@ beforeEach(async () => {
 });
 async function openDetails(language: Locale = 'en') {
   await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language, completed: true }));
-  const flow = renderRouter(routes, { initialUrl: '/' });
+  const flow = await renderRouter(routes, { initialUrl: '/' });
   await openMyStories(language);
   await screen.findByText('Cached list title');
-  fireEvent.press(screen.getByRole('button', { name: `${storiesCopy[language].openStory}: Cached list title` }));
+  await fireEvent.press(screen.getByRole('button', { name: `${storiesCopy[language].openStory}: Cached list title` }));
   await screen.findByText('Fresh selected title');
   return flow;
 }
 async function editAndSave(title = 'Draft corrected title') {
-  fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.edit }));
-  fireEvent.changeText(screen.getByLabelText(storyDetailsCopy.en.titleLabel), title);
-  fireEvent.changeText(screen.getByLabelText(storyDetailsCopy.en.descriptionLabel), 'Private pending draft');
-  fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.save }));
+  await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.more }));
+  await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.edit }));
+  await fireEvent.changeText(screen.getByLabelText(storyDetailsCopy.en.titleLabel), title);
+  await fireEvent.changeText(screen.getByLabelText(storyDetailsCopy.en.descriptionLabel), 'Private pending draft');
+  await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.save }));
   await waitFor(() => expect(updateStoryProject).toHaveBeenCalledTimes(1));
 }
 
 it.each<Locale>(['en', 'sv'])('opens only fresh selected metadata in %s and returns to a newly fetched list', async language => {
   await openDetails(language);
   expect(screen.queryByText('Cached list title')).toBeNull();
+  await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy[language].more }));
   expect(screen.getByText('Private selected description')).toBeOnTheScreen();
   expect(getStoryProject).toHaveBeenCalledTimes(1);
   const call = jest.mocked(getStoryProject).mock.calls[0][0];
   expect(call.projectId).toBe(id); await call.getAccessToken();
   expect(auth.getAccessToken).toHaveBeenCalledWith('account-a');
-  fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy[language].back }));
+  await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy[language].back }));
   await screen.findByText('Cached list title'); expect(listStoryProjects).toHaveBeenCalledTimes(2);
   expect(screen.queryByText('Private selected description')).toBeNull();
   expect(updateStoryProject).not.toHaveBeenCalled(); expect(globalThis.fetch).not.toHaveBeenCalled();
@@ -90,7 +93,7 @@ it.each<Locale>(['en', 'sv'])('opens only fresh selected metadata in %s and retu
 
 it.each(['checking', 'signed-out', 'busy', 'blocked'] as const)('cannot enter details, edit or request metadata for %s authentication', async status => {
   snapshot = { status, user: null, error: null };
-  renderRouter(routes, { initialUrl: `/authenticated?projectId=${id}&edit=true` });
+  await renderRouter(routes, { initialUrl: `/authenticated?projectId=${id}&edit=true` });
   await waitFor(() => expect(auth.restore).toHaveBeenCalled());
   expect(getStoryProject).not.toHaveBeenCalled(); expect(updateStoryProject).not.toHaveBeenCalled();
   expect(auth.getAccessToken).not.toHaveBeenCalled();
@@ -98,7 +101,7 @@ it.each(['checking', 'signed-out', 'busy', 'blocked'] as const)('cannot enter de
 });
 
 it('does not trust URL parameters to select metadata or trigger editing', async () => {
-  renderRouter(routes, { initialUrl: `/authenticated?projectId=${id}&edit=true&title=Injected` });
+  await renderRouter(routes, { initialUrl: `/authenticated?projectId=${id}&edit=true&title=Injected` });
   await openMyStories(); await screen.findByText('Cached list title');
   expect(getStoryProject).not.toHaveBeenCalled(); expect(updateStoryProject).not.toHaveBeenCalled();
   expect(screen.queryByLabelText(storyDetailsCopy.en.titleLabel)).toBeNull();
@@ -106,8 +109,8 @@ it('does not trust URL parameters to select metadata or trigger editing', async 
 
 it('ignores a malformed list selection before any detail request', async () => {
   jest.mocked(listStoryProjects).mockResolvedValueOnce([project({ id: '../private', title: 'Malformed synthetic row' })]);
-  renderRouter(routes, { initialUrl: '/' }); await openMyStories(); await screen.findByText('Malformed synthetic row');
-  fireEvent.press(screen.getByRole('button', { name: `${storiesCopy.en.openStory}: Malformed synthetic row` }));
+  await renderRouter(routes, { initialUrl: '/' }); await openMyStories(); await screen.findByText('Malformed synthetic row');
+  await fireEvent.press(screen.getByRole('button', { name: `${storiesCopy.en.openStory}: Malformed synthetic row` }));
   expect(getStoryProject).not.toHaveBeenCalled(); expect(updateStoryProject).not.toHaveBeenCalled();
   expect(screen.getByText('Malformed synthetic row')).toBeOnTheScreen();
 });
@@ -115,17 +118,20 @@ it('ignores a malformed list selection before any detail request', async () => {
 it('shows only confirmed PATCH metadata and reloads the server list without optimistic insertion', async () => {
   await openDetails(); await editAndSave(); await screen.findByText(storyDetailsCopy.en.saved);
   expect(screen.getByText('Confirmed update')).toBeOnTheScreen();
-  fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.back }));
+  await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.back }));
   await screen.findByText('Cached list title');
   expect(listStoryProjects).toHaveBeenCalledTimes(2); expect(screen.queryByText('Confirmed update')).toBeNull();
   expect(await AsyncStorage.getAllKeys()).toEqual([PREFERENCES_KEY]);
 });
 
-it('drops private drafts and cancels a pending PATCH immediately on Sign Out', async () => {
+it('warns before Sign Out, then drops private drafts and cancels the pending PATCH after explicit leave', async () => {
   let finish!: (value: StoryProject) => void;
   jest.mocked(updateStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
   await openDetails(); await editAndSave(); const signal = jest.mocked(updateStoryProject).mock.calls[0][0].signal!;
-  fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.signOut }));
+  await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.signOut }));
+  expect(auth.signOut).not.toHaveBeenCalled(); expect(signal.aborted).toBe(false);
+  expect(screen.getByText(leaveCopy.en.uncertain)).toBeOnTheScreen();
+  await fireEvent.press(screen.getByRole('button', { name: leaveCopy.en.leave }));
   await screen.findByRole('header', { name: copy.en.welcomeTitle }); expect(signal.aborted).toBe(true);
   expect(screen.queryByLabelText(storyDetailsCopy.en.titleLabel)).toBeNull();
   await act(async () => { finish(project({ title: 'Late private update' })); });
@@ -136,13 +142,13 @@ it('cannot expose account A details or a late PATCH to account B', async () => {
   let finish!: (value: StoryProject) => void;
   jest.mocked(updateStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
   await openDetails(); await editAndSave(); const signal = jest.mocked(updateStoryProject).mock.calls[0][0].signal!;
-  act(() => publish(account('account-b')));
+  await act(() => publish(account('account-b')));
   await openSettings(); await screen.findByText('account-b@example.test'); await openMyStories(); expect(signal.aborted).toBe(true);
   expect(screen.queryByLabelText(storyDetailsCopy.en.titleLabel)).toBeNull();
   await act(async () => { finish(project({ title: 'Account A late update' })); });
   expect(screen.queryByText('Account A late update')).toBeNull();
   await screen.findByText('Cached list title');
-  fireEvent.press(screen.getByRole('button', { name: `${storiesCopy.en.openStory}: Cached list title` }));
+  await fireEvent.press(screen.getByRole('button', { name: `${storiesCopy.en.openStory}: Cached list title` }));
   await screen.findByText('Fresh selected title');
   await jest.mocked(getStoryProject).mock.calls[1][0].getAccessToken(); expect(auth.getAccessToken).toHaveBeenLastCalledWith('account-b');
 });
@@ -150,13 +156,13 @@ it('cannot expose account A details or a late PATCH to account B', async () => {
 it('cancels a pending GET and ignores private data when the session needs verification again', async () => {
   let finish!: (value: StoryProject) => void;
   jest.mocked(getStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-  renderRouter(routes, { initialUrl: '/' }); await openMyStories(); await screen.findByText('Cached list title');
-  fireEvent.press(screen.getByRole('button', { name: `${storiesCopy.en.openStory}: Cached list title` }));
+  await renderRouter(routes, { initialUrl: '/' }); await openMyStories(); await screen.findByText('Cached list title');
+  await fireEvent.press(screen.getByRole('button', { name: `${storiesCopy.en.openStory}: Cached list title` }));
   await waitFor(() => expect(getStoryProject).toHaveBeenCalledTimes(1));
   const signal = jest.mocked(getStoryProject).mock.calls[0][0].signal!;
-  act(() => publish({ status: 'checking', user: null, error: null })); expect(signal.aborted).toBe(true);
+  await act(() => publish({ status: 'checking', user: null, error: null })); expect(signal.aborted).toBe(true);
   await act(async () => { finish(project({ title: 'Late GET private metadata' })); });
-  act(() => publish(account())); await openMyStories(); await screen.findByText('Cached list title');
+  await act(() => publish(account())); await openMyStories(); await screen.findByText('Cached list title');
   expect(screen.queryByText('Late GET private metadata')).toBeNull(); expect(updateStoryProject).not.toHaveBeenCalled();
 });
 
@@ -164,26 +170,32 @@ it('cancels editing on native route blur and returns to a fresh list without rep
   let finish!: (value: StoryProject) => void;
   jest.mocked(updateStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
   await openDetails(); await editAndSave(); const signal = jest.mocked(updateStoryProject).mock.calls[0][0].signal!;
-  act(() => router.push('/outside' as '/')); await screen.findByText('Another test route'); expect(signal.aborted).toBe(true);
+  await act(() => router.push('/outside' as '/')); await screen.findByText('Another test route'); expect(signal.aborted).toBe(true);
   await act(async () => { finish(project({ title: 'Unfocused late metadata' })); });
-  act(() => router.back()); await openMyStories(); await screen.findByText('Cached list title');
+  await act(() => router.back()); await openMyStories(); await screen.findByText('Cached list title');
   expect(screen.queryByText('Unfocused late metadata')).toBeNull(); expect(screen.queryByLabelText(storyDetailsCopy.en.titleLabel)).toBeNull();
   expect(updateStoryProject).toHaveBeenCalledTimes(1); expect(listStoryProjects).toHaveBeenCalledTimes(2);
 });
 
-it('reconciles an uncertain PATCH only through explicit cancellation and a fresh GET', async () => {
+it('reconciles an uncertain PATCH only through an explicit saved-result check and fresh GET', async () => {
   jest.mocked(updateStoryProject).mockRejectedValueOnce(new StoryProjectsError('timeout', undefined, true));
   await openDetails(); await editAndSave(); await screen.findByText(storyDetailsCopy.en.uncertain);
-  fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.save })); expect(updateStoryProject).toHaveBeenCalledTimes(1);
-  fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.cancel }));
+  await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.save })); expect(updateStoryProject).toHaveBeenCalledTimes(1);
+  await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.cancel }));
+  expect(getStoryProject).toHaveBeenCalledTimes(1);
+  await fireEvent.press(screen.getByRole('button', { name: leaveCopy.en.check }));
   await screen.findByText('Fresh selected title'); expect(getStoryProject).toHaveBeenCalledTimes(2);
   expect(screen.queryByText(storyDetailsCopy.en.saved)).toBeNull();
 });
 
 it('preserves cleanup-failure handling without showing the prior account or draft', async () => {
-  await openDetails(); fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.edit }));
-  fireEvent.changeText(screen.getByLabelText(storyDetailsCopy.en.titleLabel), 'Private unfinished draft');
+  await openDetails(); await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.more }));
+  await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.edit }));
+  await fireEvent.changeText(screen.getByLabelText(storyDetailsCopy.en.titleLabel), 'Private unfinished draft');
   jest.mocked(auth.signOut).mockImplementationOnce(async () => { publish({ status: 'blocked', user: null, error: 'cleanup' }); throw new AuthError('cleanup'); });
-  fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.signOut })); await screen.findByText(authCopy.en.errors.cleanup);
+  await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.signOut }));
+  expect(auth.signOut).not.toHaveBeenCalled();
+  await fireEvent.press(screen.getByRole('button', { name: leaveCopy.en.discard }));
+  await screen.findByText(authCopy.en.errors.cleanup);
   expect(screen.queryByLabelText(storyDetailsCopy.en.titleLabel)).toBeNull(); expect(screen.queryByText('Private selected description')).toBeNull();
 });

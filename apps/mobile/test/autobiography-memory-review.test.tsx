@@ -1,3 +1,4 @@
+import { getComponent } from './component-probe';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { MemoryReview } from '../src/memories/MemoryReview';
 import { MemoryReviewScreen } from '../src/memories/MemoryReviewScreen';
@@ -8,6 +9,13 @@ import { generateStoryDraft } from '../src/api/story-drafts';
 import { SIMULATED_TRANSCRIPT_NOTICE } from '../src/api/audio-transcripts';
 import { readStoryPreviewEnabled } from '../src/development/story-preview-config';
 import type { Language } from '../src/i18n';
+
+
+jest.mock('../src/memories/MemoryReviewScreen', () => {
+  const actual = jest.requireActual<typeof import('../src/memories/MemoryReviewScreen')>('../src/memories/MemoryReviewScreen');
+  const { observeComponent } = jest.requireActual<typeof import('./component-probe')>('./component-probe');
+  return { ...actual, MemoryReviewScreen: observeComponent(actual.MemoryReviewScreen) };
+});
 
 jest.mock('../src/api/memory-review', () => ({ ...jest.requireActual('../src/api/memory-review'),
   listMemoryReview: jest.fn(), patchMemory: jest.fn() }));
@@ -37,9 +45,9 @@ const question: MemoryClarification = { id: '55000000-0000-4000-8000-00000000000
   status: 'open', resolution: null, created_at: stamp, resolved_at: null };
 const token = jest.fn(async (_owner: string) => 'synthetic-user-access-token');
 const back = jest.fn(); const signOut = jest.fn();
-function presentation() { return screen.UNSAFE_getByType(MemoryReviewScreen).props; }
-function open(language: Language) {
-  return render(<MemoryReview language={language} title="A fictional saved story" ownerId={ownerId}
+function presentation() { return getComponent(MemoryReviewScreen).props; }
+async function open(language: Language) {
+  return await render(<MemoryReview language={language} title="A fictional saved story" ownerId={ownerId}
     projectId={projectId} sessionId={sessionId} sessionLanguage={language} baseUrl="http://192.168.20.30:8000"
     getAccessToken={token} onBack={back} onSignOut={signOut} />);
 }
@@ -56,12 +64,12 @@ it.each<Language>(['en', 'sv'])('supports the real %s memory-correction UI witho
     .mockResolvedValue({ memories: [saved], clarifications: [], complete: true });
   jest.mocked(listConversationMessages).mockResolvedValue({ messages: [originalSource], complete: true });
   jest.mocked(patchMemory).mockResolvedValue(saved);
-  open(language); await screen.findByRole('radio', { name: text.correct });
+  await open(language); await screen.findByRole('radio', { name: text.correct });
   expect(screen.getByText(text.simulated)).toBeOnTheScreen(); expect(patchMemory).not.toHaveBeenCalled();
-  fireEvent.press(screen.getByRole('radio', { name: text.correct }));
-  fireEvent.changeText(screen.getByLabelText(text.correctionLabel), '1975');
+  await fireEvent.press(screen.getByRole('radio', { name: text.correct }));
+  await fireEvent.changeText(screen.getByLabelText(text.correctionLabel), '1975');
   expect(patchMemory).not.toHaveBeenCalled(); expect(generateStoryDraft).not.toHaveBeenCalled();
-  fireEvent.press(screen.getByRole('button', { name: text.save }));
+  await fireEvent.press(screen.getByRole('button', { name: text.save }));
   await screen.findByText(text.saved);
   expect(patchMemory).toHaveBeenCalledTimes(1);
   const request = jest.mocked(patchMemory).mock.calls[0][0];
@@ -73,9 +81,9 @@ it.each<Language>(['en', 'sv'])('supports the real %s memory-correction UI witho
   expect(presentation().state.memories[0]).toMatchObject({ value: 'Malmö', year: 1974,
     evidence: evidence(language), corrected_value: '1975', source_message_id: sourceId, version: 2 });
   expect(screen.getByText('1975')).toBeOnTheScreen(); expect(screen.getByText(`${text.originalYear}: 1974`)).toBeOnTheScreen();
-  fireEvent.press(screen.getByRole('button', { name: text.showSource }));
+  await fireEvent.press(screen.getByRole('button', { name: text.showSource }));
   expect(screen.getByText(originalSource.text)).toBeOnTheScreen();
-  fireEvent.press(screen.getByRole('button', { name: text.back })); expect(back).toHaveBeenCalledTimes(1);
+  await fireEvent.press(screen.getByRole('button', { name: text.back })); expect(back).toHaveBeenCalledTimes(1);
   expect(generateStoryDraft).not.toHaveBeenCalled(); expect(globalThis.fetch).not.toHaveBeenCalled();
 });
 
@@ -88,13 +96,13 @@ it('does not silently confirm or reject a different conflicting candidate when t
     .mockResolvedValue({ memories: [saved, other], clarifications: [question], complete: true });
   jest.mocked(listConversationMessages).mockResolvedValue({ messages: [originalSource], complete: true });
   jest.mocked(patchMemory).mockResolvedValue(saved);
-  open('en'); await screen.findByRole('radio', { name: text.correct });
-  fireEvent.press(screen.getByRole('radio', { name: text.correct }));
-  fireEvent.changeText(screen.getByLabelText(text.correctionLabel), '1975');
-  fireEvent.press(screen.getByRole('button', { name: text.save })); await screen.findByText(text.saved);
+  await open('en'); await screen.findByRole('radio', { name: text.correct });
+  await fireEvent.press(screen.getByRole('radio', { name: text.correct }));
+  await fireEvent.changeText(screen.getByLabelText(text.correctionLabel), '1975');
+  await fireEvent.press(screen.getByRole('button', { name: text.save })); await screen.findByText(text.saved);
   expect(presentation().state.memories).toEqual([saved, other]); expect(presentation().state.clarifications).toEqual([question]);
   expect(patchMemory).toHaveBeenCalledTimes(1);
-  fireEvent.press(screen.getByRole('button', { name: text.next }));
+  await fireEvent.press(screen.getByRole('button', { name: text.next }));
   await waitFor(() => expect(screen.getByText(question.question)).toBeOnTheScreen());
   expect(screen.getByText(`${text.status}: ${text.statuses.pending}`)).toBeOnTheScreen();
   expect(screen.getByText(text.questionHelp)).toBeOnTheScreen();
@@ -104,10 +112,10 @@ it('does not silently confirm or reject a different conflicting candidate when t
 it('leaves candidate review read-only until an explicit choice is saved', async () => {
   jest.mocked(listMemoryReview).mockResolvedValue({ memories: [fact('en')], clarifications: [], complete: true });
   jest.mocked(listConversationMessages).mockResolvedValue({ messages: [source('en')], complete: true });
-  open('en'); await screen.findByRole('radio', { name: memoryReviewCopy.en.confirm });
-  fireEvent.press(screen.getByRole('radio', { name: memoryReviewCopy.en.confirm }));
+  await open('en'); await screen.findByRole('radio', { name: memoryReviewCopy.en.confirm });
+  await fireEvent.press(screen.getByRole('radio', { name: memoryReviewCopy.en.confirm }));
   expect(patchMemory).not.toHaveBeenCalled();
-  act(() => presentation().onBack());
+  await act(() => presentation().onBack());
   expect(back).toHaveBeenCalledTimes(1); expect(patchMemory).not.toHaveBeenCalled();
   expect(generateStoryDraft).not.toHaveBeenCalled(); expect(globalThis.fetch).not.toHaveBeenCalled();
 });

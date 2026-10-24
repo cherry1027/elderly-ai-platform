@@ -3,6 +3,15 @@ import { CreateStory } from '../src/stories/CreateStory';
 import { readMobileApiConfig } from '../src/api/config';
 import { createStoryProject, StoryProjectsError, type StoryProject } from '../src/api/story-projects';
 import { createStoryCopy } from '../src/create-story-copy';
+import { leaveCopy } from '../src/navigation/useGuardedLeave';
+import { CreateStoryScreen } from '../src/screens/CreateStoryScreen';
+import { maybeComponent } from './component-probe';
+
+jest.mock('../src/screens/CreateStoryScreen', () => {
+  const actual = jest.requireActual<typeof import('../src/screens/CreateStoryScreen')>('../src/screens/CreateStoryScreen');
+  const { observeComponent } = jest.requireActual<typeof import('./component-probe')>('./component-probe');
+  return { ...actual, CreateStoryScreen: observeComponent(actual.CreateStoryScreen) };
+});
 
 jest.mock('../src/api/config', () => ({ readMobileApiConfig: jest.fn() }));
 jest.mock('../src/api/story-projects', () => ({ ...jest.requireActual('../src/api/story-projects'), createStoryProject: jest.fn() }));
@@ -12,20 +21,20 @@ const onBack = jest.fn(); const onSignOut = jest.fn();
 const text = createStoryCopy.en;
 const project = (title = 'My childhood'): StoryProject => ({ id: '10000000-0000-4000-8000-000000000001', title,
   description: null, language: 'en', status: 'draft', created_at: '2026-10-20T10:00:00Z', updated_at: '2026-10-20T10:00:00Z' });
-const open = () => render(<CreateStory language="en" user={user} getAccessToken={token} onBack={onBack} onSignOut={onSignOut} />);
-function save(title = '  My childhood  ') {
-  fireEvent.changeText(screen.getByLabelText(text.titleLabel), title);
-  fireEvent.press(screen.getByRole('button', { name: text.create }));
+const open = async () => await render(<CreateStory language="en" user={user} getAccessToken={token} onBack={onBack} onSignOut={onSignOut} />);
+async function save(title = '  My childhood  ') {
+  await fireEvent.changeText(screen.getByLabelText(text.titleLabel), title);
+  await fireEvent.press(screen.getByRole('button', { name: text.create }));
 }
 beforeEach(() => {
   jest.mocked(readMobileApiConfig).mockReturnValue({ baseUrl: 'http://192.168.20.30:8000' });
   jest.mocked(createStoryProject).mockResolvedValue(project());
 });
-it('does not create anything merely by opening the form', () => {
-  open(); expect(createStoryProject).not.toHaveBeenCalled(); expect(token).not.toHaveBeenCalled();
+it('does not create anything merely by opening the form', async () => {
+  await open(); expect(createStoryProject).not.toHaveBeenCalled(); expect(token).not.toHaveBeenCalled();
 });
 it('cannot create a project, obtain a token or show success without backend configuration', async () => {
-  jest.mocked(readMobileApiConfig).mockReturnValue(null); open(); save();
+  jest.mocked(readMobileApiConfig).mockReturnValue(null); await open(); await save();
   expect(createStoryProject).not.toHaveBeenCalled(); expect(token).not.toHaveBeenCalled();
   expect(screen.queryByText(text.success)).toBeNull();
   expect(screen.getByLabelText(text.titleLabel).props.value).toBe('  My childhood  ');
@@ -34,8 +43,8 @@ it('cannot create a project, obtain a token or show success without backend conf
 it('submits cleaned fields once, using the verified owner token callback, and only then shows success', async () => {
   let finish!: (value: StoryProject) => void;
   jest.mocked(createStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-  open(); save();
-  fireEvent.press(screen.getByRole('button', { name: text.saving }));
+  await open(); await save();
+  await fireEvent.press(screen.getByRole('button', { name: text.saving }));
   expect(createStoryProject).toHaveBeenCalledTimes(1);
   expect(screen.queryByText(text.success)).toBeNull();
   const call = jest.mocked(createStoryProject).mock.calls[0][0];
@@ -49,42 +58,47 @@ it('submits cleaned fields once, using the verified owner token callback, and on
 });
 it.each(['forbidden', 'conflict', 'validation'] as const)('allows correction after a definitive %s rejection without exposing server details', async kind => {
   jest.mocked(createStoryProject).mockRejectedValueOnce(new StoryProjectsError(kind));
-  open(); save(); await screen.findByText(text.errors[kind]);
+  await open(); await save(); await screen.findByText(text.errors[kind]);
   expect(screen.queryByText(text.success)).toBeNull();
-  fireEvent.press(screen.getByRole('button', { name: text.create }));
+  await fireEvent.press(screen.getByRole('button', { name: text.create }));
   await waitFor(() => expect(createStoryProject).toHaveBeenCalledTimes(2));
 });
 it.each(['network', 'timeout', 'unavailable', 'invalid-response'] as const)('prevents a blind duplicate after an uncertain %s result', async kind => {
   jest.mocked(createStoryProject).mockRejectedValueOnce(new StoryProjectsError(kind, undefined, true));
-  open(); save(); await screen.findByText(text.uncertain);
+  await open(); await save(); await screen.findByText(text.uncertain);
   expect(screen.getByRole('button', { name: text.create })).toBeDisabled();
-  fireEvent.press(screen.getByRole('button', { name: text.create }));
+  await fireEvent.press(screen.getByRole('button', { name: text.create }));
   expect(createStoryProject).toHaveBeenCalledTimes(1);
   expect(screen.queryByText(text.success)).toBeNull();
 });
 it('requires ordinary sign-in after an expired or rejected token', async () => {
   jest.mocked(createStoryProject).mockRejectedValueOnce(new StoryProjectsError('authentication', 401));
-  open(); save(); await screen.findByText(text.errors.authentication);
+  await open(); await save(); await screen.findByText(text.errors.authentication);
   expect(screen.getByRole('button', { name: text.create })).toBeDisabled();
-  fireEvent.press(screen.getByRole('button', { name: text.signOut })); expect(onSignOut).toHaveBeenCalledTimes(1);
+  await fireEvent.press(screen.getByRole('button', { name: text.signOut }));
+  expect(onSignOut).not.toHaveBeenCalled();
+  await fireEvent.press(screen.getByRole('button', { name: leaveCopy.en.discard })); expect(onSignOut).toHaveBeenCalledTimes(1);
 });
-it.each(['back', 'signOut'] as const)('aborts on %s immediately and ignores a late write response', async action => {
+it.each(['back', 'signOut'] as const)('warns before aborting on %s and ignores a late write response after confirmed leave', async action => {
   let finish!: (value: StoryProject) => void;
   jest.mocked(createStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-  const view = open(); save(); const signal = jest.mocked(createStoryProject).mock.calls[0][0].signal!;
-  fireEvent.press(screen.getByRole('button', { name: action === 'back' ? text.cancel : text.signOut }));
+  const view = await open(); await save(); const signal = jest.mocked(createStoryProject).mock.calls[0][0].signal!;
+  await fireEvent.press(screen.getByRole('button', { name: action === 'back' ? text.cancel : text.signOut }));
+  expect(signal.aborted).toBe(false);
+  expect(screen.getByText(leaveCopy.en.uncertain)).toBeOnTheScreen();
+  await fireEvent.press(screen.getByRole('button', { name: leaveCopy.en.leave }));
   expect(signal.aborted).toBe(true);
   expect(action === 'back' ? onBack : onSignOut).toHaveBeenCalledTimes(1);
   await act(async () => { finish(project('Late private response')); });
   expect(screen.queryByText('Late private response')).toBeNull();
-  view.unmount();
+  await view.unmount();
 });
 it('cancels and clears form data immediately when accounts change', async () => {
   let finish!: (value: StoryProject) => void;
   jest.mocked(createStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-  const view = open(); save('Private account A draft');
+  const view = await open(); await save('Private account A draft');
   const signal = jest.mocked(createStoryProject).mock.calls[0][0].signal!;
-  view.rerender(<CreateStory language="sv" user={{ id: 'account-b', email: 'account-b@example.test' }}
+  await view.rerender(<CreateStory language="sv" user={{ id: 'account-b', email: 'account-b@example.test' }}
     getAccessToken={token} onBack={onBack} onSignOut={onSignOut} />);
   expect(signal.aborted).toBe(true);
   expect(screen.getByLabelText(createStoryCopy.sv.titleLabel).props.value).toBe('');
@@ -95,7 +109,7 @@ it('cancels and clears form data immediately when accounts change', async () => 
 it('aborts on unmount and cannot publish success to a detached form', async () => {
   let finish!: (value: StoryProject) => void;
   jest.mocked(createStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-  const view = open(); save(); const signal = jest.mocked(createStoryProject).mock.calls[0][0].signal!;
-  view.unmount(); expect(signal.aborted).toBe(true);
-  await act(async () => { finish(project()); }); expect(view.toJSON()).toBeNull();
+  const view = await open(); await save(); const signal = jest.mocked(createStoryProject).mock.calls[0][0].signal!;
+  await view.unmount(); expect(signal.aborted).toBe(true);
+  await act(async () => { finish(project()); }); expect(maybeComponent(CreateStoryScreen)).toBeNull();
 });

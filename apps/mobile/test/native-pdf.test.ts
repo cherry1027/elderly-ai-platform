@@ -34,7 +34,7 @@ function fixture() {
     constructor(readonly name: string) { this.uri = privateRoot + name; }
     get size() { return this.sizeOverride ?? this.data.length; }
     create = jest.fn(() => { this.exists = true; });
-    write = jest.fn((bytes: Uint8Array) => { this.data = new Uint8Array(bytes); });
+    write = jest.fn(async (bytes: Uint8Array) => { this.data = new Uint8Array(bytes); });
     bytesSync = jest.fn(() => new Uint8Array(this.data));
     delete = jest.fn(() => { this.exists = false; this.data.fill(0); });
   }
@@ -101,6 +101,82 @@ test('the caller cannot mutate an in-flight save after initial validation', asyn
   const f = fixture(); const bytes = pdf(); const valid = Array.from(bytes); const pending = f.store.save(bytes);
   bytes.fill(0);
   await pending; expect(Array.from(f.files.get(ownedName)!.data)).toEqual(valid);
+  await f.store.revoke();
+});
+
+test('SDK 58 async writing finishes before inspection, capability return or private-buffer clearing', async () => {
+  const f = fixture(); const file = f.file(ownedName); const gate = deferred<void>();
+  const bytes = pdf(); const expected = Array.from(bytes);
+  file.write.mockImplementationOnce(async value => {
+    await gate.promise;
+    file.data = new Uint8Array(value);
+  });
+  let settled = false;
+  const save = f.store.save(bytes);
+  void save.then(() => { settled = true; }, () => { settled = true; });
+  bytes.fill(0); // only the cache-owned copy may be used after the first await
+  for (let turn = 0; turn < 20 && !file.write.mock.calls.length; turn++) await Promise.resolve();
+  expect(file.write).toHaveBeenCalledTimes(1);
+  const buffered = file.write.mock.calls[0][0];
+  expect(Array.from(buffered)).toEqual(expected);
+  expect(file.bytesSync).not.toHaveBeenCalled(); expect(settled).toBe(false);
+  expect(file.delete).not.toHaveBeenCalled(); expect(f.dependencies.share).not.toHaveBeenCalled();
+  gate.resolve();
+  const handle = await save;
+  expect(handle).toEqual({ id }); expect(Array.from(file.data)).toEqual(expected);
+  expect(file.bytesSync).toHaveBeenCalled(); expect(buffered.every(value => value === 0)).toBe(true);
+  await f.store.revoke();
+});
+
+test('revocation during an async write closes authorization immediately and waits before deleting its file', async () => {
+  const f = fixture(); const file = f.file(ownedName); const gate = deferred<void>();
+  file.write.mockImplementationOnce(async value => {
+    await gate.promise;
+    file.data = new Uint8Array(value);
+  });
+  const save = f.store.save(pdf()); const checked = expect(save).rejects.toMatchObject({ kind: 'revoked' });
+  for (let turn = 0; turn < 20 && !file.write.mock.calls.length; turn++) await Promise.resolve();
+  expect(file.write).toHaveBeenCalledTimes(1);
+  const buffered = file.write.mock.calls[0][0];
+  const cleanup = f.store.revoke();
+  await expect(f.store.save(pdf())).rejects.toMatchObject({ kind: 'revoked' });
+  expect(file.exists).toBe(true); expect(file.delete).not.toHaveBeenCalled();
+  expect(Array.from(buffered)).toEqual(Array.from(pdf()));
+  gate.resolve(); await checked; await cleanup;
+  expect(file.exists).toBe(false); expect(file.delete).toHaveBeenCalledTimes(1);
+  expect(buffered.every(value => value === 0)).toBe(true);
+  expect(f.dependencies.share).not.toHaveBeenCalled(); expect(file.bytesSync).not.toHaveBeenCalled();
+});
+
+test('an asynchronous native write rejection is sanitized and cleans the partial file and private buffer', async () => {
+  const f = fixture(); const file = f.file(ownedName);
+  file.write.mockRejectedValueOnce(new Error('file:///private/path sensitive-provider-message'));
+  const error = await f.store.save(pdf()).catch(value => value);
+  expect(error).toBeInstanceOf(NativePdfError); expect(error.kind).toBe('storage');
+  expect(error.message).not.toMatch(/file:|path|sensitive|provider/);
+  expect(file.delete).toHaveBeenCalledTimes(1); expect(file.exists).toBe(false);
+  expect(file.bytesSync).not.toHaveBeenCalled(); expect(f.dependencies.share).not.toHaveBeenCalled();
+  expect(file.write.mock.calls[0][0].every(value => value === 0)).toBe(true);
+});
+
+test('orphan purging remains serialized behind an outstanding async write', async () => {
+  const f = fixture(); const file = f.file(ownedName); const gate = deferred<void>();
+  file.write.mockImplementationOnce(async value => {
+    await gate.promise;
+    file.data = new Uint8Array(value);
+  });
+  const save = f.store.save(pdf());
+  for (let turn = 0; turn < 20 && !file.write.mock.calls.length; turn++) await Promise.resolve();
+  expect(file.write).toHaveBeenCalledTimes(1);
+  const scans = f.directory.list.mock.calls.length;
+  let purged = false;
+  const purge = f.cache.purge().then(() => { purged = true; });
+  for (let turn = 0; turn < 6; turn++) await Promise.resolve();
+  expect(purged).toBe(false); expect(f.directory.list).toHaveBeenCalledTimes(scans);
+  expect(file.delete).not.toHaveBeenCalled();
+  gate.resolve(); const handle = await save; await purge;
+  expect(purged).toBe(true); expect(file.exists).toBe(true); expect(file.delete).not.toHaveBeenCalled();
+  await f.store.share(handle); expect(f.dependencies.share).toHaveBeenCalledTimes(1);
   await f.store.revoke();
 });
 
@@ -280,7 +356,7 @@ test('partial creation failures are cleaned using only the reserved random path'
 
 test('incorrectly persisted bytes are never offered to sharing', async () => {
   const f = fixture(); const file = f.file(ownedName);
-  file.write.mockImplementationOnce(() => { file.data = pdf(); file.data[12] = 0; });
+  file.write.mockImplementationOnce(async () => { file.data = pdf(); file.data[12] = 0; });
   await expect(f.store.save(pdf())).rejects.toMatchObject({ kind: 'storage' });
   expect(file.exists).toBe(false); expect(f.dependencies.share).not.toHaveBeenCalled();
 });
@@ -330,7 +406,7 @@ test('default native adapter uses SDK File/Directory, Expo Crypto and explicit n
   let exists = false; let bytes = new Uint8Array();
   const file = { uri: privateRoot + ownedName, name: ownedName, get exists() { return exists; },
     get size() { return bytes.length; }, create: jest.fn(() => { exists = true; }),
-    write: jest.fn((value: Uint8Array) => { bytes = new Uint8Array(value); }),
+    write: jest.fn(async (value: Uint8Array) => { bytes = new Uint8Array(value); }),
     bytesSync: jest.fn(() => new Uint8Array(bytes)), delete: jest.fn(() => { exists = false; }) };
   const directory = { exists: true, create: jest.fn(), list: jest.fn(() => []) };
   jest.mocked(Directory).mockImplementation(() => directory as unknown as Directory);

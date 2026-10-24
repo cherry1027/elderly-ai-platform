@@ -33,7 +33,7 @@ type CacheFile = {
   readonly exists: boolean;
   readonly size: number;
   create(): void;
-  write(bytes: Uint8Array): void;
+  write(bytes: Uint8Array): Promise<void>;
   bytesSync(): Uint8Array;
   delete(): void;
 };
@@ -147,7 +147,7 @@ export function createPrivatePdfCache(dependencies: PrivatePdfDependencies = nat
         // Own the bytes before the first await; callers cannot mutate an in-flight write.
         const copy = new Uint8Array(bytes);
         try { await purge(); } catch (error) { copy.fill(0); throw error; }
-        return serial(() => {
+        return serial(async () => {
           let handle: PrivatePdfHandle | undefined;
           let entry: Entry | undefined;
           try {
@@ -163,7 +163,9 @@ export function createPrivatePdfCache(dependencies: PrivatePdfDependencies = nat
             entry = { file, createdAt: dependencies.now(), leased: false, discarded: false, owner };
             entries.set(handle, entry);
             file.create();
-            file.write(copy);
+            // SDK 58 writes asynchronously. Keep the queue lease and private
+            // bytes until native writing settles, including during revocation.
+            await file.write(copy);
             if (!active) throw new NativePdfError('revoked');
             inspect(entry);
             const written = file.bytesSync();

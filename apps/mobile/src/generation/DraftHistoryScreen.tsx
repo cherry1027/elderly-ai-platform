@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import { AccessibilityInfo, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { StoryDraft, StoryEdit } from '../api/story-drafts';
 import { useApiBackoff } from '../api/ApiBackoff';
@@ -25,7 +25,7 @@ function DraftHistoryView({ language, storyLanguage, title, state, onLoadMore, o
   const text = draftEditingCopy[language], locale = accessibilityLanguages[language], contentLocale = accessibilityLanguages[storyLanguage];
   const { waiting } = useApiBackoff();
   const [selected, setSelected] = useState(0), [originalOpen, setOriginalOpen] = useState(false);
-  const scroll = useRef<ScrollView>(null);
+  const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
   const noticeY = useRef(0), contentY = useRef(0), panelY = useRef(0);
   const busy = state.phase === 'loading' || state.phase === 'loading-more';
   const accessFailed = ['authentication', 'forbidden', 'not-found'].includes(state.error ?? '');

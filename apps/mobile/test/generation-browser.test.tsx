@@ -45,13 +45,13 @@ beforeEach(() => {
   jest.spyOn(AppState, 'addEventListener').mockImplementation((_, listener) => { appChange = listener; return { remove: jest.fn() }; });
   jest.spyOn(BackHandler, 'addEventListener').mockImplementation(() => ({ remove: jest.fn() }));
 });
-afterEach(() => {
+afterEach(async () => {
   expect(generateStoryDraft).not.toHaveBeenCalled(); expect(editStoryDraft).not.toHaveBeenCalled();
   expect(getStoryVerification).not.toHaveBeenCalled(); expect(globalThis.fetch).not.toHaveBeenCalled();
-  cleanup(); jest.restoreAllMocks();
+  await cleanup(); jest.restoreAllMocks();
 });
 it.each(['en', 'sv'] as const)('loads owned %s records with bounded pagination and no mutation or implicit selection', async language => {
-  render(<GenerationBrowser {...props({ language, storyLanguage: language })} />); await ready();
+  await render(<GenerationBrowser {...props({ language, storyLanguage: language })} />); await ready();
   expect(listStoryDraftsPage).toHaveBeenCalledWith(expect.objectContaining({ projectId, expectedLanguage: language, limit: 20, offset: 0 }));
   await jest.mocked(listStoryDraftsPage).mock.calls[0][0].getAccessToken(); expect(token).toHaveBeenCalledWith('account-a');
   expect(ui().selectedDraftId).toBe(draft(1).draft_id); expect(select).not.toHaveBeenCalled(); expect(getStoryDraft).not.toHaveBeenCalled();
@@ -60,20 +60,20 @@ it('verifies the exact older selection by authenticated typed read and uses its 
   const original = draft(1), edited = draft(1, { content: 'My personal manual wording.', revision: 2, status: 'edited',
     verification: { ...original.verification, status: 'needs_review', method: 'manual_unverified', checked_revision: 2 } });
   jest.mocked(getStoryDraft).mockResolvedValue(edited);
-  render(<GenerationBrowser {...props()} />); await ready(); act(() => { ui().onOpen(original.draft_id); ui().onOpen(original.draft_id); });
+  await render(<GenerationBrowser {...props()} />); await ready(); await act(() => { ui().onOpen(original.draft_id); ui().onOpen(original.draft_id); });
   await waitFor(() => expect(select).toHaveBeenCalledTimes(1)); expect(select).toHaveBeenCalledWith(edited);
   expect(getStoryDraft).toHaveBeenCalledTimes(1);
   expect(getStoryDraft).toHaveBeenCalledWith(expect.objectContaining({ projectId, draftId: original.draft_id }));
   expect(listStoryDraftsPage).toHaveBeenCalledTimes(3);
 });
 it('ignores attempts to select a record not in the actual loaded list', async () => {
-  render(<GenerationBrowser {...props()} />); await ready(); act(() => ui().onOpen(draft(99).draft_id));
+  await render(<GenerationBrowser {...props()} />); await ready(); await act(() => ui().onOpen(draft(99).draft_id));
   expect(getStoryDraft).not.toHaveBeenCalled(); expect(select).not.toHaveBeenCalled();
 });
 it('appends one ordered page only after stable head checks, preserving selected generation identity', async () => {
   const first = sequence(30, 20), second = sequence(10, 10);
   jest.mocked(listStoryDraftsPage).mockImplementation(async options => ({ items: options.offset ? second : first, hasMore: !options.offset }));
-  render(<GenerationBrowser {...props()} />); await ready(); act(() => { ui().onLoadMore(); ui().onLoadMore(); }); await ready();
+  await render(<GenerationBrowser {...props()} />); await ready(); await act(() => { ui().onLoadMore(); ui().onLoadMore(); }); await ready();
   expect(ui().state.items).toEqual(first.concat(second)); expect(ui().state.hasMore).toBe(false);
   expect(listStoryDraftsPage).toHaveBeenCalledTimes(4); expect(ui().selectedDraftId).toBe(draft(1).draft_id);
   expect(select).not.toHaveBeenCalled();
@@ -81,9 +81,9 @@ it('appends one ordered page only after stable head checks, preserving selected 
 it.each(['duplicate', 'order'] as const)('rejects a cross-page %s without retaining an actionable stale list', async bad => {
   const first = sequence(30, 20), second = bad === 'duplicate' ? [draft(11)] : [draft(31)];
   jest.mocked(listStoryDraftsPage).mockImplementation(async options => ({ items: options.offset ? second : first, hasMore: !options.offset }));
-  render(<GenerationBrowser {...props()} />); await ready(); act(() => ui().onLoadMore());
+  await render(<GenerationBrowser {...props()} />); await ready(); await act(() => ui().onLoadMore());
   await waitFor(() => expect(ui().state.error).toBe('conflict')); expect(ui().state.items).toEqual([]);
-  act(() => ui().onOpen(draft(11).draft_id)); expect(select).not.toHaveBeenCalled();
+  await act(() => ui().onOpen(draft(11).draft_id)); expect(select).not.toHaveBeenCalled();
 });
 it('detects a changed deeper page before offset paging can silently skip a deleted generation', async () => {
   let changed = false;
@@ -91,8 +91,8 @@ it('detects a changed deeper page before offset paging can silently skip a delet
     const offset = options.offset ?? 0;
     return { items: sequence(60 - offset - (changed && offset > 0 ? 1 : 0), 20), hasMore: true };
   });
-  render(<GenerationBrowser {...props()} />); await ready(); act(() => ui().onLoadMore()); await ready();
-  expect(ui().state.items).toHaveLength(40); changed = true; act(() => ui().onLoadMore());
+  await render(<GenerationBrowser {...props()} />); await ready(); await act(() => ui().onLoadMore()); await ready();
+  expect(ui().state.items).toHaveLength(40); changed = true; await act(() => ui().onLoadMore());
   await waitFor(() => expect(ui().state.error).toBe('conflict')); expect(ui().state.items).toEqual([]);
   expect(jest.mocked(listStoryDraftsPage).mock.calls.some(([options]) => options.offset === 40)).toBe(false);
 });
@@ -101,8 +101,8 @@ it('rechecks the selected older page instead of trusting only a stable newest pa
   jest.mocked(listStoryDraftsPage).mockImplementation(async options => ({
     items: sequence(60 - (options.offset ?? 0) - (changed && options.offset ? 1 : 0), 20), hasMore: true,
   }));
-  render(<GenerationBrowser {...props()} />); await ready(); act(() => ui().onLoadMore()); await ready();
-  changed = true; act(() => ui().onOpen(draft(30).draft_id));
+  await render(<GenerationBrowser {...props()} />); await ready(); await act(() => ui().onLoadMore()); await ready();
+  changed = true; await act(() => ui().onOpen(draft(30).draft_id));
   await waitFor(() => expect(ui().state.error).toBe('conflict')); expect(getStoryDraft).not.toHaveBeenCalled(); expect(select).not.toHaveBeenCalled();
 });
 it.each(['before-append', 'after-append', 'before-select', 'after-select'] as const)('requires deliberate refresh if the head changes %s', async timing => {
@@ -112,52 +112,52 @@ it.each(['before-append', 'after-append', 'before-select', 'after-select'] as co
     heads++; const changeAt = timing.startsWith('before') ? 2 : 3;
     return { items: heads >= changeAt ? changed : first, hasMore: true };
   });
-  render(<GenerationBrowser {...props()} />); await ready();
-  act(() => timing.endsWith('append') ? ui().onLoadMore() : ui().onOpen(first[0].draft_id));
+  await render(<GenerationBrowser {...props()} />); await ready();
+  await act(() => timing.endsWith('append') ? ui().onLoadMore() : ui().onOpen(first[0].draft_id));
   await waitFor(() => expect(ui().state.error).toBe('conflict')); expect(ui().state.items).toEqual([]);
   expect(select).not.toHaveBeenCalled();
   const reads = jest.mocked(listStoryDraftsPage).mock.calls.map(([options]) => options.offset ?? 0);
   expect(reads.filter(offset => offset === 0)).toHaveLength(timing.startsWith('before') ? 2 : 3);
   expect(reads.filter(offset => offset > 0)).toEqual(timing === 'after-append' ? [20] : []);
-  act(() => ui().onRefresh()); await ready(); expect(ui().state.items).toEqual(changed); expect(select).not.toHaveBeenCalled();
+  await act(() => ui().onRefresh()); await ready(); expect(ui().state.items).toEqual(changed); expect(select).not.toHaveBeenCalled();
 });
 it.each(['changed-original', 'older-revision'] as const)('rejects %s on the freshly read selected generation', async change => {
   const original = draft(1);
   jest.mocked(getStoryDraft).mockResolvedValue(change === 'changed-original' ? draft(1, { created_at: '2026-01-02T00:00:00Z' })
     : draft(1, { revision: 0 }));
-  render(<GenerationBrowser {...props()} />); await ready(); act(() => ui().onOpen(original.draft_id));
+  await render(<GenerationBrowser {...props()} />); await ready(); await act(() => ui().onOpen(original.draft_id));
   await waitFor(() => expect(ui().state.error).toBe('conflict')); expect(select).not.toHaveBeenCalled();
 });
 it('stops at 200 actual records and honestly reports that older generations may exist', async () => {
   jest.mocked(listStoryDraftsPage).mockImplementation(async options => ({ items: sequence(300 - (options.offset ?? 0), 20), hasMore: true }));
-  render(<GenerationBrowser {...props()} />); await ready();
-  for (let page = 1; page < 10; page++) { act(() => ui().onLoadMore()); await ready(); }
+  await render(<GenerationBrowser {...props()} />); await ready();
+  for (let page = 1; page < 10; page++) { await act(() => ui().onLoadMore()); await ready(); }
   expect(ui().state.items).toHaveLength(200); expect(ui().state.bounded).toBe(true); expect(ui().state.hasMore).toBe(false);
-  const calls = jest.mocked(listStoryDraftsPage).mock.calls.length; act(() => ui().onLoadMore());
+  const calls = jest.mocked(listStoryDraftsPage).mock.calls.length; await act(() => ui().onLoadMore());
   expect(listStoryDraftsPage).toHaveBeenCalledTimes(calls); expect(select).not.toHaveBeenCalled();
 });
 it.each(['authentication', 'forbidden', 'not-found', 'network', 'timeout', 'invalid-response', 'unavailable'] as const)('handles %s without stale selection or private server messages', async kind => {
   jest.mocked(getStoryDraft).mockRejectedValue(new StoryProjectsError(kind));
-  render(<GenerationBrowser {...props()} />); await ready(); act(() => ui().onOpen(draft(1).draft_id));
+  await render(<GenerationBrowser {...props()} />); await ready(); await act(() => ui().onOpen(draft(1).draft_id));
   await waitFor(() => expect(ui().state.error).toBe(kind)); expect(ui().state.items).toEqual([]); expect(select).not.toHaveBeenCalled();
 });
 it.each(['missing-url', 'sample-preview'] as const)('makes no request in %s mode', async condition => {
   jest.mocked(readStoryPreviewEnabled).mockReturnValue(condition === 'sample-preview');
-  render(<GenerationBrowser {...props({ baseUrl: condition === 'missing-url' ? null : props().baseUrl })} />);
+  await render(<GenerationBrowser {...props({ baseUrl: condition === 'missing-url' ? null : props().baseUrl })} />);
   await waitFor(() => expect(ui().state.error).toBe('configuration')); expect(listStoryDraftsPage).not.toHaveBeenCalled(); expect(token).not.toHaveBeenCalled();
 });
 it.each(['back', 'sign-out', 'hardware-back', 'unmount', 'background'] as const)('aborts selection and ignores late private responses after %s', async departure => {
   const pending = deferred<StoryDraft>(); jest.mocked(getStoryDraft).mockReturnValue(pending.promise);
-  const view = render(<GenerationBrowser {...props()} />); await ready(); act(() => ui().onOpen(draft(1).draft_id));
+  const view = await render(<GenerationBrowser {...props()} />); await ready(); await act(() => ui().onOpen(draft(1).draft_id));
   await waitFor(() => expect(getStoryDraft).toHaveBeenCalledTimes(1));
   let hardware: Parameters<typeof BackHandler.addEventListener>[1] | undefined;
   if (departure === 'hardware-back') {
     const calls = jest.mocked(BackHandler.addEventListener).mock.calls; hardware = calls.at(-1)?.[1];
   }
-  act(() => {
+  await act(async () => {
     if (departure === 'back') ui().onBack(); else if (departure === 'sign-out') ui().onSignOut();
     else if (departure === 'hardware-back') hardware?.({ type: 'hardwareBackPress', timeStamp: 0 });
-    else if (departure === 'unmount') view.unmount(); else appChange('background');
+    else if (departure === 'unmount') await view.unmount(); else appChange('background');
   });
   expect(jest.mocked(getStoryDraft).mock.calls[0][0].signal?.aborted).toBe(true);
   await act(async () => { pending.resolve(draft(1)); await flush(); }); expect(select).not.toHaveBeenCalled();
@@ -165,10 +165,10 @@ it.each(['back', 'sign-out', 'hardware-back', 'unmount', 'background'] as const)
 it('starts a clean authenticated scope on account change and ignores the earlier owner’s list', async () => {
   const pending = deferred<{ items: StoryDraft[]; hasMore: boolean }>();
   jest.mocked(listStoryDraftsPage).mockReturnValueOnce(pending.promise);
-  const view = render(<GenerationBrowser {...props()} />); await waitFor(() => expect(listStoryDraftsPage).toHaveBeenCalledTimes(1));
+  const view = await render(<GenerationBrowser {...props()} />); await waitFor(() => expect(listStoryDraftsPage).toHaveBeenCalledTimes(1));
   const firstOptions = jest.mocked(listStoryDraftsPage).mock.calls[0][0];
   const priorListener = appChange, priorSubscription = jest.mocked(AppState.addEventListener).mock.results[0].value;
-  view.rerender(<GenerationBrowser {...props({ ownerId: 'account-b' })} />); await ready();
+  await view.rerender(<GenerationBrowser {...props({ ownerId: 'account-b' })} />); await ready();
   expect(priorSubscription.remove).toHaveBeenCalledTimes(1);
   const calls = jest.mocked(listStoryDraftsPage).mock.calls.length;
   await act(async () => { priorListener('background'); priorListener('active'); await flush(); });
@@ -179,15 +179,15 @@ it('starts a clean authenticated scope on account change and ignores the earlier
   await jest.mocked(listStoryDraftsPage).mock.calls[1][0].getAccessToken(); expect(token).toHaveBeenLastCalledWith('account-b');
 });
 it('removes its AppState subscription on unmount and ignores any already-queued old event', async () => {
-  const view = render(<GenerationBrowser {...props()} />); await ready();
+  const view = await render(<GenerationBrowser {...props()} />); await ready();
   const listener = appChange, subscription = jest.mocked(AppState.addEventListener).mock.results[0].value;
   const calls = jest.mocked(listStoryDraftsPage).mock.calls.length;
-  view.unmount(); expect(subscription.remove).toHaveBeenCalledTimes(1);
+  await view.unmount(); expect(subscription.remove).toHaveBeenCalledTimes(1);
   await act(async () => { listener('inactive'); listener('active'); await flush(); });
   expect(listStoryDraftsPage).toHaveBeenCalledTimes(calls); expect(select).not.toHaveBeenCalled();
 });
 it('clears private rows on background and only refreshes reads when returning', async () => {
-  render(<GenerationBrowser {...props()} />); await ready(); act(() => appChange('inactive'));
-  expect(ui().state.items).toEqual([]); act(() => appChange('active')); await ready();
+  await render(<GenerationBrowser {...props()} />); await ready(); await act(() => appChange('inactive'));
+  expect(ui().state.items).toEqual([]); await act(() => appChange('active')); await ready();
   expect(listStoryDraftsPage).toHaveBeenCalledTimes(2); expect(select).not.toHaveBeenCalled();
 });

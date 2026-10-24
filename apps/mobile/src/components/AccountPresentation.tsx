@@ -1,4 +1,4 @@
-import { useEffect, useState, type PropsWithChildren, type RefObject } from 'react';
+import { useEffect, useState, type ComponentRef, type PropsWithChildren, type RefObject } from 'react';
 import { AccessibilityInfo, Platform, Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { Screen } from './Screen';
 import { RootScreenHeading } from '../navigation/AuthenticatedShell';
@@ -6,11 +6,12 @@ import { accessibilityLanguages, type Language } from '../i18n';
 import { colors, layout } from '../theme';
 
 /** Entrance-only composition. Shared Screen/provider/backoff behavior stays intact. */
-export function AccountScreen({ children, scrollViewRef, onContentLayout, compact = false }: PropsWithChildren<{
-  scrollViewRef?: RefObject<ScrollView | null>; onContentLayout?: (event: LayoutChangeEvent) => void;
+export function AccountScreen({ children, scrollViewRef, onContentLayout, compact = false, keyboardAware = false }: PropsWithChildren<{
+  scrollViewRef?: RefObject<ComponentRef<typeof ScrollView> | null>; onContentLayout?: (event: LayoutChangeEvent) => void;
   compact?: boolean;
+  keyboardAware?: boolean;
 }>) {
-  return <Screen scrollViewRef={scrollViewRef} onContentLayout={onContentLayout}>
+  return <Screen scrollViewRef={scrollViewRef} onContentLayout={onContentLayout} keyboardAware={keyboardAware}>
     <View style={[styles.composition, compact && styles.compact]}>{children}</View>
   </Screen>;
 }

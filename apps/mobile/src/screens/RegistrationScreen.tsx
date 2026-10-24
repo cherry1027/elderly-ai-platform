@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ComponentRef } from 'react';
 import {
   AppState, Keyboard, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
@@ -48,10 +48,10 @@ export function RegistrationScreen({ language, onBack, onLogin, onSubmit, enable
   const inFlight = useRef(false);
   const finished = useRef(false);
   const generation = useRef(0);
-  const emailInput = useRef<TextInput>(null);
-  const passwordInput = useRef<TextInput>(null);
-  const confirmationInput = useRef<TextInput>(null);
-  const scrollView = useRef<ScrollView>(null);
+  const emailInput = useRef<ComponentRef<typeof TextInput>>(null);
+  const passwordInput = useRef<ComponentRef<typeof TextInput>>(null);
+  const confirmationInput = useRef<ComponentRef<typeof TextInput>>(null);
+  const scrollView = useRef<ComponentRef<typeof ScrollView>>(null);
   const formTop = useRef(0);
   const feedbackVisible = useRef(false);
   const effectiveFailure = externalFailure ?? failure;
@@ -118,7 +118,7 @@ export function RegistrationScreen({ language, onBack, onLogin, onSubmit, enable
     return () => { feedbackVisible.current = false; };
   }, [hasFeedback]);
   const revealFeedback = useCallback(() => {
-    if (feedbackVisible.current) scrollView.current?.scrollTo({ y: Math.max(0, formTop.current - 16), animated: false });
+    if (feedbackVisible.current && !Keyboard.isVisible()) scrollView.current?.scrollTo({ y: Math.max(0, formTop.current - 16), animated: false });
   }, []);
   useEffect(() => { revealFeedback(); }, [hasFeedback, message, revealFeedback]);
   useEffect(() => {
@@ -130,8 +130,8 @@ export function RegistrationScreen({ language, onBack, onLogin, onSubmit, enable
     setter(value); setValidation(null); setChecked(false);
   };
 
-  return <KeyboardAvoidingView style={styles.keyboard} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-    <AccountScreen scrollViewRef={scrollView} onContentLayout={revealFeedback}>
+  return <KeyboardAvoidingView style={styles.keyboard} enabled={Platform.OS !== 'ios'} behavior="height">
+    <AccountScreen keyboardAware scrollViewRef={scrollView} onContentLayout={revealFeedback}>
       <AccountHeading language={language} title={text.title} description={text.introduction} />
       <View testID="registration-form" style={accountStyles.form} onLayout={(event) => {
         formTop.current = event.nativeEvent.layout.y; revealFeedback();
@@ -148,7 +148,7 @@ export function RegistrationScreen({ language, onBack, onLogin, onSubmit, enable
             <TextInput ref={emailInput} accessibilityLabel={text.email} accessibilityLanguage={accessibilityLanguages[language]}
               allowFontScaling style={[accountStyles.input, focused === 'email' && accountStyles.focused]}
               value={email} onChangeText={setValue(setEmail)} editable={!disabled} autoCapitalize="none" autoCorrect={false}
-              keyboardType="email-address" autoComplete="email" textContentType="emailAddress" returnKeyType="next"
+              keyboardType="email-address" autoComplete="email" textContentType="emailAddress" returnKeyType="next" submitBehavior="submit"
               onFocus={() => setFocused('email')} onBlur={() => setFocused(null)} onSubmitEditing={() => passwordInput.current?.focus()} />
           </View>
           <View style={accountStyles.field}>
@@ -156,7 +156,7 @@ export function RegistrationScreen({ language, onBack, onLogin, onSubmit, enable
             <TextInput ref={passwordInput} accessibilityLabel={text.password} accessibilityLanguage={accessibilityLanguages[language]}
               allowFontScaling style={[accountStyles.input, focused === 'password' && accountStyles.focused]}
               value={password} onChangeText={setValue(setPassword)} editable={!disabled} secureTextEntry={!passwordVisible}
-              autoCapitalize="none" autoCorrect={false} autoComplete="new-password" textContentType="newPassword" returnKeyType="next"
+              autoCapitalize="none" autoCorrect={false} autoComplete="new-password" textContentType="newPassword" returnKeyType="next" submitBehavior="submit"
               onFocus={() => setFocused('password')} onBlur={() => setFocused(null)} onSubmitEditing={() => confirmationInput.current?.focus()} />
             <PasswordVisibility language={language} label={passwordVisible ? text.hidePassword : text.showPassword}
               selected={passwordVisible} disabled={disabled} onPress={() => setPasswordVisible((value) => !value)} />
@@ -166,7 +166,7 @@ export function RegistrationScreen({ language, onBack, onLogin, onSubmit, enable
             <TextInput ref={confirmationInput} accessibilityLabel={text.confirmation} accessibilityLanguage={accessibilityLanguages[language]}
               allowFontScaling style={[accountStyles.input, focused === 'confirmation' && accountStyles.focused]}
               value={confirmation} onChangeText={setValue(setConfirmation)} editable={!disabled} secureTextEntry={!confirmationVisible}
-              autoCapitalize="none" autoCorrect={false} autoComplete="new-password" textContentType="newPassword" returnKeyType="done"
+              autoCapitalize="none" autoCorrect={false} autoComplete="new-password" textContentType="newPassword" returnKeyType="done" submitBehavior="blurAndSubmit"
               onFocus={() => setFocused('confirmation')} onBlur={() => setFocused(null)} onSubmitEditing={() => Keyboard.dismiss()} />
             <PasswordVisibility language={language} label={confirmationVisible ? text.hideConfirmation : text.showConfirmation}
               selected={confirmationVisible} disabled={disabled} onPress={() => setConfirmationVisible((value) => !value)} />

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type PropsWithChildren } from 'react';
+import { useEffect, useRef, type ComponentRef, type PropsWithChildren } from 'react';
 import { AccessibilityInfo, StyleSheet, Text, View } from 'react-native';
 import { RootTabBar } from '../components/RootTabBar';
 import { accessibilityLanguages, type Language } from '../i18n';
@@ -20,7 +20,7 @@ export function AuthenticatedShell({ language, tab, onSelectTab, children }: Pro
 export function RootScreenHeading({ language, title, centered = false }: {
   language: Language; title: string; centered?: boolean;
 }) {
-  const heading = useRef<Text>(null), laidOut = useRef(false);
+  const heading = useRef<ComponentRef<typeof Text>>(null), laidOut = useRef(false);
   const requestFocus = useRef<(() => void) | undefined>(undefined);
   useEffect(() => {
     let active = true, readerEnabled = false, requested = false;

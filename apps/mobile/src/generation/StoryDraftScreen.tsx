@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import { AccessibilityInfo, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { StoryDraft, StoryProjectVerification } from '../api/story-drafts';
 import { useApiBackoff } from '../api/ApiBackoff';
@@ -65,7 +65,7 @@ function StoryDraftView({ language, storyLanguage, title, state, onGenerate, onR
   const locale = accessibilityLanguages[language];
   const [confirming, setConfirming] = useState(false);
   const submitted = useRef(false);
-  const scroll = useRef<ScrollView>(null);
+  const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
   const panelY = useRef(0);
   const contentY = useRef(0);
   const busy = state.phase === 'loading' || state.phase === 'generating' || state.phase === 'checking';

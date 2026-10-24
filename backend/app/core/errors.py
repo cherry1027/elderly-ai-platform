@@ -16,6 +16,10 @@ async def api_error_handler(request: Request, exc: APIError) -> JSONResponse:
     headers = {"Cache-Control": "no-store"}
     if exc.status_code == 401:
         headers["WWW-Authenticate"] = "Bearer"
+    if exc.status_code == 429:
+        headers["Retry-After"] = "60"
+    elif exc.code == "API_BUSY":
+        headers["Retry-After"] = "1"
     return JSONResponse(
         status_code=exc.status_code,
         content={"error": {"code": exc.code, "message": exc.message}},

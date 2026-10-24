@@ -68,3 +68,13 @@ and has not been performed.
 
 Day 2 did not add speech-to-text, audio upload/retention, AI conversation,
 extracted facts/memories, story generation, payments or subscriptions.
+
+## Follow-up acceptance on 18 October 2026
+
+The previously outstanding two-user HTTP test passed against dedicated
+development project `edbkuunyeyxnyenmmqud` using two real, disposable anonymous
+Supabase Auth users. It verified create/list/read/update, inherited session
+language and cross-user access denial through FastAPI and hosted PostgREST/RLS.
+The test created no permanent email/password accounts. Anonymous sign-in was
+restored to disabled and the exact two users and their synthetic data removed.
+See [Day 3 status](day-3-status.md) for the separate audio tests and limits.

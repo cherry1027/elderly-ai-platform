@@ -13,6 +13,13 @@ const aliceProject = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const bobProject = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const session = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const message = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+const day3Project = "a5000000-0000-4000-8000-000000000005";
+const day3OtherProject = "a6000000-0000-4000-8000-000000000006";
+const day3Session = "c5000000-0000-4000-8000-000000000005";
+const day3Key = "e5000000-0000-4000-8000-000000000005";
+const day3Hash = "a".repeat(64);
+let day3Request;
+let day3Claim;
 
 async function asUser(userId, operation) {
   await db.exec("SET ROLE authenticated");
@@ -114,7 +121,7 @@ test("sessions enforce project ownership for inserts and updates", async () => {
   await asUser(alice, async () => {
     await db.query("INSERT INTO conversation_sessions (id, project_id, language) VALUES ($1, $2, 'sv')", [session, aliceProject]);
     await expectSqlError("INSERT INTO conversation_sessions (project_id, language) VALUES ($1, 'sv')", [bobProject], "42501");
-    await expectSqlError("UPDATE conversation_sessions SET project_id = $1 WHERE id = $2", [bobProject, session], "42501");
+    await expectSqlError("UPDATE conversation_sessions SET project_id = $1 WHERE id = $2", [bobProject, session], "55000");
     await expectSqlError("INSERT INTO conversation_sessions (project_id, language) VALUES ($1, 'de')", [aliceProject], "23514");
   });
   await asUser(bob, async () => {
@@ -266,6 +273,322 @@ test("generated edits stay separate from session-scoped original transcripts", a
     await db.query("DELETE FROM stories WHERE id = $1", [story.rows[0].id]);
     await db.query("DELETE FROM story_projects WHERE id IN ($1, $2)", [sourceProject, otherProject]);
   });
+});
+
+test("transcription persistence protects session provenance and direct mutations", async () => {
+  await asUser(alice, async () => {
+    await db.query(`
+      INSERT INTO story_projects (id, user_id, title, language)
+      VALUES ($1, $2, 'Audio memories', 'sv'), ($3, $2, 'Other project', 'sv')
+    `, [day3Project, alice, day3OtherProject]);
+    await db.query(`
+      INSERT INTO conversation_sessions (id, project_id, language)
+      VALUES ($1, $2, 'sv')
+    `, [day3Session, day3Project]);
+
+    await expectSqlError(
+      "UPDATE conversation_sessions SET language = 'en' WHERE id = $1",
+      [day3Session], "55000",
+    );
+    await expectSqlError(
+      "UPDATE conversation_sessions SET project_id = $1 WHERE id = $2",
+      [day3OtherProject, day3Session], "55000",
+    );
+    await expectSqlError(`
+      INSERT INTO audio_transcription_requests (
+        user_id, session_id, idempotency_key, content_sha256, language,
+        claim_token, lease_expires_at
+      ) VALUES ($1, $2, $3, $4, 'sv', gen_random_uuid(), now() + interval '2 minutes')
+    `, [alice, day3Session, day3Key, day3Hash], "42501");
+    await expectSqlError(
+      "SELECT claim_token FROM audio_transcription_requests WHERE session_id = $1",
+      [day3Session], "42501",
+    );
+  });
+
+  await db.exec("SET ROLE anon");
+  try {
+    await expectSqlError("SELECT * FROM audio_transcripts", [], "42501");
+    await expectSqlError(
+      "SELECT * FROM claim_audio_transcription($1, $2, $3, $4, 'sv')",
+      [day3Project, day3Session, day3Key, day3Hash], "42501",
+    );
+  } finally {
+    await db.exec("RESET ROLE");
+  }
+});
+
+test("transcription claim binds owner, session, hash, language, and lease", async () => {
+  await asUser(bob, async () => {
+    await expectSqlError(
+      "SELECT * FROM claim_audio_transcription($1, $2, $3, $4, 'sv')",
+      [day3Project, day3Session, day3Key, day3Hash], "P0002",
+    );
+  });
+
+  await asUser(alice, async () => {
+    await expectSqlError(
+      "SELECT * FROM claim_audio_transcription($1, $2, $3, $4, 'sv')",
+      [day3OtherProject, day3Session, day3Key, day3Hash], "P0002",
+    );
+    await expectSqlError(
+      "SELECT * FROM claim_audio_transcription($1, $2, $3, $4, 'en')",
+      [day3Project, day3Session, day3Key, day3Hash], "22023",
+    );
+    await expectSqlError(
+      "SELECT * FROM claim_audio_transcription($1, $2, $3, 'not-a-hash', 'sv')",
+      [day3Project, day3Session, day3Key], "22023",
+    );
+
+    const claimed = (await db.query(
+      "SELECT * FROM claim_audio_transcription($1, $2, $3, $4, 'sv')",
+      [day3Project, day3Session, day3Key, day3Hash],
+    )).rows[0];
+    assert.equal(claimed.outcome, "claimed");
+    assert.equal(claimed.status, "processing");
+    assert.equal(claimed.session_id, day3Session);
+    assert.equal(claimed.language, "sv");
+    assert.equal(claimed.attempt_count, 1);
+    assert.ok(claimed.request_id && claimed.claim_token);
+    day3Request = claimed.request_id;
+    day3Claim = claimed.claim_token;
+
+    const duplicate = (await db.query(
+      "SELECT * FROM claim_audio_transcription($1, $2, $3, $4, 'sv')",
+      [day3Project, day3Session, day3Key, day3Hash],
+    )).rows[0];
+    assert.equal(duplicate.outcome, "in_progress");
+    assert.equal(duplicate.request_id, day3Request);
+    assert.equal(duplicate.claim_token, null);
+    assert.equal(duplicate.attempt_count, 1);
+
+    await expectSqlError(
+      "SELECT * FROM claim_audio_transcription($1, $2, $3, $4, 'sv')",
+      [day3Project, day3Session, day3Key, "b".repeat(64)], "23505",
+    );
+    await expectSqlError(
+      "UPDATE audio_transcription_requests SET status = 'failed' WHERE session_id = $1",
+      [day3Session], "42501",
+    );
+  });
+
+  const lease = (await db.query(`
+    SELECT extract(epoch FROM (lease_expires_at - created_at)) AS seconds
+    FROM audio_transcription_requests WHERE id = $1
+  `, [day3Request])).rows[0].seconds;
+  assert.ok(lease >= 119 && lease <= 121);
+});
+
+test("completion and failure RPCs reject cross-user and anonymous callers", async () => {
+  await asUser(bob, async () => {
+    await expectSqlError(
+      "SELECT * FROM complete_audio_transcription($1, $2, 'Forged transcript')",
+      [day3Request, day3Claim], "P0002",
+    );
+    await expectSqlError(
+      "SELECT * FROM fail_audio_transcription($1, $2, 'PROVIDER_UNAVAILABLE')",
+      [day3Request, day3Claim], "P0002",
+    );
+  });
+
+  await db.exec("SET ROLE anon");
+  try {
+    await expectSqlError(
+      "SELECT * FROM complete_audio_transcription($1, $2, 'Anonymous transcript')",
+      [day3Request, day3Claim], "42501",
+    );
+    await expectSqlError(
+      "SELECT * FROM fail_audio_transcription($1, $2, 'PROVIDER_UNAVAILABLE')",
+      [day3Request, day3Claim], "42501",
+    );
+  } finally {
+    await db.exec("RESET ROLE");
+  }
+});
+
+test("completion appends exactly one immutable audio transcript", async () => {
+  const transcriptText = "Jag föddes i Malmö.";
+
+  await asUser(alice, async () => {
+    await db.query(`
+      INSERT INTO conversation_messages (session_id, role, original_text)
+      VALUES ($1, 'user', 'Typed correction, not audio.')
+    `, [day3Session]);
+
+    await expectSqlError(
+      "SELECT * FROM complete_audio_transcription($1, $2, $3)",
+      [day3Request, day3Claim, "x".repeat(32001)], "22001",
+    );
+
+    const completed = (await db.query(
+      "SELECT * FROM complete_audio_transcription($1, $2, $3)",
+      [day3Request, day3Claim, transcriptText],
+    )).rows[0];
+    assert.deepEqual(Object.keys(completed).sort(), [
+      "created_at", "language", "session_id", "status", "text", "transcript_id",
+    ]);
+    assert.equal(completed.session_id, day3Session);
+    assert.equal(completed.language, "sv");
+    assert.equal(completed.text, transcriptText);
+    assert.equal(completed.status, "completed");
+
+    const replay = (await db.query(
+      "SELECT * FROM complete_audio_transcription($1, $2, $3)",
+      [day3Request, day3Claim, transcriptText],
+    )).rows[0];
+    assert.equal(replay.transcript_id, completed.transcript_id);
+    await expectSqlError(
+      "SELECT * FROM complete_audio_transcription($1, gen_random_uuid(), $2)",
+      [day3Request, transcriptText], "55000",
+    );
+    await expectSqlError(
+      "SELECT * FROM complete_audio_transcription($1, $2, 'Rewritten')",
+      [day3Request, day3Claim], "23505",
+    );
+
+    const claimedAgain = (await db.query(
+      "SELECT * FROM claim_audio_transcription($1, $2, $3, $4, 'sv')",
+      [day3Project, day3Session, day3Key, day3Hash],
+    )).rows[0];
+    assert.equal(claimedAgain.outcome, "completed");
+    assert.equal(claimedAgain.transcript_id, completed.transcript_id);
+    assert.equal(claimedAgain.text, transcriptText);
+
+    const transcripts = (await db.query(`
+      SELECT transcript_id, session_id, language, text, status, created_at
+      FROM audio_transcripts WHERE session_id = $1
+    `, [day3Session])).rows;
+    assert.equal(transcripts.length, 1);
+    assert.equal(transcripts[0].transcript_id, completed.transcript_id);
+    assert.equal(transcripts[0].text, transcriptText);
+    await expectSqlError(
+      "UPDATE conversation_messages SET original_text = 'Overwritten' WHERE id = $1",
+      [completed.transcript_id], "42501",
+    );
+    await expectSqlError(
+      "DELETE FROM conversation_messages WHERE id = $1",
+      [completed.transcript_id], "42501",
+    );
+  });
+
+  await asUser(bob, async () => {
+    assert.equal((await db.query("SELECT * FROM audio_transcripts")).rows.length, 0);
+  });
+});
+
+test("failed and stale transcription claims retry without duplicate messages", async () => {
+  const failedKey = "e6000000-0000-4000-8000-000000000006";
+  const staleKey = "e7000000-0000-4000-8000-000000000007";
+  let failedRequest;
+  let failedClaim;
+  let messageCount;
+
+  await asUser(alice, async () => {
+    messageCount = (await db.query(
+      "SELECT count(*)::int AS count FROM conversation_messages WHERE session_id = $1",
+      [day3Session],
+    )).rows[0].count;
+    const claimed = (await db.query(
+      "SELECT * FROM claim_audio_transcription($1, $2, $3, $4, 'sv')",
+      [day3Project, day3Session, failedKey, "c".repeat(64)],
+    )).rows[0];
+    failedRequest = claimed.request_id;
+    failedClaim = claimed.claim_token;
+
+    const failed = (await db.query(
+      "SELECT * FROM fail_audio_transcription($1, $2, 'PROVIDER_UNAVAILABLE')",
+      [failedRequest, failedClaim],
+    )).rows[0];
+    assert.equal(failed.status, "failed");
+    assert.equal((await db.query(
+      "SELECT count(*)::int AS count FROM conversation_messages WHERE session_id = $1",
+      [day3Session],
+    )).rows[0].count, messageCount);
+    assert.equal((await db.query(
+      "SELECT count(*)::int AS count FROM audio_transcripts WHERE session_id = $1",
+      [day3Session],
+    )).rows[0].count, 1);
+
+    const failedReplay = (await db.query(
+      "SELECT * FROM fail_audio_transcription($1, $2, 'PROVIDER_UNAVAILABLE')",
+      [failedRequest, failedClaim],
+    )).rows[0];
+    assert.equal(failedReplay.status, "failed");
+
+    const retried = (await db.query(
+      "SELECT * FROM claim_audio_transcription($1, $2, $3, $4, 'sv')",
+      [day3Project, day3Session, failedKey, "c".repeat(64)],
+    )).rows[0];
+    assert.equal(retried.outcome, "claimed");
+    assert.equal(retried.attempt_count, 2);
+    assert.notEqual(retried.claim_token, failedClaim);
+    await expectSqlError(
+      "SELECT * FROM complete_audio_transcription($1, $2, 'Stale result')",
+      [failedRequest, failedClaim], "55000",
+    );
+    await db.query(
+      "SELECT * FROM complete_audio_transcription($1, $2, 'Successful retry')",
+      [failedRequest, retried.claim_token],
+    );
+
+    const stale = (await db.query(
+      "SELECT * FROM claim_audio_transcription($1, $2, $3, $4, 'sv')",
+      [day3Project, day3Session, staleKey, "d".repeat(64)],
+    )).rows[0];
+    await db.exec("RESET ROLE");
+    await db.query(
+      "UPDATE audio_transcription_requests SET lease_expires_at = now() - interval '1 second' WHERE id = $1",
+      [stale.request_id],
+    );
+    await db.exec("SET ROLE authenticated");
+    await db.query("SELECT set_config('request.jwt.claim.sub', $1, false)", [alice]);
+    await expectSqlError(
+      "SELECT * FROM complete_audio_transcription($1, $2, 'Late stale result')",
+      [stale.request_id, stale.claim_token], "55000",
+    );
+    await expectSqlError(
+      "SELECT * FROM fail_audio_transcription($1, $2, 'PROVIDER_UNAVAILABLE')",
+      [stale.request_id, stale.claim_token], "55000",
+    );
+    const reclaimed = (await db.query(
+      "SELECT * FROM claim_audio_transcription($1, $2, $3, $4, 'sv')",
+      [day3Project, day3Session, staleKey, "d".repeat(64)],
+    )).rows[0];
+    assert.equal(reclaimed.attempt_count, 2);
+    assert.notEqual(reclaimed.claim_token, stale.claim_token);
+    await expectSqlError(
+      "SELECT * FROM complete_audio_transcription($1, $2, 'Late stale result')",
+      [stale.request_id, stale.claim_token], "55000",
+    );
+    await db.query(
+      "SELECT * FROM fail_audio_transcription($1, $2, 'PROVIDER_UNAVAILABLE')",
+      [stale.request_id, reclaimed.claim_token],
+    );
+  });
+});
+
+test("completed sessions reject new audio claims and project deletion erases ledger", async () => {
+  await asUser(alice, async () => {
+    await db.query(`
+      UPDATE conversation_sessions
+      SET status = 'completed', ended_at = now()
+      WHERE id = $1
+    `, [day3Session]);
+    await expectSqlError(
+      "SELECT * FROM claim_audio_transcription($1, $2, gen_random_uuid(), $3, 'sv')",
+      [day3Project, day3Session, "e".repeat(64)], "55000",
+    );
+    await db.query("DELETE FROM story_projects WHERE id IN ($1, $2)", [day3Project, day3OtherProject]);
+  });
+
+  assert.equal((await db.query(
+    "SELECT count(*)::int AS count FROM audio_transcription_requests WHERE session_id = $1",
+    [day3Session],
+  )).rows[0].count, 0);
+  assert.equal((await db.query(
+    "SELECT count(*)::int AS count FROM conversation_messages WHERE session_id = $1",
+    [day3Session],
+  )).rows[0].count, 0);
 });
 
 test("empty-project bootstrap preserves every original migration version", async () => {

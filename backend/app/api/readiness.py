@@ -1,23 +1,20 @@
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from app.services.supabase import SupabaseUnavailable, check_supabase
-
 router = APIRouter(tags=["Health"])
 
 
 @router.get("/ready", responses={503: {"description": "Supabase unavailable"}})
 async def readiness(request: Request):
-    """Check the configured database data API without fetching personal data."""
-    try:
-        await check_supabase(request.app.state.settings, request.app.state.http_client)
-    except SupabaseUnavailable as exc:
+    """Zero-row data API probe, with a two-second local probe cooldown."""
+    error = await request.app.state.readiness_probe.check()
+    if error is not None:
         return JSONResponse(
             status_code=503,
             content={
                 "status": "unavailable",
                 "service": "memy-ai-backend",
-                "error": {"code": str(exc), "message": "Database is not ready."},
+                "error": {"code": error, "message": "Database is not ready."},
             },
             headers={"Cache-Control": "no-store"},
         )

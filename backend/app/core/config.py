@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, AnyHttpUrl, Field, SecretStr, field_validator
@@ -35,6 +36,20 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173",
     ]
     request_timeout_seconds: float = Field(default=5, gt=0, le=30)
+    api_max_concurrent_requests: int = Field(default=64, ge=1, le=256)
+    api_requests_per_minute: int = Field(default=120, ge=1, le=600)
+    # Public persistence still has a mock-only contract. Day 12 providers are
+    # separately gated evaluation adapters; never silently relabel live output.
+    conversation_mode: Literal["disabled", "mock"] = "disabled"
+    story_generation_mode: Literal["disabled", "mock"] = "disabled"
+    ai_provider_mode: Literal["disabled", "mock", "openai"] = "disabled"
+    openai_api_key: SecretStr | None = None
+    openai_text_model: str = ""
+    openai_verifier_model: str = ""
+    openai_transcription_model: Literal["gpt-4o-mini-transcribe", "gpt-4o-transcribe"] = "gpt-4o-mini-transcribe"
+    live_ai_approval_path: Path | None = None
+    ai_usage_ledger_path: Path = BACKEND_DIR / ".private" / "ai-usage.sqlite3"
+    openai_timeout_seconds: float = Field(default=30, gt=0, le=60)
 
     @classmethod
     def settings_customise_sources(

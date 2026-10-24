@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "backend_commit": "c67687ec4b392dbf0e4f73fc8451ac6f0da05560",
+  "mobile_commit": "1d93b74ac9de75c3bdd778d1ad0f9a8ce4449e7e",
+  "attestations": {
+    "physical_ios_device": false,
+    "fictional_data_only": false,
+    "trusted_transport": false
+  },
+  "cases": [
+    {"id": "supabase-login", "status": "pending"},
+    {"id": "create-project-dashboard", "status": "pending"},
+    {"id": "real-m4a-upload", "status": "pending"},
+    {"id": "labelled-simulated-transcript", "status": "pending"},
+    {"id": "confirm-correct-memory", "status": "pending"},
+    {"id": "explicit-autobiography-generation", "status": "pending"},
+    {"id": "edit-new-revision", "status": "pending"},
+    {"id": "open-pdf-on-iphone", "status": "pending"},
+    {"id": "continue-preserves-revisions", "status": "pending"},
+    {"id": "signout-signin-restores-data", "status": "pending"},
+    {"id": "cross-user-access-denied", "status": "pending"},
+    {"id": "network-interruption-recovery", "status": "pending"}
+  ]
+}

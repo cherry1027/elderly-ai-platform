@@ -1,0 +1,3 @@
+{
+  "baseUrl": "http://<TRUSTED_PRIVATE_LAN_IPV4>:8000"
+}

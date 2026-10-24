@@ -1,0 +1,4 @@
+{
+  "supabaseUrl": "https://<DEVELOPMENT_PROJECT_REF>.supabase.co",
+  "publishableKey": "<DEVELOPMENT_PUBLISHABLE_KEY_FROM_APPROVED_CHANNEL>"
+}

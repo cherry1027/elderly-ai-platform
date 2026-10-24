@@ -6,13 +6,207 @@ Python 3.13 is the verified runtime. From the repository root:
 cd backend
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements-dev.txt
+python -m pip install --only-binary=av -r requirements-dev.txt
 # New checkout only: copy .env.example to .env and fill its project URL/key.
 python -m pytest -q -m 'not integration'
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 Swagger: http://127.0.0.1:8000/docs
+
+## Final validation — Day 15
+
+Start with [Day 15 status](../docs/day-15-status.md),
+[acceptance gates](../docs/milestone-1-acceptance.md) and
+[Tarun's final integration guide](../docs/tarun-final-integration.md).
+Current native source `b787dcd` addresses the older backoff gap; actual device
+acceptance remains pending. Backend application routes remain at the Day 14
+baseline; new evidence tooling does not enable live AI or change cloud state.
+
+```sh
+.venv/bin/python scripts/validate_milestone_evidence.py
+```
+
+This offline tool intentionally exits 3 for valid but unaccepted evidence; it
+never grants release/pilot approval. The historical Day 14 commands and pins
+below remain reproducible, not a current-mobile acceptance claim.
+
+## Current mobile acceptance — Day 14
+
+Use the [Day 14 report](../docs/day-14-status.md),
+[pinned native source review](../docs/day-14-mobile-code-review.md) and
+[Tarun's iPhone checklist](../docs/day-14-tarun-rehearsal.md). Runtime baseline
+is `c67687e` on the existing cumulative review branch; version/25 operations and
+success schemas remain 0.8.1. The small CORS fix exposes `Retry-After` for allowed
+browser origins. Explicit backoff is still a mobile-client follow-up.
+
+```sh
+.venv/bin/python scripts/verify_day14.py
+.venv/bin/python scripts/validate_day14_evidence.py
+```
+
+The first is an offline 142-assertion bilingual rehearsal with real local M4A
+decoding/PDF rendering but explicit Auth/Data API doubles; developer dependencies
+are required. It is not a hosted or phone test. The second validates a bounded,
+content-free self-report and defaults to `PENDING`; exit 0 is not a device pass.
+Fresh read-only hosted checks passed; two issued-user JWTs and actual iPhone
+acceptance remain pending. No Auth setting or stored row changed.
+
+Backend version 0.8.1 includes [Day 5 Create My Story](../docs/story-drafts-api.md):
+explicit generation, confirmed-memory evidence, immutable originals, versioned
+drafts, manual editing/history and conservative verification. For the free local
+simulation, set `CONVERSATION_MODE=mock STORY_GENERATION_MODE=mock` before the
+Uvicorn command (PowerShell examples are in that contract). Both defaults stay
+disabled. No model key or paid AI provider is involved.
+
+[Day 6 PDF export and continuation](../docs/pdf-export-api.md) adds four protected
+operations, pinned ReportLab and bundled Unicode fonts. Reinstall the updated
+requirements. No system PDF executable or font installation is required for the
+server; PDFs are rendered in memory with private/no-store download headers. The
+audit stores metadata only and retains the selected historical saved revision.
+Continuation resumes or creates a session but never generates a draft automatically.
+
+## Day 7 mobile development and acceptance
+
+Use the cumulative `codex/day-7-mobile-integration` review branch. From this
+directory, start the safe development launcher:
+
+```sh
+.venv/bin/python scripts/run_mobile_dev.py         # loopback only
+.venv/bin/python scripts/run_mobile_dev.py --lan   # trusted local network only
+```
+
+On Windows use `.venv\Scripts\python.exe`. The launcher refuses legacy/unknown
+Supabase projects, enables only the free conversation/story mocks, keeps real
+transcription disabled, disables access logs/proxy trust, and caps concurrent
+connections at 32. No public tunnel, deployment or paid provider is configured.
+Use the backend computer's LAN IP from a same-network phone; `0.0.0.0` is not a
+client URL and another computer's private address is not reachable across separate
+home networks. Stop the launcher with Ctrl+C after testing.
+
+Non-audio business API bodies are limited to 256 KiB and 30 seconds before JSON
+parsing. Safe failures are `413 REQUEST_TOO_LARGE`, `408 REQUEST_TIMEOUT`, and
+`500 INTERNAL_ERROR`; they never expose exception text and retain configured CORS
+and no-store. Audio keeps its separate authentication-before-read and 25 MB limit.
+PDF success bodies are binary, but their documented error responses are JSON.
+
+For authorized **disposable** existing development accounts only:
+
+```sh
+.venv/bin/python scripts/verify_day7.py --run --cleanup
+```
+
+This prompts privately for both account credentials, obtains/validates their
+access tokens online, then executes real FastAPI routes in-process against only
+`edbkuunyeyxnyenmmqud`. It injects a clearly fictional WAV transcription fixture
+and the existing free mock conversation/story providers; no speech/AI API is
+called. It verifies both languages, RLS denial, immutable originals, clarification,
+draft/edit/retry behavior, actual PDFs and historical versions. `--cleanup`
+deletes and verifies only this invocation's synthetic projects and children;
+without it data is retained and exact project IDs are reported. It never changes
+Auth settings or creates/deletes Auth users. Automated operators may explicitly
+use `--tokens-from-env` with two privately supplied `MEMY_DAY7_USER_A_TOKEN` /
+`MEMY_DAY7_USER_B_TOKEN` values; never place secrets in CLI arguments or chat.
+
+The authorized hosted Day 7 run passed for Swedish and English. This is backend
+acceptance, not proof that Tarun's Expo client, email confirmation or real iPhone
+download UX works. The four older opt-in live pytest cases remain skipped/pending.
+See the [single frontend handoff](../docs/frontend-integration.md) and
+[Day 7 evidence and limitations](../docs/day-7-status.md).
+
+For Day 8, use the [actual Expo configuration and device checklist](../docs/backend-mobile-quickstart.md)
+and [integration status](../docs/day-8-status.md). The reviewed mobile revision
+`59762f2` uses ignored local JSON files, not `EXPO_PUBLIC_*`. Existing project
+contracts match; authenticated iPhone acceptance and native session integration
+remain pending. Do not send Bearer tokens over shared Wi-Fi HTTP.
+
+An optional Node 24+ check runs the pinned real TypeScript project client against
+FastAPI in-process with synthetic Auth/Data API fixtures:
+
+```sh
+.venv/bin/python scripts/verify_mobile_contract.py
+```
+
+It requires the reviewed mobile Git object locally, opens no sockets and makes
+no cloud requests. It does not prove device networking, real login or RLS.
+
+## Day 13 security and privacy
+
+See the [security report](../docs/day-13-status.md),
+[retention/deletion workflow](../docs/day-13-privacy-retention.md) and
+[deployment gates](../docs/day-13-deployment-readiness.md).
+Business routes add per-process admission/rate controls: default 64 simultaneous
+requests and 120 requests/minute per online-verified user, configured by
+`API_MAX_CONCURRENT_REQUESTS` and `API_REQUESTS_PER_MINUTE`. `429 RATE_LIMITED`
+includes `Retry-After:60`; `503 API_BUSY` includes `Retry-After:1`. These are not
+distributed/edge protections. APIs use no-store/no-sniff/no-referrer, including
+early errors. Supabase ignores ambient proxies and follows no redirects.
+`/ready` permits one in-flight upstream probe with a two-second local cooldown.
+
+```sh
+.venv/bin/python scripts/privacy_inventory.py
+.venv/bin/python scripts/benchmark_security.py --iterations 40 --concurrency 4
+```
+
+These default commands make no external request. The first only explains the
+separately opt-in read-only inventory; the second uses fake Auth/Data API and
+real fictional in-memory PDFs. No deletion API or retention TTL is invented.
+Do not deploy legacy Edge Functions with the old Supabase configuration.
+
+## Day 12 gated provider evaluation
+
+See the [OpenAI adapter guide](../docs/day-12-ai-integration.md) and
+[pre-approval status](../docs/day-12-status.md). Real transcription, structured
+conversation/extraction and separately verified writing adapters are implemented
+for approved evaluation only. Key presence never enables spending. Default
+`AI_PROVIDER_MODE=disabled`; normal public FastAPI rejects `openai` mode rather
+than saving live outputs under mock-only contracts. No migration is applied.
+
+```sh
+.venv/bin/python scripts/evaluate_ai.py
+```
+
+This default inspection makes no paid call and reports quality `NOT_RUN`.
+Keep Tarun's working mock launcher unchanged. Do not use a Windows live mode or
+distributed workers with the single-host POSIX reservation ledger.
+
+## Day 11 story and PDF integration
+
+The [Day 11 Expo guide](../docs/day-11-story-integration.md) connects explicit
+generation, saved draft reading/editing/history, private PDF bytes and Continue
+using the existing APIs. No migration/runtime change is needed. New route and
+real-renderer tests plus the rollback-only bilingual database journey are in
+the [verification report](../docs/day-11-status.md); native PDF/share acceptance
+remains Tarun's device gate.
+
+## Day 10 memory review
+
+The [Day 10 handoff](../docs/day-10-memory-integration.md) covers current-memory
+versions, explicit correction/rejection and project-scoped structured continuity.
+Patch 0.8.1 rejects a stale implicit confirmation of a newer corrected value with
+409 rather than reporting an unseen correction as approved. Existing valid
+replays remain safe; no new database migration or API fields are needed.
+See [verification scope and pending device checks](../docs/day-10-status.md).
+
+## Day 9 native audio simulation
+
+From this directory, explicitly opt into labelled fictional transcripts:
+
+```sh
+.venv/bin/python scripts/run_mobile_dev.py --lan --simulate-transcription
+```
+
+On Windows use `.\.venv\Scripts\python.exe`. The launcher pins the development
+project and otherwise keeps transcription disabled; no environment variable or
+model key enables it. Valid recording bytes are decoded and bounded, but their
+speech is not interpreted. A permanent bilingual simulation notice is stored
+with the fixed EN/SV transcript. Process its returned ID through `/messages`
+using `source_message_id`, not copied text, to avoid a second original.
+
+See the [native upload and memory-review handoff](../docs/day-9-mobile-audio.md)
+and [Day 9 results](../docs/day-9-status.md). No new API paths, database migration,
+retained-audio storage or paid provider is added. Physical-device recording,
+upload and display still need Tarun's implementation/acceptance.
 
 ```sh
 curl -i http://127.0.0.1:8000/health
@@ -41,6 +235,14 @@ dotenv files. Paths are resolved from the code location, independently of cwd.
 `CORS_ORIGINS` is a JSON array of exact HTTP(S) origins without trailing slashes.
 Defaults cover localhost/127.0.0.1 ports 8080 and 5173. Add deployment origins
 explicitly. `REQUEST_TIMEOUT_SECONDS` defaults to 5 and accepts values >0 to 30.
+
+For a Windows readiness 503/upstream 401, run the read-only
+`scripts/diagnose_supabase.py` helper (`.venv\Scripts\python.exe` on Windows).
+It pins the development project, reports only a key fingerprint/configuration
+hints and probes zero rows; it never prints keys, tokens or upstream bodies.
+See [the readiness troubleshooting steps](../docs/backend-mobile-quickstart.md#diagnose-a-readiness-503-or-supabase-401)
+before changing credentials or permissions. Dashboard membership is separate
+from project-key validity and is not required for application API access.
 
 ## Current HTTP contract
 
@@ -203,3 +405,67 @@ Use `http://<developer-machine-LAN-IP>:8000`; phone loopback points to the phone
 A shared remotely accessible API URL has not been deployed.
 
 See [the frontend handoff](../docs/frontend-integration.md).
+
+## Day 4 simulated conversations
+
+Backend 0.4.0 adds authenticated text turns, ordered message history, extracted
+memory candidates, clarification questions and versioned confirmation/correction.
+Existing Day 3 source messages can be processed without rewriting or duplicating
+them. PostgreSQL owns atomic writes, retry replay and cross-user isolation.
+
+`CONVERSATION_MODE` accepts only `disabled` (default) or `mock`. For the free
+development demonstration, set `CONVERSATION_MODE=mock` when starting Uvicorn.
+This Day 4 public route has no live AI adapter or API key requirement and makes
+no paid provider call. Day 12 adds separate approval-gated evaluation adapters,
+not public activation. Mock extraction recognizes limited explicit en/sv patterns; unsupported wording can
+produce no facts. It does not establish real-model accuracy.
+
+The [Day 4 conversation contract](../docs/conversation-api.md) includes all five
+routes, source/text requests, example response, Yes/No/correction formats,
+idempotency keys, errors and Windows/macOS launch commands. Deployment and
+verification are recorded in [Day 4 status](../docs/day-4-status.md).
+
+## Day 3 audio foundation
+
+Backend version 0.3.0 adds bounded, authenticated audio upload and immutable
+transcript retrieval. Live transcription remains disabled. Ordinary startup
+does not return simulated transcripts; Day 9's explicit development launcher
+flag is the only supplied runtime opt-in. [Audio API](../docs/audio-api.md) describes the
+multipart contract, errors, privacy and retry rules.
+
+The decoder uses PyAV's bundled FFmpeg libraries; a system `ffmpeg`/`ffprobe`
+installation is not required. Python 3.13 and macOS are verified locally. Windows
+and Linux need compatible PyAV wheels and should run the full suite before use.
+The decoder subprocess has a 12-second wall limit on every platform, Unix CPU
+limits, and an additional Linux heap limit. It receives no backend credentials.
+Windows uses a threaded child-process controller so Uvicorn's selector loop under
+`--reload` does not prevent audio probing. This branch is regression-tested here;
+a native Windows acceptance run is still required before deployment.
+
+Run the credential-safe hosted acceptance helper from a real local terminal:
+
+```sh
+cd backend  # omit this line if already in backend/
+.venv/bin/python scripts/verify_two_users.py --day3
+```
+
+On Windows use `.venv\Scripts\python.exe scripts\verify_two_users.py --day3`.
+Enter credentials only into its hidden terminal prompts, using two existing
+dedicated-development users. It refuses piped/password-echoing input and keeps
+tokens out of files and normal output. It creates only synthetic projects and
+normally deletes their exact IDs afterward. A forced process/host termination
+can interrupt cleanup; remove only its clearly labeled synthetic projects then.
+Day 3's hosted HTTP test uses an explicit fictional provider, so it tests Auth,
+RLS, persistence and retries without any paid calls, not speech recognition.
+
+On 18 October, these three hosted HTTP cases passed using two disposable anonymous
+Supabase Auth users. `scripts/verify_anonymous_users.py` supports that alternative
+only with `RUN_MEMY_ANONYMOUS_ACCEPTANCE=1` and the exact development project.
+It requires an operator to approve and temporarily enable anonymous sign-in,
+restore the setting afterward, and delete the reported exact Auth user IDs.
+Do not enable anonymous sign-in on a shared/production project just to run tests.
+
+For database-only hosted checks, run `supabase/tests/cloud-audio.sql` in the
+dedicated development SQL Editor. It rolls back all synthetic Auth/database rows;
+it does not create login credentials. See [Day 3 status](../docs/day-3-status.md)
+for the exact distinction between completed checks and remaining acceptance.

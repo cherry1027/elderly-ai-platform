@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "pilot_scope": "undecided",
+  "device_evidence": {
+    "schema_version": 1,
+    "backend_commit": "c67687ec4b392dbf0e4f73fc8451ac6f0da05560",
+    "mobile_commit": "b787dcd70b54f6220bfa3d7c0899a2c1f677e080",
+    "attestations": {
+      "physical_ios_device": false,
+      "fictional_data_only": false,
+      "trusted_transport": false
+    },
+    "cases": [
+      {"id": "supabase-login", "status": "pending"},
+      {"id": "create-project-dashboard", "status": "pending"},
+      {"id": "real-m4a-upload", "status": "pending"},
+      {"id": "labelled-simulated-transcript", "status": "pending"},
+      {"id": "confirm-correct-memory", "status": "pending"},
+      {"id": "explicit-autobiography-generation", "status": "pending"},
+      {"id": "edit-new-revision", "status": "pending"},
+      {"id": "open-pdf-on-iphone", "status": "pending"},
+      {"id": "continue-preserves-revisions", "status": "pending"},
+      {"id": "signout-signin-restores-data", "status": "pending"},
+      {"id": "cross-user-access-denied", "status": "pending"},
+      {"id": "network-interruption-recovery", "status": "pending"}
+    ]
+  },
+  "gates": [
+    {"id": "backend-regressions", "status": "pending"},
+    {"id": "hosted-two-user-jwt", "status": "pending"},
+    {"id": "physical-iphone", "status": "pending"},
+    {"id": "mobile-retry-backoff", "status": "pending"},
+    {"id": "legacy-edge-security", "status": "pending"},
+    {"id": "controller-retention-deletion", "status": "pending"},
+    {"id": "live-ai-accuracy", "status": "pending"},
+    {"id": "founders-pilot-scope", "status": "pending"}
+  ]
+}

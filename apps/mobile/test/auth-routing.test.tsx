@@ -1,3 +1,4 @@
+import { openMyStories, openSettings } from './root-shell-helpers';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, screen, waitFor } from '@testing-library/react-native';
 import { renderRouter } from 'expo-router/testing-library';
@@ -22,6 +23,8 @@ import { PREFERENCES_KEY } from '../src/onboarding/preferences';
 import { redirectSystemPath } from '../src/app/+native-intent';
 import { createStoryCopy } from '../src/create-story-copy';
 import { storiesCopy } from '../src/stories-copy';
+import { rootNavigationCopy } from '../src/root-navigation-copy';
+import { StoriesHome } from '../src/stories/StoriesHome';
 
 jest.mock('../src/auth/client', () => ({ createMobileAuth: jest.fn() }));
 jest.mock('../src/auth/config', () => ({ readMobileAuthConfig: jest.fn() }));
@@ -68,12 +71,43 @@ function appStack(flow: ReturnType<typeof renderRouter>) {
 }
 
 describe('actual native login routes with mocked auth services', () => {
+  it.each<Locale>(['en', 'sv'])('persists Settings language and returns real authenticated Replay to Settings in %s', async language => {
+    const flow = await openWelcome(language); await openLogin(language); fill(language);
+    await screen.findByRole('header', { name: rootNavigationCopy[language].homeTitle });
+    expect(auth.getAccessToken).not.toHaveBeenCalled();
+    await openSettings(language);
+    const next = language === 'en' ? 'sv' : 'en';
+    fireEvent.press(screen.getByRole('radio', { name: next === 'sv' ? 'Svenska' : 'English' }));
+    await screen.findByRole('header', { name: rootNavigationCopy[next].settingsTitle });
+    await waitFor(async () => expect(JSON.parse((await AsyncStorage.getItem(PREFERENCES_KEY))!))
+      .toEqual({ version: 1, language: next, completed: true }));
+    fireEvent.press(screen.getByRole('button', { name: rootNavigationCopy[next].replay }));
+    for (const scene of [0, 1, 2] as const) {
+      await screen.findByRole('header', { name: introCopy[next].scenes[scene].title });
+      fireEvent.press(screen.getByRole('button', { name: scene === 2 ? introCopy[next].enter : introCopy[next].next }));
+    }
+    await screen.findByRole('header', { name: rootNavigationCopy[next].settingsTitle });
+    expect(flow.getPathname()).toBe('/authenticated');
+    expect(screen.queryByRole('header', { name: copy[next].welcomeTitle })).toBeNull();
+    expect(JSON.parse((await AsyncStorage.getItem(PREFERENCES_KEY))!)).toEqual({ version: 1, language: next, completed: true });
+    expect(auth.getAccessToken).not.toHaveBeenCalled(); expect(globalThis.fetch).not.toHaveBeenCalled();
+  }, 15_000);
+  it('rejects the previous account’s captured Replay callback after account replacement', async () => {
+    await openWelcome(); await openLogin(); fill();
+    await screen.findByRole('header', { name: rootNavigationCopy.en.homeTitle });
+    const previous = screen.UNSAFE_getByType(StoriesHome).props.onReplayIntroduction;
+    act(() => publish({ status: 'signed-in', user: { id: 'b@example.test', email: 'b@example.test' }, error: null }));
+    await openSettings(); await screen.findByText('b@example.test');
+    act(() => { expect(previous()).toBe(false); });
+    expect(screen.getByRole('header', { name: rootNavigationCopy.en.settingsTitle })).toBeOnTheScreen();
+    expect(screen.queryByText('a@example.test')).toBeNull(); expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
   it.each<Locale>(['en', 'sv'])('logs in and signs out through the existing entrance in %s', async (language) => {
     await openWelcome(language);
     expect(screen.getByRole('button', { name: introCopy[language].register })).toBeEnabled();
     expect(screen.getByRole('button', { name: introCopy[language].guest })).toBeDisabled();
     await openLogin(language); fill(language);
-    await screen.findByText('a@example.test');
+    await openSettings(language); await screen.findByText('a@example.test');
     fireEvent.press(screen.getByRole('button', { name: authCopy[language].signOut }));
     await screen.findByRole('header', { name: copy[language].welcomeTitle });
     expect(screen.queryByText('a@example.test')).toBeNull();
@@ -89,11 +123,11 @@ describe('actual native login routes with mocked auth services', () => {
   it('restores only a verified service account at application entry', async () => {
     snapshot = { status: 'signed-in', user: { id: 'verified-a', email: 'a@example.test' }, error: null };
     renderRouter(routes, { initialUrl: '/' });
-    await screen.findByText('a@example.test');
+    await openSettings(); await screen.findByText('a@example.test');
     expect(screen.getByRole('button', { name: authCopy.en.signOut })).toBeEnabled();
   });
   it('removes account details and offers cleanup retry after failed sign-out', async () => {
-    await openWelcome(); await openLogin(); fill(); await screen.findByText('a@example.test');
+    await openWelcome(); await openLogin(); fill(); await openSettings(); await screen.findByText('a@example.test');
     jest.mocked(auth.signOut).mockImplementationOnce(async () => {
       publish({ status: 'blocked', user: null, error: 'cleanup' }); throw new AuthError('cleanup');
     });
@@ -108,13 +142,13 @@ describe('actual native login routes with mocked auth services', () => {
     expect(screen.queryByLabelText(authCopy.en.password)).toBeNull();
   });
   it('does not retain a previous account after sign-out and another sign-in', async () => {
-    await openWelcome(); await openLogin(); fill(); await screen.findByText('a@example.test');
+    await openWelcome(); await openLogin(); fill(); await openSettings(); await screen.findByText('a@example.test');
     fireEvent.press(screen.getByRole('button', { name: authCopy.en.signOut }));
     await screen.findByRole('header', { name: copy.en.welcomeTitle });
     await openLogin();
     expect(screen.getByLabelText(authCopy.en.email).props.value).toBe('');
     expect(screen.getByLabelText(authCopy.en.password).props.value).toBe('');
-    fill('en', 'b@example.test'); await screen.findByText('b@example.test');
+    fill('en', 'b@example.test'); await openSettings(); await screen.findByText('b@example.test');
     expect(screen.queryByText('a@example.test')).toBeNull();
   });
   it('cancels pending login when Back returns to Welcome', async () => {
@@ -180,7 +214,7 @@ describe('canonical entrance and in-memory login intent', () => {
   it.each(coldPaths)('opens the authenticated screen for a verified session from cold %s', async (path) => {
     snapshot = { status: 'signed-in', user: { id: 'verified-a', email: 'a@example.test' }, error: null };
     const flow = renderRouter(routes, { initialUrl: path });
-    await screen.findByText('a@example.test');
+    await openSettings(); await screen.findByText('a@example.test');
     expect(flow.getPathname()).toBe('/authenticated');
     expect(screen.queryByRole('header', { name: authCopy.en.title })).toBeNull();
     expect(auth.signOut).not.toHaveBeenCalled();
@@ -189,7 +223,7 @@ describe('canonical entrance and in-memory login intent', () => {
   it('returns to Welcome after sign-out from a verified account with no saved onboarding preferences', async () => {
     snapshot = { status: 'signed-in', user: { id: 'verified-a', email: 'a@example.test' }, error: null };
     const flow = renderRouter(routes, { initialUrl: '/' });
-    await screen.findByText('a@example.test');
+    await openSettings(); await screen.findByText('a@example.test');
     expect(await AsyncStorage.getItem(PREFERENCES_KEY)).toBeNull();
     fireEvent.press(screen.getByRole('button', { name: authCopy.en.signOut }));
     await screen.findByRole('header', { name: copy.en.welcomeTitle });
@@ -203,7 +237,7 @@ describe('canonical entrance and in-memory login intent', () => {
   it('returns to Welcome after displayed account verification is lost without inventing onboarding completion', async () => {
     snapshot = { status: 'signed-in', user: { id: 'verified-a', email: 'a@example.test' }, error: null };
     const flow = renderRouter(routes, { initialUrl: '/' });
-    await screen.findByText('a@example.test');
+    await openSettings(); await screen.findByText('a@example.test');
     expect(await AsyncStorage.getItem(PREFERENCES_KEY)).toBeNull();
     act(() => publish({ status: 'signed-out', user: null, error: 'session' }));
     await screen.findByRole('header', { name: copy.en.welcomeTitle });
@@ -226,7 +260,7 @@ describe('canonical entrance and in-memory login intent', () => {
       publish({ status: 'signed-in', user: { id: 'restored-a', email: 'restored@example.test' }, error: null });
       finish();
     });
-    await screen.findByText('restored@example.test');
+    await openSettings(); await screen.findByText('restored@example.test');
     expect(auth.signOut).not.toHaveBeenCalled();
   });
 
@@ -265,7 +299,7 @@ describe('canonical entrance and in-memory login intent', () => {
   });
 
   it('does not expose a stale Login through stack Back after success or sign-out', async () => {
-    const flow = await openWelcome(); await openLogin(); fill(); await screen.findByText('a@example.test');
+    const flow = await openWelcome(); await openLogin(); fill(); await openSettings(); await screen.findByText('a@example.test');
     await waitFor(() => expect(appStack(flow).routes.map(route => route.name)).toEqual(['authenticated']));
     expect(router.canGoBack()).toBe(false);
     expect(screen.queryByLabelText(authCopy.en.password)).toBeNull();
@@ -314,7 +348,7 @@ describe('canonical entrance and in-memory login intent', () => {
     expect(screen.queryByText('a@example.test')).toBeNull();
     expect(auth.signOut).not.toHaveBeenCalled();
     act(() => publish({ status: 'signed-in', user: { id: 'verified-a', email: 'a@example.test' }, error: null }));
-    await screen.findByText('a@example.test');
+    await openSettings(); await screen.findByText('a@example.test');
     await waitFor(() => expect(appStack(flow).routes.map(route => route.name)).toEqual(['authenticated']));
     expect(appStack(flow).routes[0].key).toBe(key);
     expect(auth.signOut).not.toHaveBeenCalled(); expect(auth.signIn).not.toHaveBeenCalled();
@@ -359,7 +393,7 @@ describe('canonical entrance and in-memory login intent', () => {
       expect(screen.queryByText('a@example.test')).toBeNull();
       expect(auth.signOut).not.toHaveBeenCalled();
       act(() => [...changes].forEach(listener => listener('active')));
-      await screen.findByText('a@example.test');
+      await openSettings(); await screen.findByText('a@example.test');
       await waitFor(() => expect(appStack(flow!).routes.map(route => route.name)).toEqual(['authenticated']));
       expect(appStack(flow).routes[0].key).toBe(key);
       expect(auth.signOut).not.toHaveBeenCalled(); expect(auth.signIn).not.toHaveBeenCalled();
@@ -367,7 +401,8 @@ describe('canonical entrance and in-memory login intent', () => {
   });
 
   it('removes an in-memory private draft on session expiry and never reveals it to the next account', async () => {
-    await openWelcome(); await openLogin(); fill(); await screen.findByText('a@example.test');
+    await openWelcome(); await openLogin(); fill(); await openSettings(); await screen.findByText('a@example.test');
+    await openMyStories();
     fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.createStory }));
     await screen.findByLabelText(createStoryCopy.en.titleLabel);
     fireEvent.changeText(screen.getByLabelText(createStoryCopy.en.titleLabel), 'Private account A draft');
@@ -377,7 +412,8 @@ describe('canonical entrance and in-memory login intent', () => {
     await screen.findByRole('header', { name: copy.en.welcomeTitle });
     expect(screen.queryByText('a@example.test')).toBeNull();
     expect(screen.queryByLabelText(authCopy.en.password)).toBeNull();
-    await openLogin(); fill('en', 'b@example.test'); await screen.findByText('b@example.test');
+    await openLogin(); fill('en', 'b@example.test'); await openSettings(); await screen.findByText('b@example.test');
+    await openMyStories();
     fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.createStory }));
     await screen.findByLabelText(createStoryCopy.en.titleLabel);
     expect(screen.getByLabelText(createStoryCopy.en.titleLabel).props.value).toBe('');

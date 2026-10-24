@@ -1,3 +1,4 @@
+import { openMyStories, openSettings } from './root-shell-helpers';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { renderRouter } from 'expo-router/testing-library';
@@ -133,6 +134,7 @@ beforeEach(async () => {
 });
 afterEach(() => { cleanup(); jest.restoreAllMocks(); });
 async function selectStory(language: Language = 'en') {
+  await openMyStories(language);
   await screen.findByText(title);
   fireEvent.press(screen.getByRole('button', { name: storiesCopy[language].openStory + ': ' + title }));
   await screen.findByRole('button', { name: storyDetailsCopy[language].generate });
@@ -240,7 +242,7 @@ it('account B cannot receive account A pending draft or reuse its generation act
   await openGeneration(); await confirmGeneration();
   const signal = jest.mocked(generateStoryDraft).mock.calls[0][0].signal!;
   act(() => publish(account('account-b')));
-  await screen.findByText('account-b@example.test'); expect(signal.aborted).toBe(true);
+  await openSettings(); await screen.findByText('account-b@example.test'); expect(signal.aborted).toBe(true);
   await act(async () => pending.resolve(draft()));
   expect(screen.queryByText(draft().content)).toBeNull();
   await reopenGeneration();
@@ -330,7 +332,7 @@ it.each(['checking', 'signed-out', 'busy', 'blocked'] as const)('cannot enter ge
 it('verified restored URL parameters cannot select a story or approve generation', async () => {
   await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language: 'en', completed: true }));
   renderRouter(routes, { initialUrl: '/authenticated?projectId=' + projectId + '&generate=true&confirm_generation=true' });
-  await screen.findByText(title);
+  await openMyStories(); await screen.findByText(title);
   expect(getStoryProject).not.toHaveBeenCalled(); expect(listStoryDrafts).not.toHaveBeenCalled();
   expect(generateStoryDraft).not.toHaveBeenCalled(); expect(Crypto.randomUUID).not.toHaveBeenCalled();
 });

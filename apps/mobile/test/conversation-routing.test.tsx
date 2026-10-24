@@ -1,3 +1,4 @@
+import { openMyStories, openSettings } from './root-shell-helpers';
 import { listSessionTranscripts } from '../src/api/audio-transcripts';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
@@ -86,6 +87,7 @@ async function openDetails(language: Locale = 'en') {
   jest.mocked(continueStoryProject).mockResolvedValue(continuation(language));
   await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language, completed: true }));
   const flow = renderRouter(routes, { initialUrl: '/' });
+  await openMyStories(language);
   await screen.findByText('Fictional selected story');
   fireEvent.press(screen.getByRole('button', { name: `${storiesCopy[language].openStory}: Fictional selected story` }));
   await screen.findByRole('button', { name: storyDetailsCopy[language].conversation });
@@ -150,7 +152,7 @@ it('cancels an in-flight continuation on Sign Out and ignores its late private r
 it('drops a ready session when accounts change and requires account B to select its own story', async () => {
   await openConversation(); await screen.findByText(conversationCopy.en.ready);
   act(() => publish(account('account-b')));
-  await screen.findByText('account-b@example.test');
+  await openSettings(); await screen.findByText('account-b@example.test'); await openMyStories();
   expect(screen.queryByText(conversationCopy.en.ready)).toBeNull();
   expect(continueStoryProject).toHaveBeenCalledTimes(1); expect(listStorySessions).toHaveBeenCalledTimes(1);
   fireEvent.press(screen.getByRole('button', { name: `${storiesCopy.en.openStory}: Fictional selected story` }));
@@ -171,7 +173,7 @@ it('removes an in-flight session when foreground authentication needs verificati
   expect(signal.aborted).toBe(true);
   await act(async () => { finish(continuation()); });
   expect(screen.queryByText(conversationCopy.en.ready)).toBeNull();
-  act(() => publish(account())); await screen.findByText('Fictional selected story');
+  act(() => publish(account())); await openMyStories(); await screen.findByText('Fictional selected story');
   expect(screen.queryByRole('header', { name: conversationCopy.en.title })).toBeNull();
   expect(continueStoryProject).toHaveBeenCalledTimes(1);
 });
@@ -184,7 +186,7 @@ it('cancels the session on native route blur and returns to the dashboard withou
   act(() => router.push('/outside' as '/')); await screen.findByText('Another test route');
   expect(signal.aborted).toBe(true);
   await act(async () => { finish(continuation()); });
-  act(() => router.back()); await screen.findByText('Fictional selected story');
+  act(() => router.back()); await openMyStories(); await screen.findByText('Fictional selected story');
   expect(screen.queryByText(conversationCopy.en.ready)).toBeNull();
   expect(continueStoryProject).toHaveBeenCalledTimes(1);
 });
@@ -200,7 +202,7 @@ it.each(['checking', 'signed-out', 'busy', 'blocked'] as const)('cannot trigger 
 it('does not treat restored-route or URL parameters as conversation intent for a verified account', async () => {
   await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language: 'en', completed: true }));
   renderRouter(routes, { initialUrl: `/authenticated?projectId=${id}&sessionId=${sessionId}&continue=true` });
-  await screen.findByText('Fictional selected story');
+  await openMyStories(); await screen.findByText('Fictional selected story');
   expect(getStoryProject).not.toHaveBeenCalled(); expect(listStorySessions).not.toHaveBeenCalled();
   expect(continueStoryProject).not.toHaveBeenCalled();
 });
@@ -255,6 +257,7 @@ it('preserves auth/onboarding while a first iOS permission popup unmounts the co
     expect(first.start).not.toHaveBeenCalled();
     jest.mocked(listStorySessions).mockResolvedValueOnce([session()]);
     publishState('active');
+    await openMyStories();
     await screen.findByText('Fictional selected story');
     expect(next.start).not.toHaveBeenCalled();
     fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.openStory + ': Fictional selected story' }));

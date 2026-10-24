@@ -1,3 +1,4 @@
+import { openSettings } from './root-shell-helpers';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, screen, waitFor } from '@testing-library/react-native';
 import { renderRouter } from 'expo-router/testing-library';
@@ -109,7 +110,7 @@ describe('native registration routes, mocked services only', () => {
     fireEvent.changeText(screen.getByLabelText(authCopy.en.email), 'person@example.test');
     fireEvent.changeText(screen.getByLabelText(authCopy.en.password), 'synthetic-password');
     fireEvent.press(screen.getByRole('button', { name: authCopy.en.signIn }));
-    await screen.findByText('person@example.test');
+    await openSettings(); await screen.findByText('person@example.test');
   });
   it('does not leave registration for Login if temporary cleanup fails', async () => {
     await openRegister();
@@ -135,7 +136,7 @@ describe('native registration routes, mocked services only', () => {
   it('preserves a legitimate signed-in account at direct registration entry', async () => {
     snapshot = { status: 'signed-in', user: { id: 'existing', email: 'existing@example.test' }, error: null };
     renderRouter(routes, { initialUrl: '/register' });
-    await screen.findByText('existing@example.test');
+    await openSettings(); await screen.findByText('existing@example.test');
     expect(auth.signOut).not.toHaveBeenCalled();
     expect(registration.signUp).not.toHaveBeenCalled();
   });
@@ -234,7 +235,7 @@ describe('confirmation callback route without live requests', () => {
     await screen.findByText(registrationCopy.en.confirmationUnavailable);
     expect(auth.signOut).not.toHaveBeenCalled();
     fireEvent.press(screen.getByRole('button', { name: registrationCopy.en.back }));
-    await screen.findByText('a@example.test');
+    await openSettings(); await screen.findByText('a@example.test');
     expect(auth.signOut).not.toHaveBeenCalled();
   });
   it('does not clear pending verification material merely by navigating to the callback', async () => {

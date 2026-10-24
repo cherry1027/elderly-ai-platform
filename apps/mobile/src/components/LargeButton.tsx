@@ -5,18 +5,22 @@ import { colors, layout } from '../theme';
 
 interface LargeButtonProps {
   label: string;
+  accessibilityLabel?: string;
   language: Language;
   onPress: () => void;
   disabled?: boolean;
   variant?: 'primary' | 'secondary';
+  density?: 'comfortable' | 'compact';
 }
 
 export function LargeButton({
   label,
+  accessibilityLabel,
   language,
   onPress,
   disabled = false,
   variant = 'primary',
+  density = 'comfortable',
 }: LargeButtonProps) {
   const [focused, setFocused] = useState(false);
   const primary = variant === 'primary';
@@ -24,7 +28,7 @@ export function LargeButton({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={accessibilityLabel ?? label}
       accessibilityLanguage={accessibilityLanguages[language]}
       accessibilityState={{ disabled }}
       disabled={disabled}
@@ -33,6 +37,7 @@ export function LargeButton({
       onBlur={() => setFocused(false)}
       style={({ pressed }) => [
         styles.button,
+        density === 'compact' && styles.compact,
         primary ? styles.primary : styles.secondary,
         pressed && !disabled && (primary ? styles.primaryPressed : styles.secondaryPressed),
         disabled && styles.disabled,
@@ -53,6 +58,7 @@ export const buttonStyles = StyleSheet.create({
 });
 
 const styles = StyleSheet.create({
+  compact: { paddingVertical: 10, borderRadius: 16 },
   button: {
     ...buttonStyles.target,
     width: '100%',

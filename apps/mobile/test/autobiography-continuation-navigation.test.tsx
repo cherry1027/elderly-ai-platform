@@ -1,3 +1,4 @@
+import { HomeScreen } from '../src/screens/HomeScreen';
 import { useEffect } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { useFocusEffect } from 'expo-router';
@@ -60,7 +61,7 @@ function useMockFocus(callback: () => void | (() => void)) {
   }, [callback]);
 }
 function props(language: Language = 'en', owner = ownerA) {
-  return { language, user: { id: owner, email: 'fictional@example.test' }, getAccessToken: token, onSignOut: signOut };
+  return { language, user: { id: owner, email: 'fictional@example.test' }, getAccessToken: token, onSignOut: signOut, onSelectLanguage: jest.fn(), onReplayIntroduction: jest.fn() };
 }
 async function settle() { await act(async () => { await Promise.resolve(); }); }
 function deferred<T>() {
@@ -69,6 +70,7 @@ function deferred<T>() {
 }
 async function openSaved(language: Language = 'en') {
   const view = render(<StoriesHome {...props(language)} />); await settle();
+  act(() => screen.UNSAFE_getByType(HomeScreen).props.onOpenStories());
   act(() => screen.UNSAFE_getByType(StoryDashboard).props.onOpenStory(projectId));
   act(() => screen.UNSAFE_getByType(StoryDetails).props.onGenerate(project(language)));
   return view;
@@ -161,7 +163,8 @@ it('clears the owner-scoped selection and ignores a late continuation result aft
   await waitFor(() => expect(continueStoryProject).toHaveBeenCalledTimes(1));
   const signal = jest.mocked(continueStoryProject).mock.calls[0][0].signal!;
   view.rerender(<StoriesHome {...props('sv', ownerB)} />); await settle(); expect(signal.aborted).toBe(true);
-  expect(screen.UNSAFE_getByType(StoryDashboard).props.user.id).toBe(ownerB);
+  expect(screen.UNSAFE_getByType(HomeScreen).props.language).toBe('sv');
+  expect(screen.UNSAFE_queryByType(StoryDashboard)).toBeNull();
   await act(async () => pending.resolve(continuation()));
   expect(screen.UNSAFE_queryByType(Conversation)).toBeNull(); expect(screen.UNSAFE_queryByType(GenerateStory)).toBeNull();
   expect(generateStoryDraft).not.toHaveBeenCalled();
@@ -249,6 +252,7 @@ it('clears per-project selected-generation hints when the verified account chang
   const view = await openSaved();
   act(() => screen.UNSAFE_getByType(GenerateStory).props.onSelectionChange(draftId));
   view.rerender(<StoriesHome {...props('en', ownerB)} />); await settle();
+  act(() => screen.UNSAFE_getByType(HomeScreen).props.onOpenStories());
   act(() => screen.UNSAFE_getByType(StoryDashboard).props.onOpenStory(projectId));
   act(() => screen.UNSAFE_getByType(StoryDetails).props.onGenerate(project()));
   expect(screen.UNSAFE_getByType(GenerateStory).props.initialDraftId).toBeUndefined();

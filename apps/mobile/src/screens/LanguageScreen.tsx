@@ -1,15 +1,15 @@
-import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { LanguageSelector } from '../components/LanguageSelector';
+import { StyleSheet, Text, View } from 'react-native';
 import { MemyBrand } from '../components/BrandArtwork';
 import { LargeButton } from '../components/LargeButton';
 import { Screen, screenStyles } from '../components/Screen';
 import {
   accessibilityLanguages,
   copy,
-  languageNames,
+
   type Language,
 } from '../i18n';
-import { colors, headingFont, layout } from '../theme';
+import { headingFont } from '../theme';
 import { introCopy } from '../intro-copy';
 
 interface LanguageScreenProps {
@@ -19,7 +19,7 @@ interface LanguageScreenProps {
   onBack?: () => void;
 }
 
-const languages: Language[] = ['sv', 'en'];
+
 
 export function LanguageScreen({
   language,
@@ -49,143 +49,11 @@ export function LanguageScreen({
           {text.languageDescription}
         </Text>
       </View>
-      <View
-        accessibilityRole="radiogroup"
-        accessibilityLabel={text.languageGroup}
-        style={styles.languageGroup}
-      >
-        {languages.map((option) => (
-          <LanguageOption
-            key={option}
-            language={option}
-            selected={language === option}
-            selectedLabel={text.selected}
-            onPress={() => onSelectLanguage(option)}
-          />
-        ))}
-      </View>
+      <LanguageSelector language={language} onSelectLanguage={onSelectLanguage} />
       <LargeButton label={text.continue} language={language} onPress={onContinue} />
       {onBack && <LargeButton label={introCopy[language].back} language={language} onPress={onBack} variant="secondary" />}
     </Screen>
   );
 }
 
-interface LanguageOptionProps {
-  language: Language;
-  selected: boolean;
-  selectedLabel: string;
-  onPress: () => void;
-}
-
-function LanguageOption({
-  language,
-  selected,
-  selectedLabel,
-  onPress,
-}: LanguageOptionProps) {
-  const [focused, setFocused] = useState(false);
-
-  return (
-    <Pressable
-      accessibilityRole="radio"
-      accessibilityLabel={languageNames[language]}
-      accessibilityLanguage={accessibilityLanguages[language]}
-      accessibilityState={{ checked: selected }}
-      onPress={onPress}
-      onFocus={() => setFocused(true)}
-      onBlur={() => setFocused(false)}
-      style={({ pressed }) => [
-        styles.option,
-        selected && styles.optionSelected,
-        pressed && styles.optionPressed,
-        focused && styles.optionFocused,
-      ]}
-    >
-      <View
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-        style={[styles.radio, selected && styles.radioSelected]}
-      >
-        {selected && <View style={styles.radioDot} />}
-      </View>
-      <View style={styles.optionCopy}>
-        <Text allowFontScaling style={styles.optionLabel}>
-          {languageNames[language]}
-        </Text>
-        {selected && (
-          <Text allowFontScaling style={styles.selectedLabel}>
-            {selectedLabel}
-          </Text>
-        )}
-      </View>
-    </Pressable>
-  );
-}
-
-const styles = StyleSheet.create({
-  heading: {
-    fontFamily: headingFont,
-  },
-  languageGroup: {
-    width: '100%',
-    gap: 16,
-  },
-  option: {
-    width: '100%',
-    minHeight: layout.minimumTouchTarget,
-    backgroundColor: colors.paper,
-    borderWidth: 2,
-    borderColor: colors.border,
-    borderRadius: layout.controlRadius,
-    paddingVertical: 20,
-    paddingHorizontal: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 18,
-  },
-  optionSelected: {
-    borderColor: colors.forest,
-    backgroundColor: colors.selected,
-  },
-  optionPressed: {
-    backgroundColor: colors.selected,
-  },
-  optionFocused: {
-    borderColor: colors.ink,
-  },
-  radio: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    borderWidth: 2,
-    borderColor: colors.muted,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  radioSelected: {
-    borderColor: colors.forest,
-  },
-  radioDot: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: colors.forest,
-  },
-  optionCopy: {
-    flex: 1,
-    gap: 4,
-  },
-  optionLabel: {
-    color: colors.ink,
-    fontSize: 24,
-    lineHeight: 34,
-    fontWeight: '600',
-    flexShrink: 1,
-  },
-  selectedLabel: {
-    color: colors.forest,
-    fontSize: 18,
-    lineHeight: 27,
-    flexShrink: 1,
-  },
-});
+const styles = StyleSheet.create({ heading: { fontFamily: headingFont } });

@@ -1,6 +1,8 @@
 export const storiesCopy = {
   en: {
     title: 'My Stories', introduction: 'Your story projects, in one place.',
+    rootIntroduction: 'Choose a story to continue, or begin a new one.',
+    rootCount: (count: number) => `${count} ${count === 1 ? 'story' : 'stories'} shown.`,
     loading: 'Loading your stories…', empty: 'You have no stories yet.',
     refresh: 'Refresh stories', refreshing: 'Loading stories…', signOut: 'Sign Out',
     createStory: 'Create My Story',
@@ -24,6 +26,8 @@ export const storiesCopy = {
   },
   sv: {
     title: 'Mina berättelser', introduction: 'Dina berättelseprojekt, på ett ställe.',
+    rootIntroduction: 'Fortsätt med en sparad berättelse eller börja på en ny.',
+    rootCount: (count: number) => `${count} ${count === 1 ? 'berättelse' : 'berättelser'} visas.`,
     loading: 'Laddar dina berättelser…', empty: 'Du har inga berättelser ännu.',
     refresh: 'Uppdatera berättelser', refreshing: 'Laddar berättelser…', signOut: 'Logga ut',
     createStory: 'Skapa min berättelse',

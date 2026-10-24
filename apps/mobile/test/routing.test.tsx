@@ -1,3 +1,4 @@
+import { openSettings } from './root-shell-helpers';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fireEvent, screen, waitFor } from '@testing-library/react-native';
 import { act, renderRouter } from 'expo-router/testing-library';
@@ -182,7 +183,7 @@ describe('actual native router flow', () => {
       flow = await openFlow('/language');
       fireEvent.press(screen.getByRole('radio', { name: 'Svenska' }));
       fireEvent.press(screen.getByRole('button', { name: copy.sv.continue }));
-      await screen.findByText(snapshot.user.email);
+      await openSettings('sv'); await screen.findByText(snapshot.user.email);
       expect(flow.getPathname()).toBe('/authenticated');
       expect(snapshot.signOut).not.toHaveBeenCalled(); expect(snapshot.signIn).not.toHaveBeenCalled();
       expect(snapshot.getAccessToken).not.toHaveBeenCalled();

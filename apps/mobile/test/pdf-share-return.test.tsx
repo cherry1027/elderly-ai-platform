@@ -1,3 +1,4 @@
+import { HomeScreen } from '../src/screens/HomeScreen';
 import { useEffect } from 'react';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react-native';
 import { useFocusEffect } from 'expo-router';
@@ -27,7 +28,7 @@ const project = (language: Language = 'en'): StoryProject => ({ id: projectId, t
   description: null, language, status: 'draft', created_at: stamp, updated_at: stamp });
 const token = jest.fn(async (_owner: string) => 'synthetic-development-user-token'), signOut = jest.fn();
 const consume = jest.fn<ReturnType<PdfPrivacyValue['consumeReturn']>, Parameters<PdfPrivacyValue['consumeReturn']>>(), focusCleanups = new Set<() => void>();
-function props(language: Language = 'en', owner = ownerA) { return { language, user: { id: owner, email: 'fictional@example.test' }, getAccessToken: token, onSignOut: signOut }; }
+function props(language: Language = 'en', owner = ownerA) { return { language, user: { id: owner, email: 'fictional@example.test' }, getAccessToken: token, onSignOut: signOut, onSelectLanguage: jest.fn(), onReplayIntroduction: jest.fn() }; }
 function useMockFocus(callback: () => void | (() => void)) {
   useEffect(() => {
     const close = callback(); if (close) focusCleanups.add(close);
@@ -61,16 +62,16 @@ it.each<Language>(['en', 'sv'])('restores the exact selected %s draft only after
   expect(globalThis.fetch).not.toHaveBeenCalled();
 });
 
-it('has the ordinary dashboard with no private return hint and makes no extra project request', async () => {
+it('has the ordinary Home with no private return hint and makes no extra project request', async () => {
   render(<StoriesHome {...props()} />); await settle();
-  expect(screen.UNSAFE_getByType(StoryDashboard)).toBeDefined(); expect(screen.UNSAFE_queryByType(GenerateStory)).toBeNull();
+  expect(screen.UNSAFE_getByType(HomeScreen)).toBeDefined(); expect(screen.UNSAFE_queryByType(GenerateStory)).toBeNull();
   expect(getStoryProject).not.toHaveBeenCalled(); expect(consume).toHaveBeenCalledTimes(1);
 });
 
 it('does not invent a backend address or restore a draft when local API configuration is absent', async () => {
   consume.mockReturnValueOnce({ projectId, draftId }); jest.mocked(readMobileApiConfig).mockReturnValue(null);
   render(<StoriesHome {...props()} />); await settle();
-  expect(screen.UNSAFE_getByType(StoryDashboard)).toBeDefined(); expect(getStoryProject).not.toHaveBeenCalled();
+  expect(screen.UNSAFE_getByType(HomeScreen)).toBeDefined(); expect(getStoryProject).not.toHaveBeenCalled();
   expect(screen.UNSAFE_queryByType(GenerateStory)).toBeNull(); expect(globalThis.fetch).not.toHaveBeenCalled();
 });
 
@@ -86,7 +87,7 @@ it('does not expose a draft while its fresh project ownership check remains unre
 it.each(['authentication', 'forbidden', 'not-found', 'network', 'timeout', 'invalid-response'] as const)('does not fake a restored story after %s read failure', async kind => {
   consume.mockReturnValueOnce({ projectId, draftId }); jest.mocked(getStoryProject).mockRejectedValueOnce(new StoryProjectsError(kind));
   render(<StoriesHome {...props()} />); await waitFor(() => expect(getStoryProject).toHaveBeenCalledTimes(1));
-  await waitFor(() => expect(screen.UNSAFE_getByType(StoryDashboard)).toBeDefined());
+  await waitFor(() => expect(screen.UNSAFE_getByType(HomeScreen)).toBeDefined());
   expect(screen.UNSAFE_queryByType(GenerateStory)).toBeNull(); expect(screen.queryByText(project().title)).toBeNull();
   expect(globalThis.fetch).not.toHaveBeenCalled();
 });
@@ -99,15 +100,15 @@ it('unmounting for sign-out aborts the restore read and ignores its late private
   await act(async () => pending.resolve(project())); expect(view.toJSON()).toBeNull(); expect(GenerateStory).not.toHaveBeenCalled();
 });
 
-it('an account switch aborts account A restoration and leaves account B on its own dashboard', async () => {
+it('an account switch aborts account A restoration and leaves account B on its own Home', async () => {
   consume.mockImplementation(owner => owner === ownerA ? { projectId, draftId } : null);
   const pending = deferred<StoryProject>(); jest.mocked(getStoryProject).mockReturnValueOnce(pending.promise);
   const view = render(<StoriesHome {...props()} />); await waitFor(() => expect(getStoryProject).toHaveBeenCalledTimes(1));
   const signal = jest.mocked(getStoryProject).mock.calls[0][0].signal!;
   view.rerender(<StoriesHome {...props('sv', ownerB)} />); await settle(); expect(signal.aborted).toBe(true);
-  expect(consume).toHaveBeenLastCalledWith(ownerB); expect(screen.UNSAFE_getByType(StoryDashboard).props.user.id).toBe(ownerB);
+  expect(consume).toHaveBeenLastCalledWith(ownerB); expect(screen.UNSAFE_getByType(HomeScreen).props.language).toBe('sv');
   await act(async () => pending.resolve(project())); expect(screen.UNSAFE_queryByType(GenerateStory)).toBeNull();
-  expect(getStoryProject).toHaveBeenCalledTimes(1); expect(screen.UNSAFE_getByType(StoryDashboard).props.user.id).toBe(ownerB);
+  expect(getStoryProject).toHaveBeenCalledTimes(1); expect(screen.UNSAFE_getByType(HomeScreen).props.language).toBe('sv');
 });
 
 it('losing route focus cannot resurrect the generation screen when the pending project read finishes', async () => {

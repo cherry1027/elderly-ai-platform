@@ -7,18 +7,19 @@ import { ApiBackoffBanner } from '../api/ApiBackoff';
 type ScreenProps = PropsWithChildren<{
   scrollViewRef?: RefObject<ScrollView | null>;
   onContentLayout?: (event: LayoutChangeEvent) => void;
+  working?: boolean;
 }>;
 
-export function Screen({ children, scrollViewRef, onContentLayout }: ScreenProps) {
+export function Screen({ children, scrollViewRef, onContentLayout, working = false }: ScreenProps) {
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
+    <SafeAreaView style={styles.safeArea} edges={working ? ['top', 'left', 'right'] : ['top', 'bottom', 'left', 'right']}>
       <ScrollView
         ref={scrollViewRef}
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.scrollContent}
         alwaysBounceVertical={false}
       >
-        <View style={styles.content} onLayout={onContentLayout}><ApiBackoffBanner />{children}</View>
+        <View style={[styles.content, working && styles.workingContent]} onLayout={onContentLayout}><ApiBackoffBanner />{children}</View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -54,6 +55,7 @@ export const screenStyles = StyleSheet.create({
 });
 
 const styles = StyleSheet.create({
+  workingContent: { justifyContent: 'flex-start', alignItems: 'stretch', gap: 24 },
   safeArea: {
     flex: 1,
     backgroundColor: colors.cream,

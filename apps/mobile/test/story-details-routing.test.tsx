@@ -1,3 +1,4 @@
+import { openMyStories, openSettings } from './root-shell-helpers';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, screen, waitFor } from '@testing-library/react-native';
 import { renderRouter } from 'expo-router/testing-library';
@@ -59,6 +60,7 @@ beforeEach(async () => {
 async function openDetails(language: Locale = 'en') {
   await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language, completed: true }));
   const flow = renderRouter(routes, { initialUrl: '/' });
+  await openMyStories(language);
   await screen.findByText('Cached list title');
   fireEvent.press(screen.getByRole('button', { name: `${storiesCopy[language].openStory}: Cached list title` }));
   await screen.findByText('Fresh selected title');
@@ -97,14 +99,14 @@ it.each(['checking', 'signed-out', 'busy', 'blocked'] as const)('cannot enter de
 
 it('does not trust URL parameters to select metadata or trigger editing', async () => {
   renderRouter(routes, { initialUrl: `/authenticated?projectId=${id}&edit=true&title=Injected` });
-  await screen.findByText('Cached list title');
+  await openMyStories(); await screen.findByText('Cached list title');
   expect(getStoryProject).not.toHaveBeenCalled(); expect(updateStoryProject).not.toHaveBeenCalled();
   expect(screen.queryByLabelText(storyDetailsCopy.en.titleLabel)).toBeNull();
 });
 
 it('ignores a malformed list selection before any detail request', async () => {
   jest.mocked(listStoryProjects).mockResolvedValueOnce([project({ id: '../private', title: 'Malformed synthetic row' })]);
-  renderRouter(routes, { initialUrl: '/' }); await screen.findByText('Malformed synthetic row');
+  renderRouter(routes, { initialUrl: '/' }); await openMyStories(); await screen.findByText('Malformed synthetic row');
   fireEvent.press(screen.getByRole('button', { name: `${storiesCopy.en.openStory}: Malformed synthetic row` }));
   expect(getStoryProject).not.toHaveBeenCalled(); expect(updateStoryProject).not.toHaveBeenCalled();
   expect(screen.getByText('Malformed synthetic row')).toBeOnTheScreen();
@@ -135,7 +137,7 @@ it('cannot expose account A details or a late PATCH to account B', async () => {
   jest.mocked(updateStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
   await openDetails(); await editAndSave(); const signal = jest.mocked(updateStoryProject).mock.calls[0][0].signal!;
   act(() => publish(account('account-b')));
-  await screen.findByText('account-b@example.test'); expect(signal.aborted).toBe(true);
+  await openSettings(); await screen.findByText('account-b@example.test'); await openMyStories(); expect(signal.aborted).toBe(true);
   expect(screen.queryByLabelText(storyDetailsCopy.en.titleLabel)).toBeNull();
   await act(async () => { finish(project({ title: 'Account A late update' })); });
   expect(screen.queryByText('Account A late update')).toBeNull();
@@ -148,13 +150,13 @@ it('cannot expose account A details or a late PATCH to account B', async () => {
 it('cancels a pending GET and ignores private data when the session needs verification again', async () => {
   let finish!: (value: StoryProject) => void;
   jest.mocked(getStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-  renderRouter(routes, { initialUrl: '/' }); await screen.findByText('Cached list title');
+  renderRouter(routes, { initialUrl: '/' }); await openMyStories(); await screen.findByText('Cached list title');
   fireEvent.press(screen.getByRole('button', { name: `${storiesCopy.en.openStory}: Cached list title` }));
   await waitFor(() => expect(getStoryProject).toHaveBeenCalledTimes(1));
   const signal = jest.mocked(getStoryProject).mock.calls[0][0].signal!;
   act(() => publish({ status: 'checking', user: null, error: null })); expect(signal.aborted).toBe(true);
   await act(async () => { finish(project({ title: 'Late GET private metadata' })); });
-  act(() => publish(account())); await screen.findByText('Cached list title');
+  act(() => publish(account())); await openMyStories(); await screen.findByText('Cached list title');
   expect(screen.queryByText('Late GET private metadata')).toBeNull(); expect(updateStoryProject).not.toHaveBeenCalled();
 });
 
@@ -164,7 +166,7 @@ it('cancels editing on native route blur and returns to a fresh list without rep
   await openDetails(); await editAndSave(); const signal = jest.mocked(updateStoryProject).mock.calls[0][0].signal!;
   act(() => router.push('/outside' as '/')); await screen.findByText('Another test route'); expect(signal.aborted).toBe(true);
   await act(async () => { finish(project({ title: 'Unfocused late metadata' })); });
-  act(() => router.back()); await screen.findByText('Cached list title');
+  act(() => router.back()); await openMyStories(); await screen.findByText('Cached list title');
   expect(screen.queryByText('Unfocused late metadata')).toBeNull(); expect(screen.queryByLabelText(storyDetailsCopy.en.titleLabel)).toBeNull();
   expect(updateStoryProject).toHaveBeenCalledTimes(1); expect(listStoryProjects).toHaveBeenCalledTimes(2);
 });

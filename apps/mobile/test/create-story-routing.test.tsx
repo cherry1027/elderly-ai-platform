@@ -1,3 +1,4 @@
+import { openMyStories, openSettings } from './root-shell-helpers';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, screen, waitFor } from '@testing-library/react-native';
 import { renderRouter } from 'expo-router/testing-library';
@@ -58,6 +59,7 @@ beforeEach(async () => {
 async function openCreate(language: Locale = 'en') {
   await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language, completed: true }));
   const flow = renderRouter(routes, { initialUrl: '/' });
+  await openMyStories(language);
   await screen.findByRole('header', { name: storiesCopy[language].title });
   fireEvent.press(screen.getByRole('button', { name: storiesCopy[language].createStory }));
   await screen.findByRole('header', { name: createStoryCopy[language].title });
@@ -87,6 +89,7 @@ it.each(['checking', 'signed-out', 'blocked', 'busy'] as const)('never exposes c
 });
 it('ignores URL claims that try to open or submit a creation form', async () => {
   renderRouter(routes, { initialUrl: '/authenticated?create=true&title=Injected&language=en' });
+  await openMyStories();
   await screen.findByRole('header', { name: storiesCopy.en.title });
   expect(screen.queryByLabelText(createStoryCopy.en.titleLabel)).toBeNull(); expect(createStoryProject).not.toHaveBeenCalled();
 });
@@ -126,7 +129,7 @@ it('cannot carry an account A title or late response into account B', async () =
   jest.mocked(createStoryProject).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
   await openCreate(); save('Account A private title'); const signal = jest.mocked(createStoryProject).mock.calls[0][0].signal!;
   act(() => publish(account('account-b')));
-  await screen.findByText('account-b@example.test'); expect(signal.aborted).toBe(true);
+  await openSettings(); await screen.findByText('account-b@example.test'); await openMyStories(); expect(signal.aborted).toBe(true);
   await act(async () => { finish(project('Account A private response')); });
   expect(screen.queryByText('Account A private response')).toBeNull();
   fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.createStory }));
@@ -138,7 +141,7 @@ it('drops the form and in-flight request during session revalidation rather than
   await openCreate(); save(); const signal = jest.mocked(createStoryProject).mock.calls[0][0].signal!;
   act(() => publish({ status: 'checking', user: null, error: null }));
   expect(screen.queryByLabelText(createStoryCopy.en.titleLabel)).toBeNull(); expect(signal.aborted).toBe(true);
-  act(() => publish(account())); await screen.findByRole('header', { name: storiesCopy.en.title });
+  act(() => publish(account())); await openMyStories(); await screen.findByRole('header', { name: storiesCopy.en.title });
   await act(async () => { finish(project('Stale created response')); });
   expect(screen.queryByText('Stale created response')).toBeNull(); expect(createStoryProject).toHaveBeenCalledTimes(1);
 });
@@ -149,7 +152,7 @@ it('cancels saving when the native route loses focus without unmounting its stac
   act(() => router.push('/outside' as '/'));
   await screen.findByText('Another test route'); expect(signal.aborted).toBe(true);
   await act(async () => { finish(project('Private unfocused response')); });
-  act(() => router.back()); await screen.findByRole('header', { name: storiesCopy.en.title });
+  act(() => router.back()); await openMyStories(); await screen.findByRole('header', { name: storiesCopy.en.title });
   expect(screen.queryByText('Private unfocused response')).toBeNull(); expect(screen.queryByText(createStoryCopy.en.success)).toBeNull();
 });
 it('returns to My Stories and cancels on Android hardware Back', async () => {

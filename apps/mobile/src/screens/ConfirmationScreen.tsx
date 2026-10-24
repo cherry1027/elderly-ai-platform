@@ -1,11 +1,9 @@
 import { useEffect, useRef } from 'react';
-import { AccessibilityInfo, StyleSheet, Text, View } from 'react-native';
-import { MemoryBookArtwork, MemyBrand } from '../components/BrandArtwork';
-import { LargeButton } from '../components/LargeButton';
-import { Screen, screenStyles } from '../components/Screen';
+import { AccessibilityInfo, Platform, StyleSheet, Text, View } from 'react-native';
+import { MemoryBookArtwork } from '../components/BrandArtwork';
+import { AccountAction, AccountHeading, AccountScreen, accountStyles } from '../components/AccountPresentation';
 import { accessibilityLanguages, type Language } from '../i18n';
 import { registrationCopy } from '../registration-copy';
-import { headingFont } from '../theme';
 
 export type ConfirmationStatus = 'checking' | 'confirmed' | 'invalid' | 'blocked' | 'unavailable';
 interface ConfirmationScreenProps {
@@ -28,22 +26,22 @@ export function ConfirmationScreen({ language, status, onWelcome, onLogin }: Con
     previousStatus.current = status;
     // Native iOS does not support accessibilityLiveRegion. Announce a completed
     // state change without stealing focus or reading any callback credentials.
-    try { AccessibilityInfo.announceForAccessibility(message); } catch { /* Text remains available. */ }
+    if (Platform.OS === 'ios') {
+      try { AccessibilityInfo.announceForAccessibility(message); } catch { /* Text remains available. */ }
+    }
   }, [status, message]);
   const alert = status === 'invalid' || status === 'blocked';
-  return <Screen>
-    <MemyBrand />
-    <View style={screenStyles.section}>
-      <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]}
-        allowFontScaling style={[screenStyles.heading, styles.heading]}>{text.confirmationTitle}</Text>
+  return <AccountScreen>
+    <AccountHeading language={language} title={text.confirmationTitle} />
+    <View style={accountStyles.form}>
       <Text accessibilityRole={alert ? 'alert' : 'text'} accessibilityLiveRegion={alert ? 'assertive' : 'polite'}
-        accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={screenStyles.description}>{message}</Text>
+        accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={accountStyles.notice}>{message}</Text>
+      {onLogin && status !== 'checking' && status !== 'blocked' &&
+        <AccountAction label={text.login} language={language} onPress={onLogin} />}
+      <AccountAction label={text.back} language={language} secondary onPress={onWelcome} />
     </View>
-    <MemoryBookArtwork />
-    {onLogin && status !== 'checking' && status !== 'blocked' &&
-      <LargeButton label={text.login} language={language} onPress={onLogin} />}
-    <LargeButton label={text.back} language={language} variant="secondary" onPress={onWelcome} />
-  </Screen>;
+    <View style={styles.artwork}><MemoryBookArtwork /></View>
+  </AccountScreen>;
 }
 
-const styles = StyleSheet.create({ heading: { fontFamily: headingFont } });
+const styles = StyleSheet.create({ artwork: { width: '100%', maxWidth: 160, alignSelf: 'center' } });

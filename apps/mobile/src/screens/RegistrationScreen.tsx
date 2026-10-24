@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
-  AppState, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View,
+  AppState, Keyboard, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
-import { MemyBrand } from '../components/BrandArtwork';
-import { Screen, screenStyles } from '../components/Screen';
+import {
+  AccountAction, AccountHeading, AccountNotice, AccountScreen, PasswordVisibility, accountStyles,
+} from '../components/AccountPresentation';
 import { accessibilityLanguages, type Language } from '../i18n';
 import { registrationCopy } from '../registration-copy';
-import { colors, headingFont, layout } from '../theme';
 
 type RegistrationFailure = keyof typeof registrationCopy.en.errors;
 type Validation = 'required' | 'emailInvalid' | 'minimum' | 'mismatch';
@@ -30,20 +30,6 @@ function safeFailure(error: unknown): RegistrationFailure {
   } catch { return 'unknown'; }
 }
 
-function Action({ label, language, onPress, disabled = false, busy = false, secondary = false,
-  selected }: { label: string; language: Language; onPress: () => void; disabled?: boolean;
-  busy?: boolean; secondary?: boolean; selected?: boolean }) {
-  const [focused, setFocused] = useState(false);
-  return <Pressable accessibilityRole="button" accessibilityLabel={label}
-    accessibilityLanguage={accessibilityLanguages[language]}
-    accessibilityState={{ disabled, busy, ...(selected === undefined ? {} : { selected }) }}
-    disabled={disabled} onPress={onPress} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
-    style={({ pressed }) => [styles.action, secondary && styles.secondary, disabled && styles.disabled,
-      pressed && !disabled && styles.pressed, focused && styles.focused]}>
-    <Text allowFontScaling style={[styles.actionLabel, secondary && styles.secondaryLabel]}>{label}</Text>
-  </Pressable>;
-}
-
 export function RegistrationScreen({ language, onBack, onLogin, onSubmit, enabled,
   pending = false, sent = false, externalFailure }: RegistrationScreenProps) {
   const text = registrationCopy[language];
@@ -65,6 +51,9 @@ export function RegistrationScreen({ language, onBack, onLogin, onSubmit, enable
   const emailInput = useRef<TextInput>(null);
   const passwordInput = useRef<TextInput>(null);
   const confirmationInput = useRef<TextInput>(null);
+  const scrollView = useRef<ScrollView>(null);
+  const formTop = useRef(0);
+  const feedbackVisible = useRef(false);
   const effectiveFailure = externalFailure ?? failure;
   const terminal = effectiveFailure === 'cleanup' || effectiveFailure === 'timeout' || effectiveFailure === 'pending';
   const disabled = pending || working || terminal;
@@ -123,83 +112,76 @@ export function RegistrationScreen({ language, onBack, onLogin, onSubmit, enable
     clearPasswords(); setEmail(''); setWorking(false); Keyboard.dismiss(); destination();
   }
   const message = effectiveFailure ? text.errors[effectiveFailure] : validation ? text[validation] : null;
+  const hasFeedback = !!message || checked;
+  useLayoutEffect(() => {
+    feedbackVisible.current = hasFeedback;
+    return () => { feedbackVisible.current = false; };
+  }, [hasFeedback]);
+  const revealFeedback = useCallback(() => {
+    if (feedbackVisible.current) scrollView.current?.scrollTo({ y: Math.max(0, formTop.current - 16), animated: false });
+  }, []);
+  useEffect(() => { revealFeedback(); }, [hasFeedback, message, revealFeedback]);
+  useEffect(() => {
+    const hidden = Keyboard.addListener('keyboardDidHide', revealFeedback);
+    const shown = Keyboard.addListener('keyboardDidShow', revealFeedback);
+    return () => { feedbackVisible.current = false; hidden.remove(); shown.remove(); };
+  }, [revealFeedback]);
   const setValue = (setter: (value: string) => void) => (value: string) => {
     setter(value); setValidation(null); setChecked(false);
   };
 
   return <KeyboardAvoidingView style={styles.keyboard} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-    <Screen>
-      <MemyBrand />
-      <View style={screenStyles.section}>
-        <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]}
-          allowFontScaling style={[screenStyles.heading, styles.heading]}>{text.title}</Text>
-        <Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={screenStyles.description}>{text.introduction}</Text>
-      </View>
-      <View style={styles.form}>
-        {message && <Text accessibilityRole="alert" accessibilityLiveRegion="assertive"
-          accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.notice}>{message}</Text>}
+    <AccountScreen scrollViewRef={scrollView} onContentLayout={revealFeedback}>
+      <AccountHeading language={language} title={text.title} description={text.introduction} />
+      <View testID="registration-form" style={accountStyles.form} onLayout={(event) => {
+        formTop.current = event.nativeEvent.layout.y; revealFeedback();
+      }}>
+        {message && <AccountNotice language={language} message={message} />}
         {sent || submitted ? <Text accessibilityRole="text" accessibilityLiveRegion="polite"
-          accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.notice}>{text.sent}</Text> : <>
-          {!enabled && <Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.notice}>{text.gate}</Text>}
-          {checked && <Text accessibilityLiveRegion="polite" accessibilityLanguage={accessibilityLanguages[language]}
-            allowFontScaling style={styles.notice}>{text.checked}</Text>}
+          accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={accountStyles.notice}>{text.sent}</Text> : <>
+          {!enabled && <Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={accountStyles.help}>{text.gate}</Text>}
+          {checked && <AccountNotice language={language} message={text.checked} urgent={false} />}
           {pending && <Text accessibilityLiveRegion="polite" accessibilityLanguage={accessibilityLanguages[language]}
-            allowFontScaling style={styles.notice}>{text.pending}</Text>}
-          <Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={screenStyles.description}>{text.rules}</Text>
-          <View style={styles.field}>
-            <Text allowFontScaling accessibilityLanguage={accessibilityLanguages[language]} style={styles.label}>{text.email}</Text>
+            allowFontScaling style={accountStyles.notice}>{text.pending}</Text>}
+          <View style={accountStyles.field}>
+            <Text allowFontScaling accessibilityLanguage={accessibilityLanguages[language]} style={accountStyles.label}>{text.email}</Text>
             <TextInput ref={emailInput} accessibilityLabel={text.email} accessibilityLanguage={accessibilityLanguages[language]}
-              allowFontScaling style={[styles.input, focused === 'email' && styles.focused]}
+              allowFontScaling style={[accountStyles.input, focused === 'email' && accountStyles.focused]}
               value={email} onChangeText={setValue(setEmail)} editable={!disabled} autoCapitalize="none" autoCorrect={false}
               keyboardType="email-address" autoComplete="email" textContentType="emailAddress" returnKeyType="next"
               onFocus={() => setFocused('email')} onBlur={() => setFocused(null)} onSubmitEditing={() => passwordInput.current?.focus()} />
           </View>
-          <View style={styles.field}>
-            <Text allowFontScaling accessibilityLanguage={accessibilityLanguages[language]} style={styles.label}>{text.password}</Text>
+          <View style={accountStyles.field}>
+            <Text allowFontScaling accessibilityLanguage={accessibilityLanguages[language]} style={accountStyles.label}>{text.password}</Text>
             <TextInput ref={passwordInput} accessibilityLabel={text.password} accessibilityLanguage={accessibilityLanguages[language]}
-              allowFontScaling style={[styles.input, focused === 'password' && styles.focused]}
+              allowFontScaling style={[accountStyles.input, focused === 'password' && accountStyles.focused]}
               value={password} onChangeText={setValue(setPassword)} editable={!disabled} secureTextEntry={!passwordVisible}
               autoCapitalize="none" autoCorrect={false} autoComplete="new-password" textContentType="newPassword" returnKeyType="next"
               onFocus={() => setFocused('password')} onBlur={() => setFocused(null)} onSubmitEditing={() => confirmationInput.current?.focus()} />
-            <Action language={language} label={passwordVisible ? text.hidePassword : text.showPassword} secondary
+            <PasswordVisibility language={language} label={passwordVisible ? text.hidePassword : text.showPassword}
               selected={passwordVisible} disabled={disabled} onPress={() => setPasswordVisible((value) => !value)} />
           </View>
-          <View style={styles.field}>
-            <Text allowFontScaling accessibilityLanguage={accessibilityLanguages[language]} style={styles.label}>{text.confirmation}</Text>
+          <View style={accountStyles.field}>
+            <Text allowFontScaling accessibilityLanguage={accessibilityLanguages[language]} style={accountStyles.label}>{text.confirmation}</Text>
             <TextInput ref={confirmationInput} accessibilityLabel={text.confirmation} accessibilityLanguage={accessibilityLanguages[language]}
-              allowFontScaling style={[styles.input, focused === 'confirmation' && styles.focused]}
+              allowFontScaling style={[accountStyles.input, focused === 'confirmation' && accountStyles.focused]}
               value={confirmation} onChangeText={setValue(setConfirmation)} editable={!disabled} secureTextEntry={!confirmationVisible}
               autoCapitalize="none" autoCorrect={false} autoComplete="new-password" textContentType="newPassword" returnKeyType="done"
               onFocus={() => setFocused('confirmation')} onBlur={() => setFocused(null)} onSubmitEditing={() => Keyboard.dismiss()} />
-            <Action language={language} label={confirmationVisible ? text.hideConfirmation : text.showConfirmation} secondary
+            <PasswordVisibility language={language} label={confirmationVisible ? text.hideConfirmation : text.showConfirmation}
               selected={confirmationVisible} disabled={disabled} onPress={() => setConfirmationVisible((value) => !value)} />
           </View>
-          <Action language={language} label={working ? text.creating : enabled ? text.create : text.checkDetails}
+          <Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={accountStyles.help}>{text.rules}</Text>
+          <AccountAction language={language} label={working ? text.creating : enabled ? text.create : text.checkDetails}
             disabled={disabled} busy={working} onPress={() => { void submit(); }} />
         </>}
-        <Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={screenStyles.footer}>{text.emailLimit}</Text>
-        {effectiveFailure !== 'cleanup' && <Action language={language} label={text.login} secondary
+        <Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={accountStyles.help}>{text.emailLimit}</Text>
+        {effectiveFailure !== 'cleanup' && <AccountAction language={language} label={text.login} secondary
           disabled={working} onPress={() => leave(onLogin)} />}
-        <Action language={language} label={text.back} secondary onPress={() => leave(onBack)} />
+        <AccountAction language={language} label={text.back} quiet onPress={() => leave(onBack)} />
       </View>
-    </Screen>
+    </AccountScreen>
   </KeyboardAvoidingView>;
 }
 
-const styles = StyleSheet.create({
-  keyboard: { flex: 1 }, heading: { fontFamily: headingFont },
-  form: { width: '100%', gap: 24 }, field: { width: '100%', gap: 10 },
-  label: { color: colors.ink, fontSize: 22, lineHeight: 32, fontWeight: '600' },
-  input: { minHeight: layout.minimumTouchTarget, width: '100%', padding: 16, borderWidth: 2,
-    borderColor: colors.border, borderRadius: layout.controlRadius, backgroundColor: colors.paper,
-    color: colors.ink, fontSize: 22, lineHeight: 32 },
-  notice: { color: colors.ink, fontSize: 21, lineHeight: 32, padding: 16, borderWidth: 2,
-    borderColor: colors.forest, borderRadius: layout.controlRadius, backgroundColor: colors.paper },
-  action: { minHeight: layout.minimumTouchTarget, width: '100%', paddingVertical: 16, paddingHorizontal: 24,
-    borderWidth: 2, borderColor: colors.forest, borderRadius: layout.controlRadius, backgroundColor: colors.forest,
-    alignItems: 'center', justifyContent: 'center' },
-  secondary: { backgroundColor: colors.paper },
-  actionLabel: { color: colors.paper, fontSize: 22, lineHeight: 32, fontWeight: '600', textAlign: 'center', flexShrink: 1 },
-  secondaryLabel: { color: colors.forest }, disabled: { opacity: 0.65 }, pressed: { opacity: 0.8 },
-  focused: { borderColor: colors.ink },
-});
+const styles = StyleSheet.create({ keyboard: { flex: 1 } });

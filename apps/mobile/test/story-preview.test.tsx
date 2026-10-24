@@ -37,9 +37,10 @@ it('labels samples, opens details and never loads real account data', () => {
   expect(screen.getByText('SAMPLE STORIES. Nothing is saved.')).toBeOnTheScreen();
   expect(screen.getByRole('header', { name: copy.en.welcomeTitle })).toBeOnTheScreen();
   expect(screen.queryByRole('radio')).toBeNull();
-  expect(screen.getByRole('button', { name: introCopy.en.login })).toBeDisabled();
-  expect(screen.getByRole('button', { name: introCopy.en.register })).toBeDisabled();
-  expect(screen.getByRole('button', { name: introCopy.en.guest })).toBeDisabled();
+  expect(screen.getByText(introCopy.en.unavailable)).toBeOnTheScreen();
+  expect(screen.queryByRole('button', { name: introCopy.en.login })).toBeNull();
+  expect(screen.queryByRole('button', { name: introCopy.en.register })).toBeNull();
+  expect(screen.queryByRole('button', { name: introCopy.en.guest })).toBeNull();
   samples();
   fireEvent.press(screen.getByRole('button', { name: 'Open story: A made-up summer memory' }));
   expect(screen.getByText('An invented example for testing.\nNo personal story is stored here.')).toBeOnTheScreen();

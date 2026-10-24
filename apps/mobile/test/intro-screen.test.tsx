@@ -103,18 +103,13 @@ describe('native introduction screens', () => {
 });
 
 describe('native Welcome introduction controls', () => {
-  it.each<Language>(['en', 'sv'])('shows three explicitly disabled future actions in %s', (language) => {
+  it.each<Language>(['en', 'sv'])('explains unavailable future actions without fake controls in %s', (language) => {
     const onReplayIntroduction = jest.fn();
     render(<WelcomeScreen language={language} onChangeLanguage={jest.fn()} onReplayIntroduction={onReplayIntroduction} />);
     const text = introCopy[language];
     expect(screen.getByText(text.unavailable)).toBeOnTheScreen();
     for (const label of [text.login, text.register, text.guest]) {
-      const target = screen.getByRole('button', { name: label });
-      expect(target).toBeDisabled();
-      expect(target.props.onPress).toBeUndefined();
-      expect(target.props.accessibilityState).toEqual({ disabled: true });
-      expect(target).toHaveStyle({ minHeight: 56 });
-      fireEvent.press(target);
+      expect(screen.queryByRole('button', { name: label })).toBeNull();
     }
     expect(onReplayIntroduction).not.toHaveBeenCalled();
     expect(globalThis.fetch).not.toHaveBeenCalled();

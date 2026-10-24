@@ -20,6 +20,7 @@ import Confirm from '../src/app/auth/confirm';
 import { redirectSystemPath } from '../src/app/+native-intent';
 import { registrationCopy } from '../src/registration-copy';
 import { authCopy } from '../src/auth-copy';
+import { entranceCopy } from '../src/entrance-copy';
 import { introCopy } from '../src/intro-copy';
 import { copy, type Language as Locale } from '../src/i18n';
 import { PREFERENCES_KEY } from '../src/onboarding/preferences';
@@ -69,7 +70,7 @@ async function returning(language: Locale = 'en', path = '/') {
 }
 async function openRegister(language: Locale = 'en') {
   const flow = await returning(language);
-  fireEvent.press(screen.getByRole('button', { name: introCopy[language].register }));
+  fireEvent.press(screen.getByRole('button', { name: entranceCopy[language].previewRegistration }));
   await screen.findByRole('header', { name: registrationCopy[language].title });
   return flow;
 }
@@ -84,7 +85,8 @@ describe('native registration routes, mocked services only', () => {
     expect(registration.cancel).toHaveBeenCalled();
     expect(auth.signOut).not.toHaveBeenCalled();
     expect(globalThis.fetch).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: introCopy[language].guest })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /Continue as Guest|Fortsätt som gäst/ })).toBeNull();
+    expect(screen.getByText(entranceCopy[language].availability)).toBeOnTheScreen();
   });
   it('checks details locally without attempting signup or showing an email-sent result', async () => {
     await openRegister();

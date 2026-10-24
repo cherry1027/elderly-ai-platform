@@ -1,10 +1,10 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { MemoryBookArtwork, MemyBrand } from '../components/BrandArtwork';
-import { LargeButton } from '../components/LargeButton';
-import { Screen, screenStyles } from '../components/Screen';
+import { StyleSheet, Text, View } from 'react-native';
+import { AccountAction, AccountHeading, AccountNotice, AccountScreen } from '../components/AccountPresentation';
+import { MemoryBookArtwork } from '../components/BrandArtwork';
+import { screenStyles } from '../components/Screen';
+import { entranceCopy } from '../entrance-copy';
 import { accessibilityLanguages, copy, type Language } from '../i18n';
 import { introCopy } from '../intro-copy';
-import { colors, headingFont, layout } from '../theme';
 
 interface WelcomeScreenProps {
   language: Language;
@@ -22,83 +22,28 @@ export function WelcomeScreen({
 }: WelcomeScreenProps) {
   const text = copy[language];
   const intro = introCopy[language];
+  const entrance = entranceCopy[language];
 
   return (
-    <Screen>
-      <MemyBrand />
-      <View style={screenStyles.section}>
-        <Text
-          accessibilityLanguage={accessibilityLanguages[language]}
-          allowFontScaling
-          style={styles.eyebrow}
-        >
-          {text.welcomeEyebrow}
-        </Text>
-        <Text
-          accessibilityRole="header"
-          accessibilityLanguage={accessibilityLanguages[language]}
-          allowFontScaling
-          style={[screenStyles.heading, styles.heading]}
-        >
-          {text.welcomeTitle}
-        </Text>
-        <Text
-          accessibilityLanguage={accessibilityLanguages[language]}
-          allowFontScaling
-          style={screenStyles.description}
-        >
-          {text.welcomeDescription}
-        </Text>
-      </View>
-      <MemoryBookArtwork />
+    <AccountScreen compact>
+      <AccountHeading language={language} title={text.welcomeTitle} description={text.welcomeDescription} />
       <View style={styles.controls}>
-        <Text
-          allowFontScaling
-          accessibilityLanguage={accessibilityLanguages[language]}
-          style={screenStyles.footer}
-        >
-          {onRegister ? (language === 'sv' ? 'Du kan kontrollera dina uppgifter. Kontoregistrering är inte aktiverad ännu. Gäståtkomst är inte tillgänglig.'
-            : 'You can check your details. Live registration is not enabled yet. Guest access is unavailable.') : onLogin ? (language === 'sv' ? 'Nya konton och gäståtkomst är inte tillgängliga ännu.'
-            : 'Account creation and guest access are not available yet.') : intro.unavailable}
-        </Text>
         {cleanup && <>
-          <Text accessibilityRole="alert" accessibilityLiveRegion="assertive"
-            accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={screenStyles.description}>
-            {cleanup.message}
-          </Text>
-          <LargeButton label={cleanup.retryLabel} language={language} onPress={cleanup.onRetry} variant="secondary" />
+          <AccountNotice language={language} message={cleanup.message} />
+          <AccountAction label={cleanup.retryLabel} language={language} onPress={cleanup.onRetry} secondary />
         </>}
-        {primaryAction && <LargeButton label={primaryAction.label} language={language} onPress={primaryAction.onPress} />}
-        {onLogin && !cleanup && <LargeButton label={intro.login} language={language} onPress={onLogin} />}
-        {onRegister && !cleanup && <LargeButton label={intro.register} language={language} onPress={onRegister} variant="secondary" />}
-        {[...(!onLogin || cleanup ? [intro.login] : []), ...(!onRegister || cleanup ? [intro.register] : []), intro.guest].map((label) => (
-          <Pressable
-            key={label}
-            disabled
-            accessibilityRole="button"
-            accessibilityLabel={label}
-            accessibilityState={{ disabled: true }}
-            accessibilityLanguage={accessibilityLanguages[language]}
-            style={styles.unavailableAction}
-          >
-            <Text allowFontScaling style={styles.unavailableLabel}>{label}</Text>
-          </Pressable>
-        ))}
+        {primaryAction && <AccountAction label={primaryAction.label} language={language} onPress={primaryAction.onPress} secondary={Boolean(onLogin && !cleanup)} />}
+        {onLogin && !cleanup && <AccountAction label={intro.login} language={language} onPress={onLogin} />}
       </View>
-      {onReplayIntroduction && (
-        <LargeButton
-          label={intro.replay}
-          language={language}
-          onPress={onReplayIntroduction}
-          variant="secondary"
-        />
-      )}
-      <LargeButton
-        label={text.changeLanguage}
-        language={language}
-        onPress={onChangeLanguage}
-        variant="secondary"
-      />
+      <View style={styles.artwork}><MemoryBookArtwork /></View>
+      {onRegister && !cleanup && <AccountAction label={entrance.previewRegistration} language={language} onPress={onRegister} secondary />}
+      <View style={styles.controls}>
+        <AccountAction label={text.changeLanguage} language={language} onPress={onChangeLanguage} quiet />
+        {onReplayIntroduction && <AccountAction label={intro.replay} language={language} onPress={onReplayIntroduction} quiet />}
+      </View>
+      <Text allowFontScaling accessibilityLanguage={accessibilityLanguages[language]} style={screenStyles.footer}>
+        {onLogin || onRegister ? entrance.availability : intro.unavailable}
+      </Text>
       {storageUnavailable && (
         <Text
           allowFontScaling
@@ -116,39 +61,11 @@ export function WelcomeScreen({
       >
         {text.footer}
       </Text>
-    </Screen>
+    </AccountScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  controls: { width: '100%', gap: 16 },
-  unavailableAction: {
-    width: '100%',
-    minHeight: layout.minimumTouchTarget,
-    borderWidth: 2,
-    borderColor: colors.border,
-    backgroundColor: colors.paper,
-    borderRadius: layout.controlRadius,
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  unavailableLabel: {
-    color: colors.muted,
-    fontSize: 22,
-    lineHeight: 32,
-    textAlign: 'center',
-    flexShrink: 1,
-  },
-  heading: {
-    fontFamily: headingFont,
-  },
-  eyebrow: {
-    color: colors.forest,
-    fontSize: 19,
-    lineHeight: 29,
-    textAlign: 'center',
-    flexShrink: 1,
-  },
+  controls: { width: '100%', gap: 8 },
+  artwork: { width: '100%', maxWidth: 184, alignSelf: 'center' },
 });

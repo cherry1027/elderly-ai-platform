@@ -18,6 +18,7 @@ import Authenticated from '../src/app/authenticated';
 import Register from '../src/app/register';
 import Confirm from '../src/app/auth/confirm';
 import { introCopy } from '../src/intro-copy';
+import { entranceCopy } from '../src/entrance-copy';
 import { copy, type Language as Locale } from '../src/i18n';
 import { PREFERENCES_KEY } from '../src/onboarding/preferences';
 import { redirectSystemPath } from '../src/app/+native-intent';
@@ -104,8 +105,9 @@ describe('actual native login routes with mocked auth services', () => {
   });
   it.each<Locale>(['en', 'sv'])('logs in and signs out through the existing entrance in %s', async (language) => {
     await openWelcome(language);
-    expect(screen.getByRole('button', { name: introCopy[language].register })).toBeEnabled();
-    expect(screen.getByRole('button', { name: introCopy[language].guest })).toBeDisabled();
+    expect(screen.getByRole('button', { name: entranceCopy[language].previewRegistration })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: introCopy[language].guest })).toBeNull();
+    expect(screen.getByText(entranceCopy[language].availability)).toBeOnTheScreen();
     await openLogin(language); fill(language);
     await openSettings(language); await screen.findByText('a@example.test');
     fireEvent.press(screen.getByRole('button', { name: authCopy[language].signOut }));
@@ -135,7 +137,7 @@ describe('actual native login routes with mocked auth services', () => {
     await screen.findByText(authCopy.en.errors.cleanup);
     expect(screen.getByRole('header', { name: copy.en.welcomeTitle })).toBeOnTheScreen();
     expect(screen.queryByText('a@example.test')).toBeNull();
-    expect(screen.getByRole('button', { name: introCopy.en.login })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: introCopy.en.login })).toBeNull();
     expect(screen.queryByLabelText(authCopy.en.password)).toBeNull();
     fireEvent.press(screen.getByRole('button', { name: authCopy.en.retryCleanup }));
     await waitFor(() => expect(screen.getByRole('button', { name: introCopy.en.login })).toBeEnabled());
@@ -329,7 +331,7 @@ describe('canonical entrance and in-memory login intent', () => {
     const flow = renderRouter(routes, { initialUrl: '/' });
     await screen.findByText(authCopy.en.errors.cleanup);
     expect(flow.getPathname()).toBe('/welcome'); expect(router.canGoBack()).toBe(false);
-    expect(screen.getByRole('button', { name: introCopy.en.login })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: introCopy.en.login })).toBeNull();
     expect(await AsyncStorage.getItem(PREFERENCES_KEY)).toBeNull();
     expect(auth.signOut).not.toHaveBeenCalled();
     fireEvent.press(screen.getByRole('button', { name: authCopy.en.retryCleanup }));

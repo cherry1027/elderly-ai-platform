@@ -92,9 +92,9 @@ describe('Welcome', () => {
     const heading = screen.getByRole('header', { name: copy[language].welcomeTitle });
     expect(heading.props.accessibilityLanguage).toBe(accessibilityLanguages[language]);
     expect(screen.getByText(copy[language].welcomeDescription)).toBeOnTheScreen();
-    expect(screen.getByText(copy[language].welcomeEyebrow)).toBeOnTheScreen();
+    expect(screen.queryByText(copy[language].welcomeEyebrow)).toBeNull();
     expect(screen.getByText(copy[language].footer)).toBeOnTheScreen();
-    expect(screen.getByText('Memy')).toBeOnTheScreen();
+    expect(heading).toHaveTextContent(/Memy/);
 
     const buttons = screen.getAllByRole('button');
     expect(buttons.filter((button) => !button.props.accessibilityState?.disabled)).toHaveLength(1);
@@ -106,22 +106,23 @@ describe('Welcome', () => {
     render(<WelcomeScreen language="en" onChangeLanguage={jest.fn()} />);
 
     for (const name of ['Log In', 'Create Account', 'Continue as Guest']) {
-      expect(screen.getByRole('button', { name })).toBeDisabled();
+      expect(screen.queryByRole('button', { name })).toBeNull();
     }
     expect(screen.queryByText(/create my story/i)).toBeNull();
     expect(screen.getAllByRole('button').filter((button) => !button.props.accessibilityState?.disabled)).toHaveLength(1);
   });
 
-  it.each<Language>(['en', 'sv'])('offers only an explicitly supplied primary action before the unavailable account controls in %s', language => {
+  it.each<Language>(['en', 'sv'])('offers only an explicitly supplied primary action with honest account unavailability in %s', language => {
     const onPress = jest.fn(), label = language === 'sv' ? 'Öppna exempelberättelser' : 'Open sample stories';
     render(<WelcomeScreen language={language} onChangeLanguage={jest.fn()} primaryAction={{ label, onPress }} />);
     const primary = screen.getByRole('button', { name: label });
     expect(primary).toHaveStyle({ minHeight: 56 }); expect(primary.props.accessibilityLanguage).toBe(accessibilityLanguages[language]);
     expect(onPress).not.toHaveBeenCalled();
     const buttons = screen.getAllByRole('button');
-    expect(buttons.indexOf(primary)).toBeLessThan(buttons.indexOf(screen.getByRole('button', { name: introCopy[language].login })));
+    expect(buttons[0]).toBe(primary);
+    expect(screen.getByText(introCopy[language].unavailable)).toBeOnTheScreen();
     for (const name of [introCopy[language].login, introCopy[language].register, introCopy[language].guest]) {
-      expect(screen.getByRole('button', { name })).toBeDisabled();
+      expect(screen.queryByRole('button', { name })).toBeNull();
     }
     fireEvent.press(primary); expect(onPress).toHaveBeenCalledTimes(1); expect(globalThis.fetch).not.toHaveBeenCalled();
   });

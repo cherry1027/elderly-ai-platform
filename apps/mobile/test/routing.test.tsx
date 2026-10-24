@@ -15,6 +15,7 @@ import RegisterRoute from '../src/app/register';
 import ConfirmRoute from '../src/app/auth/confirm';
 import { copy, type Language } from '../src/i18n';
 import { introCopy } from '../src/intro-copy';
+import { entranceCopy } from '../src/entrance-copy';
 import { PREFERENCES_KEY } from '../src/onboarding/preferences';
 import { LargeButton } from '../src/components/LargeButton';
 import { useLanguage } from '../src/language';
@@ -193,12 +194,13 @@ describe('actual native router flow', () => {
     } finally { flow?.unmount(); auth.mockRestore(); }
   });
 
-  it('enables login and gated registration navigation while guest remains disabled', async () => {
+  it('enables intentional login and local registration preview while guest stays unavailable', async () => {
     await openFlow();
     await welcome();
     expect(screen.getByRole('button', { name: introCopy.en.login })).toBeEnabled();
-    expect(screen.getByRole('button', { name: introCopy.en.register })).toBeEnabled();
-    expect(screen.getByRole('button', { name: introCopy.en.guest })).toBeDisabled();
+    expect(screen.getByRole('button', { name: entranceCopy.en.previewRegistration })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: introCopy.en.guest })).toBeNull();
+    expect(screen.getByText(entranceCopy.en.availability)).toBeOnTheScreen();
     expect(screen.queryByText('Create My Story')).toBeNull();
   });
 });

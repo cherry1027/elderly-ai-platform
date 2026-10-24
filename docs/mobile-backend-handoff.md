@@ -1,6 +1,12 @@
 # Memy Mobile Backend Handoff
 
-23 October 2026 · backend 0.8.1 · development only.
+24 October 2026 · backend 0.8.1 · development only.
+
+Current final handoff: [Day 15 status](day-15-status.md),
+[Tarun integration](tarun-final-integration.md), [acceptance matrix](milestone-1-acceptance.md)
+and [security/deployment gates](security-release-gates.md). The current native
+source addresses the Day 14 backoff gap; full actual-device and fresh two-issued-user
+JWT acceptance remain pending. No pilot/main merge/deployment is approved here.
 
 **Tarun can implement Task 3D-8A/B against the existing backend.** PDF export,
 historical downloads and non-generating story continuation already exist. This
@@ -10,9 +16,9 @@ are unchanged; stale implicit review intent is rejected with the existing 409.
 Day 13 adds documented 429 throttling and 503 admission handling below.
 Day 14 rehearses the cumulative mock journey and exposes `Retry-After` through
 allowed-origin CORS; no path, version or success schema changes. The
-[current acceptance report](day-14-status.md) and
-[real-iPhone checklist](day-14-tarun-rehearsal.md) are authoritative for current
-evidence. Physical iPhone and fresh two-issued-user JWT checks are pending.
+[Day 14 acceptance report](day-14-status.md) and
+[real-iPhone checklist](day-14-tarun-rehearsal.md) remain historical evidence.
+Use the final handoff above for the newer mobile revision.
 
 ## Start here: the stable pins
 
@@ -21,8 +27,8 @@ evidence. Physical iPhone and fresh two-issued-user JWT checks are pending.
 | Backend repository | [cherry1027/elderly-ai-platform](https://github.com/cherry1027/elderly-ai-platform) |
 | Shared backend branch | `codex/day-7-mobile-integration` |
 | Application-code baseline | `c67687ec4b392dbf0e4f73fc8451ac6f0da05560` (`c67687e`); later docs/evidence-only commits may follow |
-| Latest reviewed mobile branch | `feat/mobile-autobiography-continuation` |
-| Mobile commit | `1d93b74ac9de75c3bdd778d1ad0f9a8ce4449e7e` (`1d93b74`), includes PDF revision `07c5c198` |
+| Latest reviewed mobile branch | `feat/mobile-api-backoff` |
+| Mobile commit | `b787dcd70b54f6220bfa3d7c0899a2c1f677e080` (`b787dcd`), contains `1d93b74` and PDF work |
 
 The earlier integration pin was `73094c7`; `a629760` added the consolidated
 handoff without changing that runtime. Day 10's `a00df98` is the small 0.8.1
@@ -35,17 +41,22 @@ documentation-only commits do not activate live providers; record
 `git rev-parse HEAD` after obtaining them. Do not equate a changing branch name
 with an immutable version. No merge into `main` is part of this work.
 
-The latest mobile package/flow source was inspected read-only at `1d93b74`;
-see [the source-to-contract review](day-14-mobile-code-review.md). It includes
-native PDF and continuation code, but their full actual-device acceptance was
-not rerun here. The client still needs `RATE_LIMITED` / `API_BUSY` and bounded
-`Retry-After` handling without automatic writes. Earlier, at `eb4eaa8`, Tarun reported
+The latest mobile source was inspected at `b787dcd`; see the
+[Day 15 review](day-15-mobile-review.md). Bounded `RATE_LIMITED` / `API_BUSY`
+handling and no automatic retries are present; 40 pure parser/store cases passed
+in a limited offline harness, not the full native suite/device. PDF/continuation
+and backoff still need physical acceptance. Earlier, at `eb4eaa8`, Tarun reported
 2,825 tests in 67 suites, TypeScript/lint/Expo checks and major real-iPhone flows.
 Those mobile tests and device actions were **not independently rerun in this
 backend handoff**. Historical Day 8/9 documents describe older mobile commits;
 their statements about absent audio/editing UI are not current mobile status.
 
 ## The handoff package
+
+- [Day 15 status](day-15-status.md), [acceptance](milestone-1-acceptance.md),
+  [security gates](security-release-gates.md), [runbook](pilot-deployment-runbook.md)
+  and [Tarun final checklist](tarun-final-integration.md): complete regressions,
+  fresh read-only hosted checks and explicit remaining release prerequisites.
 
 - [Day 14 report](day-14-status.md), [native source review](day-14-mobile-code-review.md)
   and [iPhone rehearsal](day-14-tarun-rehearsal.md): 1,231 Python and 86 isolated
@@ -97,7 +108,7 @@ writer into a real AI service, and SQL role checks do not prove a phone login.
 | Manual draft editing and history | Implemented and tested; historical hosted SQL persistence/revision/conflict checks; Day 14 offline rehearsal | Manual content is `needs_review`, not auto-verified; current hosted check is read-only |
 | Private PDF export/history/download | Implemented real renderer + real saved metadata, not simulated PDF bytes | Historical hosted SQL checked metadata/text; Day 14 checks real bytes offline; native PDF/share acceptance is pending |
 | Continue and explicit new generation | Implemented and tested; historical hosted SQL and Day 14 offline continuation/version preservation | Continue never generates; manual prose is not auto-merged; current hosted check is read-only |
-| Current mobile UI through PDF/continuation | Source reviewed at `1d93b74`; earlier features have Tarun-reported device evidence | Full latest actual-iPhone journey not independently rerun; explicit admission backoff remains a frontend follow-up |
+| Current mobile UI through PDF/continuation/backoff | Source reviewed at `b787dcd`; 40 pure parser/store checks in a limited offline harness | Full native suite, actual-iPhone journey and backoff acceptance not rerun |
 | Real STT, general AI conversation, TTS and streaming | **Public activation planned; STT/text evaluation adapters implemented** | Funding approval is reported; no active evaluation allowance, public activation/persistence or new voice route was configured by this work |
 | Guest quota, subscriptions, private photo pipeline and template gallery | **Planned for this FastAPI/mobile workflow** | Legacy Lovable code is not a reviewed implementation of these contracts |
 | HTTPS staging and public pilot | **Planned** | Requires approved hosting, mobile URL-guard update and security/privacy gates |

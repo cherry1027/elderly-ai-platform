@@ -1,5 +1,12 @@
 # Memy backend handoff for mobile integration
 
+**Current Day 15 handoff:** [final integration](tarun-final-integration.md),
+[acceptance](milestone-1-acceptance.md), backend app baseline `c67687e`, native
+`feat/mobile-api-backoff` at `b787dcd`. It contains PDF/continuation and the
+source-level backoff fix. Actual-device and fresh two-issued-user tests remain
+pending. Older revision notes below are historical; the reviewed JSON/private-LAN
+configuration still applies.
+
 Use this setup to connect Tarun's Expo app to backend 0.8.1 without public hosting or
 paid AI. The backend code and API contract are on
 [`codex/day-7-mobile-integration`](https://github.com/cherry1027/elderly-ai-platform/tree/codex/day-7-mobile-integration).

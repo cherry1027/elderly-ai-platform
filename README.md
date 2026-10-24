@@ -1,5 +1,13 @@
 # Memy AI
 
+Current final handoff: [Day 15 status](docs/day-15-status.md),
+[Milestone 1 acceptance](docs/milestone-1-acceptance.md),
+[Tarun integration](docs/tarun-final-integration.md),
+[security gates](docs/security-release-gates.md) and
+[deployment/rollback runbook](docs/pilot-deployment-runbook.md).
+Backend validation is delivered; actual iPhone/two-issued-user testing and
+pilot/privacy approval remain pending. No production/main/paid-AI activation.
+
 Mobile integration: start with the [consolidated backend handoff](docs/mobile-backend-handoff.md),
 [API contract](docs/mobile-api-contract.md), [verification report](docs/mobile-integration-tests.md)
 and [real-voice proposal](docs/mobile-voice-contract.md). The [OpenAPI snapshot](docs/openapi.json)

@@ -7,10 +7,10 @@ Intended client: Tarun's Expo/React Native application
 
 Day 14 leaves all paths, success schemas and the version unchanged. It exposes
 `Retry-After` through existing allowed-origin CORS so browser clients can read
-admission backoff. The latest reviewed native revision `1d93b74` still needs
-explicit rate/busy error handling; it currently fails safely with generic
-feedback. Follow the [source review](day-14-mobile-code-review.md) and
-[device checklist](day-14-tarun-rehearsal.md). Backend/SQL automation is not
+admission backoff. Historical native revision `1d93b74` lacked explicit backoff.
+The Day 15 candidate `b787dcd` addresses that source-level gap; see the
+[current native review](day-15-mobile-review.md) and
+[final integration checklist](tarun-final-integration.md). Backend/SQL automation is not
 actual-iPhone or two-issued-user JWT acceptance.
 
 Day 11 adds verified story/edit/export/Continue journey coverage without changing

@@ -14,6 +14,23 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 Swagger: http://127.0.0.1:8000/docs
 
+## Final validation — Day 15
+
+Start with [Day 15 status](../docs/day-15-status.md),
+[acceptance gates](../docs/milestone-1-acceptance.md) and
+[Tarun's final integration guide](../docs/tarun-final-integration.md).
+Current native source `b787dcd` addresses the older backoff gap; actual device
+acceptance remains pending. Backend application routes remain at the Day 14
+baseline; new evidence tooling does not enable live AI or change cloud state.
+
+```sh
+.venv/bin/python scripts/validate_milestone_evidence.py
+```
+
+This offline tool intentionally exits 3 for valid but unaccepted evidence; it
+never grants release/pilot approval. The historical Day 14 commands and pins
+below remain reproducible, not a current-mobile acceptance claim.
+
 ## Current mobile acceptance — Day 14
 
 Use the [Day 14 report](../docs/day-14-status.md),

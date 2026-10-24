@@ -64,7 +64,8 @@ def _summary(status, *, passed=0, failed=0, pending=0, missing=(), unconfirmed=0
     }
 
 
-def validate_bytes(raw: bytes) -> dict:
+def validate_bytes(raw: bytes, *, expected_backend=BACKEND_COMMIT,
+                   expected_mobile=MOBILE_COMMIT) -> dict:
     """Accept exact pins and complete case identities, never story text/notes."""
     if type(raw) is not bytes or not 1 <= len(raw) <= MAX_BYTES:
         raise EvidenceError()
@@ -74,7 +75,7 @@ def validate_bytes(raw: bytes) -> dict:
         raise EvidenceError() from None
     if (type(value) is not dict or set(value) != TOP_FIELDS
         or type(value["schema_version"]) is not int or value["schema_version"] != 1
-        or value["backend_commit"] != BACKEND_COMMIT or value["mobile_commit"] != MOBILE_COMMIT):
+        or value["backend_commit"] != expected_backend or value["mobile_commit"] != expected_mobile):
         raise EvidenceError()
     attestations = value["attestations"]
     if (type(attestations) is not dict or set(attestations) != ATTESTATIONS

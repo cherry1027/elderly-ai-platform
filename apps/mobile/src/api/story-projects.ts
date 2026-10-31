@@ -187,6 +187,7 @@ export interface StoryPdfResponse {
 export type StoryExportRequest = {
   action: 'create' | 'list' | 'download'; projectId: string;
   draftId?: string; exportId?: string; limit?: number; offset?: number;
+  pdfOptions?: { include_title_page: boolean; include_page_numbers: boolean };
   onHttpError: (status: number, code?: string, retry?: RetryAdvice) => StoryProjectsError;
 };
 
@@ -198,7 +199,7 @@ interface StoryRequest {
     { status: 'confirmed' | 'rejected'; expected_version: number; corrected_value?: string } |
     { language: 'en' | 'sv'; style: 'warm'; confirm_generation: true } |
     { content: string; expected_revision: number } |
-    { format: 'pdf'; include_title_page: true; include_page_numbers: true };
+    { format: 'pdf'; include_title_page: boolean; include_page_numbers: boolean };
   child?: 'continue' | 'sessions';
   memoryReview?: MemoryReviewRequest;
   draft?: StoryDraftRequest;
@@ -499,21 +500,26 @@ export function executeStoryExportRequest<T>(options: ListStoryProjectsOptions,
   }
   if (endpoint.action === 'create') {
     const draftId = validateStoryProjectId(endpoint.draftId);
+    const pdfOptions = endpoint.pdfOptions ?? { include_title_page: true, include_page_numbers: true };
     if (endpoint.exportId !== undefined || endpoint.limit !== undefined || endpoint.offset !== undefined) {
       throw new StoryProjectsError('validation');
     }
+    if (!pdfOptions || typeof pdfOptions !== 'object' || Array.isArray(pdfOptions) ||
+      Object.keys(pdfOptions).sort().join(',') !== 'include_page_numbers,include_title_page' ||
+      typeof pdfOptions.include_title_page !== 'boolean' || typeof pdfOptions.include_page_numbers !== 'boolean' ||
+      endpoint.pdfOptions === null) throw new StoryProjectsError('validation');
     return executeStoryRequest(options, { method: 'POST', expectedStatus: 201,
-      input: { format: 'pdf', include_title_page: true, include_page_numbers: true },
+      input: { format: 'pdf', include_title_page: pdfOptions.include_title_page, include_page_numbers: pdfOptions.include_page_numbers },
       pdf: { ...endpoint, projectId, draftId } }, decode);
   }
   if (endpoint.action === 'download') {
     const exportId = validateStoryProjectId(endpoint.exportId);
-    if (endpoint.draftId !== undefined || endpoint.limit !== undefined || endpoint.offset !== undefined) {
+    if (endpoint.draftId !== undefined || endpoint.limit !== undefined || endpoint.offset !== undefined || endpoint.pdfOptions !== undefined) {
       throw new StoryProjectsError('validation');
     }
     return executeStoryRequest(options, { method: 'GET', expectedStatus: 200, pdf: { ...endpoint, projectId, exportId } }, decode);
   }
-  if (endpoint.draftId !== undefined || endpoint.exportId !== undefined ||
+  if (endpoint.draftId !== undefined || endpoint.exportId !== undefined || endpoint.pdfOptions !== undefined ||
     !Number.isSafeInteger(endpoint.limit) || endpoint.limit! < 1 || endpoint.limit! > 100 ||
     !Number.isSafeInteger(endpoint.offset) || endpoint.offset! < 0 || endpoint.offset! > 100_000) {
     throw new StoryProjectsError('validation');

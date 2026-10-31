@@ -3,8 +3,8 @@ import { AccessibilityInfo, Platform, Pressable, ScrollView, StyleSheet, Text, V
 import type { StoryDraft, StoryProjectVerification } from '../api/story-drafts';
 import { useApiBackoff } from '../api/ApiBackoff';
 import type { StoryProjectsErrorKind } from '../api/story-projects';
-import { MemyBrand } from '../components/BrandArtwork';
-import { Screen, screenStyles } from '../components/Screen';
+import { Screen } from '../components/Screen';
+import { StoryHeading } from '../components/StoryPresentation';
 import { accessibilityLanguages, type Language } from '../i18n';
 import { colors, headingFont, layout } from '../theme';
 import { storyGenerationCopy } from './story-generation-copy';
@@ -82,6 +82,7 @@ function StoryDraftView({ language, storyLanguage, title, state, onGenerate, onR
   const canRetry = state.canRetry && !busy && !accessFailed && (state.phase === 'uncertain' || state.phase === 'error');
   const needsMemoryReview = ['NO_CONFIRMED_MEMORIES', 'NO_SUPPORTED_MEMORIES', 'CLARIFICATION_REQUIRED',
     'STORY_CONTEXT_CHANGED'].includes(state.code ?? '');
+  const urgentMessage = !!state.error || state.phase === 'uncertain' || state.phase === 'error';
   useEffect(() => {
     if (!message) return;
     if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(message);
@@ -107,32 +108,35 @@ function StoryDraftView({ language, storyLanguage, title, state, onGenerate, onR
     if (waiting || !canRetry || submitted.current) return;
     submitted.current = true; onRetry();
   };
-  return <Screen scrollViewRef={scroll} onContentLayout={event => { contentY.current = event.nativeEvent.layout.y; }}>
-    <MemyBrand />
-    <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={screenStyles.heading}>{text.title}</Text>
+  return <Screen working scrollViewRef={scroll} onContentLayout={event => { contentY.current = event.nativeEvent.layout.y; }}>
+    <StoryHeading language={language} title={text.title} />
     {!accessFailed && <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[storyLanguage]}
       allowFontScaling selectable style={styles.storyTitle}>{title}</Text>}
     <View style={styles.panel} accessibilityState={{ busy }} onLayout={event => { panelY.current = event.nativeEvent.layout.y; }}>
-      <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.introduction}</Text>
-      <Text accessibilityLanguage={locale} allowFontScaling style={styles.notice}>{text.simulation}</Text>
-      {!accessFailed && <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>
+      {!draft && <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.introduction}</Text>}
+      <Text accessibilityLanguage={locale} allowFontScaling style={styles.simulationNotice}>{text.simulation}</Text>
+      {!accessFailed && !draft && <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>
         {text.language}: {storyLanguage === 'sv' ? text.swedish : text.english}
       </Text>}
-      {message && <Text accessibilityRole={state.error || state.phase === 'uncertain' || state.phase === 'error' ? 'alert' : undefined}
+      {message && (!draft || urgentMessage) && <Text accessibilityRole={urgentMessage ? 'alert' : undefined}
         accessibilityLanguage={locale} accessibilityLiveRegion="polite" allowFontScaling style={styles.notice}>{message}</Text>}
       {state.error && state.phase === 'uncertain' && <Text accessibilityLanguage={locale} allowFontScaling style={styles.notice}>{text.uncertain}</Text>}
       {state.phase === 'ready' && !draft && <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.noDraft}</Text>}
-      {draft && <SavedDraft key={draft.draft_id + ':' + draft.revision} language={language} draft={draft} report={state.verification} />}
+      {draft && <SavedDraft key={draft.draft_id + ':' + draft.revision} language={language} draft={draft} report={state.verification}
+        onEdit={canGenerate && !confirming ? onEdit : undefined} onContinueStory={canGenerate && !confirming ? onContinueStory : undefined} />}
+      {draft && message && !urgentMessage && <Text accessibilityLanguage={locale} accessibilityLiveRegion="polite"
+        allowFontScaling style={styles.help}>{message}</Text>}
       {draft && canGenerate && !confirming && <>
-        {onContinueStory && <DraftButton language={language} label={text.continueStory} primary onPress={onContinueStory} />}
+        {(onGenerations || onHistory || onExport || (state.previousGeneration && onPreviousGeneration)) && <View style={styles.actionSection} testID="autobiography-saved-actions">
+        <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.subheading}>{text.savedActions}</Text>
         {onGenerations && <DraftButton language={language} label={text.generations} onPress={onGenerations} />}
         {state.previousGeneration && onPreviousGeneration && <>
           <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.preservedGeneration}: {state.previousGeneration.version}</Text>
           <DraftButton language={language} label={text.openPreviousGeneration} onPress={onPreviousGeneration} />
         </>}
-        {onEdit && <DraftButton language={language} label={text.edit} onPress={onEdit} />}
         {onHistory && <DraftButton language={language} label={text.history} onPress={onHistory} />}
         {onExport && <DraftButton language={language} label={text.export} onPress={onExport} />}
+        </View>}
       </>}
       {confirming && canGenerate ? <View style={styles.confirmation}>
         <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.subheading}>{text.confirmTitle}</Text>
@@ -140,23 +144,33 @@ function StoryDraftView({ language, storyLanguage, title, state, onGenerate, onR
         <DraftButton language={language} label={text.confirm} primary disabled={waiting} onPress={confirm} />
         <DraftButton language={language} label={text.cancel} onPress={() => { setConfirming(false); }} />
       </View> : <>
-        {canGenerate && <DraftButton language={language} label={draft ? text.generateAgain : text.generate} primary disabled={waiting} onPress={prepare} />}
+        {canGenerate && <View style={styles.actionSection} testID="autobiography-generation-actions">
+          <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.subheading}>{text.generationActions}</Text>
+          {draft && <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.generationPreservation}</Text>}
+          <DraftButton language={language} label={draft ? text.generateAgain : text.generate} primary={!draft} disabled={waiting} onPress={prepare} />
+        </View>}
         {canRetry && <>
           <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.retryHelp}</Text>
           <DraftButton language={language} label={text.retry} primary disabled={waiting} onPress={retry} />
         </>}
       </>}
+      <View style={styles.actionSection}>
+      <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.subheading}>{text.memoryActions}</Text>
       <DraftButton language={language} label={text.refresh} primary={state.phase === 'uncertain' && !canRetry}
         disabled={waiting || busy || accessFailed} onPress={refresh} />
       <DraftButton language={language} label={text.review} primary={needsMemoryReview && state.phase === 'error' && !canRetry && !accessFailed}
         disabled={busy || accessFailed} onPress={() => { setConfirming(false); onReviewMemories(); }} />
+      </View>
       <DraftButton language={language} label={text.back} onPress={onBack} />
       <DraftButton language={language} label={text.signOut} onPress={onSignOut} />
     </View>
   </Screen>;
 }
 
-function SavedDraft({ language, draft, report }: { language: Language; draft: StoryDraft; report: StoryProjectVerification | null }) {
+function SavedDraft({ language, draft, report, onEdit, onContinueStory }: {
+  language: Language; draft: StoryDraft; report: StoryProjectVerification | null;
+  onEdit?: () => void; onContinueStory?: () => void;
+}) {
   const text = storyGenerationCopy[language];
   const locale = accessibilityLanguages[language];
   const sourceLocale = accessibilityLanguages[draft.language];
@@ -166,18 +180,50 @@ function SavedDraft({ language, draft, report }: { language: Language; draft: St
     report.version === draft.version && report.revision === draft.revision);
   const verification = matched ? report?.verification ?? draft.verification : null;
   const safeReport = verification && !(verification.status === 'passed' && verification.unsupported_claims.length);
+  const manualReview = draft.status === 'edited' || draft.verification.method === 'manual_unverified' || verification?.method === 'manual_unverified';
+  const reviewWarning = !safeReport || !verification ? text.verificationUnavailable
+    : verification.status !== 'passed' ? text.statuses[verification.status]
+      : manualReview ? text.statuses.needs_review : null;
+  // An unmatched project report never suppresses the selected draft's own
+  // manual, stale-source or unsupported-claim warnings.
+  const extraManualWarning = manualReview && reviewWarning !== text.statuses.needs_review;
+  const sourcesChanged = draft.verification.sources_current === false || verification?.sources_current === false;
+  const unsupportedClaims = draft.verification.unsupported_claims.length > 0 || !!verification?.unsupported_claims.length;
   const index = Math.min(sourceIndex, Math.max(0, draft.source_memories.length - 1));
   const source = draft.source_memories[index];
-  return <View style={styles.panel}>
-    <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.subheading}>{text.generation}: {draft.version}</Text>
-    <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.revision}: {draft.revision}</Text>
-    <Text accessibilityLanguage={sourceLocale} allowFontScaling selectable style={styles.draftText}>{draft.content}</Text>
+  return <View style={styles.panel} testID="autobiography-reader">
+    <View style={styles.readerIdentity}>
+      <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.subheading}>{text.generation}: {draft.version}</Text>
+      <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.revision}: {draft.revision}</Text>
+    </View>
+    {(reviewWarning || extraManualWarning || sourcesChanged || unsupportedClaims) &&
+      <View style={styles.reviewWarnings} testID="autobiography-review-warnings">
+        {reviewWarning && <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{reviewWarning}</Text>}
+        {extraManualWarning && <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.statuses.needs_review}</Text>}
+        {sourcesChanged && <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.sourcesChanged}</Text>}
+        {unsupportedClaims && <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.unsupportedWarning}</Text>}
+      </View>}
+    {onEdit && <View style={styles.readingActions} testID="autobiography-primary-action">
+      <DraftButton language={language} label={text.edit} primary onPress={onEdit} />
+    </View>}
+    <View style={styles.readingPaper}>
+      <Text accessibilityLanguage={sourceLocale} allowFontScaling selectable style={styles.draftText} testID="autobiography-saved-wording">{draft.content}</Text>
+    </View>
+    {onContinueStory && <View style={styles.readingActions} testID="autobiography-continue-action">
+      <DraftButton language={language} label={text.continueStory} onPress={onContinueStory} />
+    </View>}
+    <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.introduction}</Text>
+    <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.simulationHelp}</Text>
+    <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.generationHelp}</Text>
+    <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>
+      {text.language}: {draft.language === 'sv' ? text.swedish : text.english}
+    </Text>
+    <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.readerHelp}</Text>
     <View style={styles.card}>
       <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.subheading}>{text.verification}</Text>
-      <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>
-        {safeReport && verification ? text.statuses[verification.status] : text.verificationUnavailable}
-      </Text>
-      {verification?.sources_current === false && <Text accessibilityLanguage={locale} allowFontScaling style={styles.notice}>{text.sourcesChanged}</Text>}
+      {!reviewWarning && safeReport && verification && <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>
+        {text.statuses[verification.status]}
+      </Text>}
       <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.verificationHelp}</Text>
     </View>
     <DraftButton language={language} label={sourcesOpen ? text.hideSources : text.showSources} expanded={sourcesOpen}
@@ -211,13 +257,20 @@ function SavedDraft({ language, draft, report }: { language: Language; draft: St
 }
 
 const styles = StyleSheet.create({
-  panel: { width: '100%', gap: 24 }, card: { width: '100%', gap: 16, padding: 16,
+  readerIdentity: { width: '100%', gap: 4 },
+  reviewWarnings: { width: '100%', gap: 8, paddingVertical: 8, paddingHorizontal: 12,
+    borderLeftWidth: 3, borderLeftColor: colors.forest, backgroundColor: colors.selected },
+  simulationNotice: { color: colors.ink, fontSize: 22, lineHeight: 32, paddingVertical: 8, paddingHorizontal: 12,
+    borderLeftWidth: 3, borderLeftColor: colors.forest, backgroundColor: colors.selected, flexShrink: 1 },
+  readingActions: { width: '100%', gap: 12 }, actionSection: { width: '100%', gap: 16, paddingTop: 20, borderTopWidth: 1, borderTopColor: colors.border },
+  readingPaper: { width: '100%', paddingVertical: 20, paddingHorizontal: 20, backgroundColor: colors.paper, borderRadius: layout.controlRadius },
+  panel: { width: '100%', gap: 16 }, card: { width: '100%', gap: 16, padding: 16,
     borderWidth: 1, borderColor: colors.border, borderRadius: layout.controlRadius, backgroundColor: colors.paper },
   confirmation: { width: '100%', gap: 20, padding: 16, borderWidth: 2, borderColor: colors.forest, borderRadius: layout.controlRadius },
   storyTitle: { color: colors.ink, fontFamily: headingFont, fontSize: 30, lineHeight: 40, textAlign: 'center', flexShrink: 1 },
   subheading: { color: colors.ink, fontSize: 24, lineHeight: 34, fontWeight: '600', flexShrink: 1 },
   body: { color: colors.ink, fontSize: 22, lineHeight: 32, flexShrink: 1 },
-  draftText: { color: colors.ink, fontFamily: headingFont, fontSize: 24, lineHeight: 38, flexShrink: 1 },
+  draftText: { color: colors.ink, fontFamily: headingFont, fontSize: 24, lineHeight: 40, flexShrink: 1 },
   label: { color: colors.ink, fontSize: 22, lineHeight: 32, fontWeight: '600', flexShrink: 1 },
   help: { color: colors.muted, fontSize: 20, lineHeight: 30, flexShrink: 1 },
   notice: { color: colors.ink, fontSize: 22, lineHeight: 32, padding: 16, borderWidth: 2,

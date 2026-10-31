@@ -94,7 +94,9 @@ it.each(['en', 'sv'] as const)('explicitly processes one saved %s source with a 
   expect(state().processedIds).toEqual([sourceId]);
   expect(state().messages).toHaveLength(2);
   expect(state().messages[0].text).toBe(source.text);
-  expect(screen.queryByText(source.text)).toBeNull(); // full immutable source already displayed above by RecordingPanel
+  // The unified thread owns the immutable text, with one identity-deduplicated
+  // source rather than a separate recording-panel copy.
+  expect(screen.getAllByText(source.text)).toHaveLength(1);
   expect(screen.getByText(assistant.text)).toBeOnTheScreen();
   await act(() => { callbacks().onProcess(); callbacks().onProcess(); });
   expect(processTranscript).toHaveBeenCalledTimes(1);

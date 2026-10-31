@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, BackHandler } from 'react-native';
 import * as Crypto from 'expo-crypto';
 import { getStoryDraft, sameDraftOriginal, type StoryDraft } from '../api/story-drafts';
-import { exportStoryPdf, downloadStoryPdf, listStoryExports, StoryExportsError, type StoryExport, type StoryPdf } from '../api/story-exports';
+import { exportStoryPdf, downloadStoryPdf, listStoryExports, StoryExportsError, DEFAULT_STORY_PDF_OPTIONS,
+  validateStoryPdfOptions, type StoryExport, type StoryPdf, type StoryPdfOptions } from '../api/story-exports';
 import { getStoryProject, StoryProjectsError } from '../api/story-projects';
 import { readStoryPreviewEnabled } from '../development/story-preview-config';
 import type { Language } from '../i18n';
@@ -19,13 +20,15 @@ const empty = (): ExportScreenState => ({ phase: 'loading', draft: null, items: 
 const accessFailure = (error: StoryProjectsError) => ['authentication', 'forbidden', 'not-found'].includes(error.kind);
 const safeError = (error: unknown) => error instanceof StoryProjectsError ? error
   : new StoryProjectsError(error instanceof NativePdfError && error.kind === 'invalid' ? 'invalid-response' : 'unavailable');
-type Selection = { draft: StoryDraft; title: string; hash: string };
+type Selection = { draft: StoryDraft; title: string; hash: string; pdfOptions: Readonly<StoryPdfOptions> };
 const sameSelection = (a: Selection, b: Selection) => sameDraftOriginal(a.draft, b.draft) &&
-  a.draft.revision === b.draft.revision && a.draft.content === b.draft.content && a.title === b.title && a.hash === b.hash;
+  a.draft.revision === b.draft.revision && a.draft.content === b.draft.content && a.title === b.title && a.hash === b.hash &&
+  a.pdfOptions.include_title_page === b.pdfOptions.include_title_page && a.pdfOptions.include_page_numbers === b.pdfOptions.include_page_numbers;
 const matches = (item: StoryExport, selected: Selection) => item.draft_id === selected.draft.draft_id &&
   item.draft_version === selected.draft.version && item.draft_revision === selected.draft.revision &&
   item.title === selected.title && item.content_sha256 === selected.hash &&
-  item.include_title_page && item.include_page_numbers && item.renderer_version === 'memy_pdf_v1';
+  item.include_title_page === selected.pdfOptions.include_title_page &&
+  item.include_page_numbers === selected.pdfOptions.include_page_numbers && item.renderer_version === 'memy_pdf_v1';
 
 export function StoryExports(props: StoryExportsProps) {
   const identity = [props.ownerId, props.projectId, props.draftId, props.storyLanguage, props.baseUrl].join(':');
@@ -37,6 +40,8 @@ function ScopedExports(props: StoryExportsProps) {
   const { ready, failed, createStore, release, reportFailure, rememberReturn, clearReturn } = privacy;
   const [state, setState] = useState<ExportScreenState>(empty);
   const [title, setTitle] = useState(props.title);
+  const [pdfOptions, setPdfOptions] = useState<Readonly<StoryPdfOptions>>(DEFAULT_STORY_PDF_OPTIONS);
+  const currentPdfOptions = useRef<Readonly<StoryPdfOptions>>(DEFAULT_STORY_PDF_OPTIONS);
   const latest = useRef<ExportScreenState>(empty()), alive = useRef(false), active = useRef(true), busy = useRef(false), blocked = useRef(false);
   const epoch = useRef(0), request = useRef<AbortController | null>(null);
   const store = useRef<PrivatePdfStore | null>(null), file = useRef<PrivatePdfHandle | null>(null);
@@ -83,7 +88,7 @@ function ScopedExports(props: StoryExportsProps) {
     if (project.id !== projectId || project.language !== storyLanguage) throw new StoryProjectsError('invalid-response');
     const hash = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, draft.content);
     if (!/^[0-9a-f]{64}$/.test(hash)) throw new StoryProjectsError('invalid-response');
-    return { draft, title: project.title, hash };
+    return { draft, title: project.title, hash, pdfOptions: validateStoryPdfOptions(currentPdfOptions.current) };
   }, [options, projectId, storyLanguage]);
   const discard = useCallback(async (cache: PrivatePdfStore) => {
     const handle = file.current; file.current = null;
@@ -200,7 +205,8 @@ function ScopedExports(props: StoryExportsProps) {
       publish({ ...latest.current, items: existing.items, hasMore: existing.hasMore, bounded: existing.bounded });
       if (existing.found) { await openAudit(op, existing.found); return; }
       if (existing.bounded) { publish({ ...latest.current, phase: 'uncertain', notice: 'uncertain' }); return; }
-      const pdf = await exportStoryPdf({ ...options(op.controller), baseline: selected.draft, title: selected.title });
+      const pdf = await exportStoryPdf({ ...options(op.controller), baseline: selected.draft, title: selected.title,
+        pdfOptions: selected.pdfOptions });
       try {
         if (!op.current()) return;
         const result = await find(op.controller, item => item.export_id === pdf.exportId);
@@ -287,7 +293,18 @@ function ScopedExports(props: StoryExportsProps) {
     return () => listener.remove();
   }, [leave, onBack]);
   const visible = failed ? { ...empty(), phase: 'error' as const, notice: 'cleanup-failed' as const } : state;
+  const optionsLocked = state.fileReady || state.phase !== 'ready' || !!state.error || state.notice === 'uncertain' || failed;
+  const changeOptions = (value: StoryPdfOptions) => {
+    // No new selection can replace an uncertain action, prepared file or share lease.
+    if (!alive.current || !active.current || busy.current || blocked.current || pending.current ||
+      latest.current.phase !== 'ready' || latest.current.error || latest.current.fileReady || failed ||
+      currentPdfOptions.current !== pdfOptions) return;
+    let next: Readonly<StoryPdfOptions>;
+    try { next = validateStoryPdfOptions(value); } catch { return; }
+    currentPdfOptions.current = next; setPdfOptions(next);
+  };
   return <StoryExportsScreen language={props.language} storyLanguage={storyLanguage} title={title} state={visible}
+    pdfOptions={pdfOptions} optionsLocked={optionsLocked} onOptionsChange={changeOptions}
     onPrepare={prepare} onShare={share} onDownload={download} onLoadMore={more} onRefresh={refresh}
     onBack={() => leave(onBack)} onSignOut={() => leave(onSignOut)} />;
 }

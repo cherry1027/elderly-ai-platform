@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { AppState } from 'react-native';
 import { processTranscript, listConversationMessages, ConversationMessagesError, type ConversationTurn } from '../api/conversation-messages';
 import type { AudioTranscript } from '../api/audio-transcripts';
@@ -17,6 +17,7 @@ interface Props {
   baseUrl: string | null;
   transcripts: AudioTranscript[];
   getAccessToken: (ownerId: string) => Promise<string | null>;
+  composer?: ReactNode;
 }
 const initial: TranscriptConversationState = { phase: 'loading', messages: [], processedIds: [],
   complete: false, canRetry: false, blockedIds: [] };
@@ -25,7 +26,7 @@ const initial: TranscriptConversationState = { phase: 'loading', messages: [], p
 export function TranscriptConversation(props: Props) {
   return <Scope key={[props.ownerId, props.projectId, props.sessionId, props.sessionLanguage].join(':')} {...props} />;
 }
-function Scope({ language, ownerId, projectId, sessionId, sessionLanguage, baseUrl, transcripts, getAccessToken }: Props) {
+function Scope({ language, ownerId, projectId, sessionId, sessionLanguage, baseUrl, transcripts, getAccessToken, composer }: Props) {
   const [state, setState] = useState<TranscriptConversationState>(initial);
   const view = useRef(state);
   const alive = useRef(false);
@@ -194,7 +195,7 @@ function Scope({ language, ownerId, projectId, sessionId, sessionLanguage, baseU
       update({ phase: safe.mayHaveWritten ? 'uncertain' : 'error', error: safe.kind, canRetry: false, blockedIds: knownBlocked(), ...hideOnAccessFailure(safe) });
     } finally { finish(controller); }
   };
-  return <ConversationPanel language={language} state={state} transcripts={transcripts}
+  return <ConversationPanel language={language} state={state} transcripts={transcripts} composer={composer}
     onSelect={select} onProcess={() => { void submit(false); }} onReconcile={() => { void load(true); }}
     onRetry={() => { void submit(true); }} onRefresh={() => { void load(false); }} />;
 }

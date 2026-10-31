@@ -44,7 +44,8 @@ it.each(['en', 'sv'] as const)('selects a numbered saved transcript without send
   expect(second.props.accessibilityState).toMatchObject({ checked: false, disabled: false });
   await fireEvent.press(second); expect(actions.onSelect).toHaveBeenCalledWith(secondId);
   expect(actions.onProcess).not.toHaveBeenCalled();
-  expect(screen.queryByText(source.text)).toBeNull();
+  // Equal wording is not identity: these are two distinct saved source IDs.
+  expect(screen.getAllByText(source.text)).toHaveLength(2);
 });
 
 it('processes only through a separate explicit action on the controlled selected source', async () => {
@@ -129,7 +130,7 @@ it.each(['en', 'sv'] as const)('displays actual backend assistant text and sourc
   expect(screen.getByRole('header', { name: text.historyTitle })).toBeOnTheScreen();
   expect(screen.getByRole('header', { name: text.userMessage })).toBeOnTheScreen();
   expect(screen.getByRole('header', { name: text.assistantMessage })).toBeOnTheScreen();
-  expect(screen.getByText(messages[1].text)).toBeOnTheScreen(); expect(screen.queryByText(source.text)).toBeNull();
+  expect(screen.getByText(messages[1].text)).toBeOnTheScreen(); expect(screen.getAllByText(source.text)).toHaveLength(1);
   expect(screen.queryByText(`${text.reference}: ${sourceId}`)).toBeNull();
   await fireEvent.press(screen.getByRole('button', { name: text.details }));
   expect(screen.getByText(`${text.reference}: ${sourceId}`)).toBeOnTheScreen();
@@ -148,7 +149,7 @@ it('renders other actual saved user messages without claiming they were recogniz
   const other: ConversationMessage = { ...messages[0], id: secondId, text: 'A separate saved fictional user message.' };
   await open({ ...initial, messages: [other, messages[1]] });
   expect(screen.getByText(other.text)).toBeOnTheScreen(); expect(screen.getByText(messages[1].text)).toBeOnTheScreen();
-  expect(screen.queryByText(source.text)).toBeNull();
+  expect(screen.getAllByText(source.text)).toHaveLength(1);
 });
 
 it('announces phase and error changes without speaking message content automatically', async () => {

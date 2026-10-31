@@ -1,5 +1,5 @@
 import { getComponent } from './component-probe';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
 import { createRef } from 'react';
 import { Alert, AppState } from 'react-native';
 import { SessionRecording, type SessionRecordingHandle } from '../src/audio/SessionRecording';
@@ -18,7 +18,16 @@ jest.mock('../src/audio/RecordingPanel', () => {
   return { ...actual, RecordingPanel: observeComponent(actual.RecordingPanel) };
 });
 
-jest.mock('../src/conversation/TranscriptConversation', () => ({ TranscriptConversation: () => null }));
+jest.mock('../src/conversation/TranscriptConversation', () => {
+  const React = jest.requireActual<typeof import('react')>('react');
+  const { View } = jest.requireActual<typeof import('react-native')>('react-native');
+  const { ChatThread } = jest.requireActual<typeof import('../src/conversation/ChatThread')>('../src/conversation/ChatThread');
+  // Keep this recorder-controller suite free of conversation network work while
+  // rendering its new presentation slots and the actual saved-source thread.
+  return { TranscriptConversation: (props: React.ComponentProps<typeof import('../src/conversation/TranscriptConversation').TranscriptConversation>) =>
+    React.createElement(View, null,
+      React.createElement(ChatThread, { language: props.language, messages: [], transcripts: props.transcripts }), props.composer) };
+});
 
 jest.mock('../src/audio/native-recorder', () => ({ ...jest.requireActual('../src/audio/native-recorder'), createNativeRecorder: jest.fn(), createRecordingId: jest.fn() }));
 jest.mock('../src/api/audio-transcripts', () => ({ ...jest.requireActual('../src/api/audio-transcripts'),
@@ -105,6 +114,8 @@ it.each(['sample', 'unconfigured'] as const)('blocks recorder, token and history
   jest.mocked(readStoryPreviewEnabled).mockReturnValue(mode === 'sample');
   await open(mode === 'unconfigured' ? { baseUrl: null } : {});
   expect(state()).toMatchObject({ phase: 'error', error: 'configuration' });
+  expect(within(screen.getByTestId('disabled-recording-scroll')).getByRole('alert')).toHaveTextContent(audioCopy.en.errors.configuration);
+  expect(screen.getByTestId('disabled-recording-scroll')).toHaveStyle({ flex: 1, minHeight: 0 });
   await act(() => panel().onStart());
   expect(createNativeRecorder).not.toHaveBeenCalled(); expect(token).not.toHaveBeenCalled();
   expect(listSessionTranscripts).not.toHaveBeenCalled(); expect(uploadSessionRecording).not.toHaveBeenCalled();
@@ -196,6 +207,121 @@ it('confirms discard and clears only the local pending recording', async () => {
     await act(() => buttons.find(button => button.style === 'destructive')!.onPress!());
     await waitFor(() => expect(state().phase).toBe('idle'));
     expect(driver.discard).toHaveBeenCalledWith(file);
+    expect(uploadSessionRecording).not.toHaveBeenCalled();
+  } finally { alert.mockRestore(); }
+});
+it('retires a canceled discard intent and ignores it after a new prompt opens', async () => {
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  try {
+    await open(); await ready(); await act(() => panel().onDiscard());
+    const obsolete = alert.mock.calls[0][2]!;
+    await act(() => obsolete.find(button => button.style === 'cancel')!.onPress!());
+    await act(() => panel().onDiscard());
+    const current = alert.mock.calls[1][2]!;
+    await act(() => obsolete.find(button => button.style === 'destructive')!.onPress!());
+    expect(state()).toMatchObject({ phase: 'ready', hasRecording: true });
+    expect(driver.discard).not.toHaveBeenCalled();
+    await act(() => current.find(button => button.style === 'destructive')!.onPress!());
+    await waitFor(() => expect(state().phase).toBe('idle'));
+    expect(driver.discard).toHaveBeenCalledTimes(1);
+    // A native callback replay cannot discard a subsequently captured clip.
+    await ready();
+    await act(() => current.find(button => button.style === 'destructive')!.onPress!());
+    expect(state()).toMatchObject({ phase: 'ready', hasRecording: true });
+    expect(driver.discard).toHaveBeenCalledTimes(1);
+    expect(uploadSessionRecording).not.toHaveBeenCalled();
+  } finally { alert.mockRestore(); }
+});
+it('opens only one discard prompt and permits a new prompt after native dismissal', async () => {
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  try {
+    await open(); await ready();
+    await act(() => { panel().onDiscard(); panel().onDiscard(); panel().onDiscard(); });
+    expect(alert).toHaveBeenCalledTimes(1);
+    const obsolete = alert.mock.calls[0][2]!;
+    await act(() => alert.mock.calls[0][3]!.onDismiss!());
+    await act(() => panel().onDiscard());
+    expect(alert).toHaveBeenCalledTimes(2);
+    await act(() => obsolete.find(button => button.style === 'destructive')!.onPress!());
+    expect(driver.discard).not.toHaveBeenCalled();
+    expect(state()).toMatchObject({ phase: 'ready', hasRecording: true });
+  } finally { alert.mockRestore(); }
+});
+it('an obsolete discard cannot clear an uncertain upload after an explicit send', async () => {
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  jest.mocked(uploadSessionRecording).mockRejectedValueOnce(new StoryProjectsError('timeout', undefined, true));
+  try {
+    await open(); await ready(); await act(() => panel().onDiscard());
+    const obsolete = alert.mock.calls[0][2]!.find(button => button.style === 'destructive')!.onPress!;
+    await consentAndUpload();
+    await waitFor(() => expect(state().phase).toBe('uncertain'));
+    await act(() => obsolete());
+    expect(state()).toMatchObject({ phase: 'uncertain', hasRecording: true, canRetry: true });
+    expect(driver.discard).not.toHaveBeenCalled();
+    expect(uploadSessionRecording).toHaveBeenCalledTimes(1);
+  } finally { alert.mockRestore(); }
+});
+it.each(['discard', 'leave'] as const)('fences an obsolete %s alert after background, reactivation and a new recording', async kind => {
+  let change: ((value: string) => void) | undefined;
+  const original = AppState.addEventListener;
+  AppState.addEventListener = (event, callback) => {
+    if (event === 'change') change = callback as (value: string) => void;
+    return { remove: jest.fn() };
+  };
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  const proceed = jest.fn();
+  try {
+    const view = await open(); await ready();
+    await act(() => { if (kind === 'discard') panel().onDiscard(); else view.ref.current!.requestLeave(proceed); });
+    const obsolete = alert.mock.calls[0][2]!.find(button => button.style === 'destructive')!.onPress!;
+    await act(() => change!('background'));
+    expect(driver.dispose).toHaveBeenCalledTimes(1);
+    await act(async () => change!('active'));
+    await waitFor(() => expect(state().phase).toBe('idle'));
+    await ready();
+    await act(() => obsolete());
+    expect(state()).toMatchObject({ phase: 'ready', hasRecording: true });
+    expect(proceed).not.toHaveBeenCalled();
+    expect(driver.discard).not.toHaveBeenCalled();
+    expect(driver.dispose).toHaveBeenCalledTimes(1);
+    expect(uploadSessionRecording).not.toHaveBeenCalled();
+  } finally { alert.mockRestore(); AppState.addEventListener = original; }
+});
+it('a canceled leave intent cannot approve a later warning or leave more than once', async () => {
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  const obsoleteProceed = jest.fn(), proceed = jest.fn();
+  try {
+    const view = await open(); await ready();
+    await act(() => view.ref.current!.requestLeave(obsoleteProceed));
+    const obsolete = alert.mock.calls[0][2]!;
+    await act(() => obsolete.find(button => button.style === 'cancel')!.onPress!());
+    await act(() => { view.ref.current!.requestLeave(proceed); view.ref.current!.requestLeave(proceed); });
+    expect(alert).toHaveBeenCalledTimes(2);
+    await act(() => obsolete.find(button => button.style === 'destructive')!.onPress!());
+    expect(obsoleteProceed).not.toHaveBeenCalled(); expect(proceed).not.toHaveBeenCalled();
+    expect(driver.dispose).not.toHaveBeenCalled();
+    const leave = alert.mock.calls[1][2]!.find(button => button.style === 'destructive')!.onPress!;
+    await act(() => { leave(); leave(); });
+    expect(proceed).toHaveBeenCalledTimes(1); expect(driver.dispose).toHaveBeenCalledTimes(1);
+    expect(uploadSessionRecording).not.toHaveBeenCalled();
+  } finally { alert.mockRestore(); }
+});
+it('retires a recording leave warning when Stop captures a new unsent clip', async () => {
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  const obsoleteProceed = jest.fn(), proceed = jest.fn();
+  try {
+    const view = await open(); await act(() => panel().onStart());
+    await waitFor(() => expect(state().phase).toBe('recording'));
+    await act(() => view.ref.current!.requestLeave(obsoleteProceed));
+    const obsolete = alert.mock.calls[0][2]!.find(button => button.style === 'destructive')!.onPress!;
+    await act(() => panel().onStop());
+    await waitFor(() => expect(state().phase).toBe('ready'));
+    await act(() => obsolete());
+    expect(obsoleteProceed).not.toHaveBeenCalled(); expect(driver.dispose).not.toHaveBeenCalled();
+    expect(state()).toMatchObject({ phase: 'ready', hasRecording: true, consent: false });
+    await act(() => view.ref.current!.requestLeave(proceed));
+    await act(() => alert.mock.calls[1][2]!.find(button => button.style === 'destructive')!.onPress!());
+    expect(proceed).toHaveBeenCalledTimes(1); expect(driver.dispose).toHaveBeenCalledTimes(1);
     expect(uploadSessionRecording).not.toHaveBeenCalled();
   } finally { alert.mockRestore(); }
 });

@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { AccessibilityInfo, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState, type ReactNode } from 'react';
+import { AccessibilityInfo, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { AudioTranscript } from '../api/audio-transcripts';
 import { useApiBackoff } from '../api/ApiBackoff';
 import type { ConversationMessage } from '../api/conversation-messages';
@@ -9,6 +9,7 @@ import { StoryDisclosure } from '../components/StoryPresentation';
 import { accessibilityLanguages, type Language } from '../i18n';
 import { colors, headingFont, layout } from '../theme';
 import { transcriptConversationCopy } from './conversation-copy';
+import { ChatThread } from './ChatThread';
 
 export interface TranscriptConversationState {
   phase: 'loading' | 'ready' | 'processing' | 'checking' | 'error' | 'uncertain';
@@ -30,11 +31,13 @@ export interface ConversationPanelProps {
   onReconcile: () => void;
   onRetry: () => void;
   onRefresh: () => void;
+  composer?: ReactNode;
 }
 
-/** View only. Existing transcript text stays in RecordingPanel; messages are backend history, never guessed turn pairs. */
+/** View only: one saved thread plus the existing recorder's separate composer.
+ * No selection, render, status change or scroll event starts a network write. */
 export function ConversationPanel({ language, state, transcripts, onSelect, onProcess,
-  onReconcile, onRetry, onRefresh }: ConversationPanelProps) {
+  onReconcile, onRetry, onRefresh, composer }: ConversationPanelProps) {
   const text = transcriptConversationCopy[language];
   const { waiting } = useApiBackoff();
   const locale = accessibilityLanguages[language];
@@ -49,24 +52,13 @@ export function ConversationPanel({ language, state, transcripts, onSelect, onPr
     if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(status);
   }, [status]);
 
-  return <View style={styles.panel} accessibilityState={{ busy }}>
-    <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.heading}>{text.title}</Text>
-    <Text accessibilityLanguage={locale} allowFontScaling style={styles.notice}>{text.notice}</Text>
-    <View style={styles.selectionCard}>
-    <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.introduction}</Text>
-    <Text accessibilityRole={state.error ? 'alert' : undefined} accessibilityLanguage={locale}
-      accessibilityLiveRegion="polite" allowFontScaling style={styles.body}>{status}</Text>
-    {state.phase === 'uncertain' && <Text accessibilityLanguage={locale} allowFontScaling style={styles.notice}>{text.uncertain}</Text>}
-    {!busy && !state.complete && <Text accessibilityLanguage={locale} allowFontScaling style={styles.notice}>{text.incomplete}</Text>}
-    <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.subheading}>{text.choose}</Text>
-    {!transcripts.length && <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.noTranscripts}</Text>}
-    {transcripts.map((transcript, index) => {
+  const sourceControl = (transcript: AudioTranscript, index: number) => {
       const processed = state.processedIds.includes(transcript.transcript_id);
       const blocked = state.blockedIds?.includes(transcript.transcript_id);
       const checked = selected?.transcript_id === transcript.transcript_id;
       const disabled = !canChoose || processed || blocked === true;
       const label = text.select + ' ' + (index + 1) + (processed ? '. ' + text.processed : blocked ? '. ' + text.blocked : '');
-      return <Pressable key={transcript.transcript_id} accessibilityRole="radio" accessibilityLabel={label}
+      return <Pressable accessibilityRole="radio" accessibilityLabel={label}
         accessibilityLanguage={locale} accessibilityState={{ checked, disabled }} disabled={disabled}
         onPress={() => onSelect(transcript.transcript_id)} onFocus={() => setFocused(transcript.transcript_id)}
         onBlur={() => setFocused(null)} style={[styles.choice, checked && styles.selected, disabled && styles.disabledChoice,
@@ -79,7 +71,26 @@ export function ConversationPanel({ language, state, transcripts, onSelect, onPr
         {processed && <Text allowFontScaling style={styles.body}>{text.processed}</Text>}
         {blocked && <Text allowFontScaling style={styles.body}>{text.blocked}</Text>}
       </Pressable>;
-    })}
+  };
+  // Access failures must not reintroduce private source text from recorder props.
+  const hidePrivate = ['authentication', 'forbidden', 'not-found'].includes(state.error ?? '');
+  const visibleMessages = hidePrivate ? [] : state.messages;
+  const visibleTranscripts = hidePrivate ? [] : transcripts;
+  return <View style={styles.panel} accessibilityState={{ busy }}>
+    <ScrollView testID="chat-simulation-notice" style={styles.noticeHeader}
+      contentContainerStyle={styles.noticeContent} alwaysBounceVertical={false}>
+    <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.heading}>{text.title}</Text>
+    <Text accessibilityLanguage={locale} allowFontScaling style={styles.notice}>{text.notice}</Text>
+    </ScrollView>
+    <ChatThread language={language} messages={visibleMessages} transcripts={visibleTranscripts} renderSourceControl={sourceControl}>
+    <View style={styles.selectionCard}>
+    <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.introduction}</Text>
+    <Text accessibilityRole={state.error ? 'alert' : undefined} accessibilityLanguage={locale}
+      accessibilityLiveRegion="polite" allowFontScaling style={styles.body}>{status}</Text>
+    {state.phase === 'uncertain' && <Text accessibilityLanguage={locale} allowFontScaling style={styles.notice}>{text.uncertain}</Text>}
+    {!busy && !state.complete && <Text accessibilityLanguage={locale} allowFontScaling style={styles.notice}>{text.incomplete}</Text>}
+    <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.subheading}>{text.choose}</Text>
+    {!visibleTranscripts.length && <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.noTranscripts}</Text>}
     <Pressable accessibilityRole="button" accessibilityLabel={text.process} accessibilityLanguage={locale}
       accessibilityState={{ disabled: !canProcess }} disabled={!canProcess} onPress={() => { if (canProcess) onProcess(); }}
       onFocus={() => setFocused('process')} onBlur={() => setFocused(null)}
@@ -95,33 +106,25 @@ export function ConversationPanel({ language, state, transcripts, onSelect, onPr
     {state.phase === 'ready' && <LargeButton language={language} label={text.refresh}
       variant="secondary" density="compact" disabled={waiting} onPress={onRefresh} />}
     </View>
-    <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.subheading}>{text.historyTitle}</Text>
-    {!busy && state.complete && !state.messages.length && <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.noMessages}</Text>}
-    {state.messages.map(message => {
-      const sourceIndex = message.role === 'user'
-        ? transcripts.findIndex(transcript => transcript.transcript_id === message.id) : -1;
-      return <View key={message.id} style={[styles.message, message.role === 'assistant' && styles.assistant]}>
-        <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.subheading}>
-          {message.role === 'assistant' ? text.assistantMessage : text.userMessage}
-        </Text>
-        {sourceIndex >= 0 ? <>
-          <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.savedTranscript} {sourceIndex + 1}</Text>
-        </> : <Text accessibilityLanguage={accessibilityLanguages[message.language]} allowFontScaling selectable
-          style={styles.body}>{message.text}</Text>}
-      </View>;
-    })}
-    {state.messages.some(message => message.role === 'user' && transcripts.some(row => row.transcript_id === message.id)) &&
+    {!busy && state.complete && !visibleMessages.length && <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.noMessages}</Text>}
+    {visibleTranscripts.length > 0 &&
       <StoryDisclosure language={language} label={text.details}>
-        {state.messages.filter(message => message.role === 'user' && transcripts.some(row => row.transcript_id === message.id))
-          .map(message => <Text key={message.id} accessibilityLanguage={locale} allowFontScaling selectable style={styles.reference}>
-            {text.reference}: {message.id}
+        {[...new Set(visibleTranscripts.map(row => row.transcript_id))]
+          .map(id => <Text key={id} accessibilityLanguage={locale} allowFontScaling selectable style={styles.reference}>
+            {text.reference}: {id}
           </Text>)}
       </StoryDisclosure>}
+    </ChatThread>
+    {composer && <View testID="chat-composer-dock" style={styles.composer}>{composer}</View>}
   </View>;
 }
 
 const styles = StyleSheet.create({
-  panel: { width: '100%', gap: 18 },
+  panel: { width: '100%', flex: 1, minHeight: 0, gap: 10 },
+  noticeHeader: { flexShrink: 1, flexGrow: 0, minHeight: 48, maxHeight: '26%' },
+  noticeContent: { gap: 6 },
+  composer: { width: '100%', flexShrink: 1, maxHeight: '55%', borderTopWidth: 2,
+    borderColor: colors.border, paddingTop: 8 },
   selectionCard: { width: '100%', gap: 16, padding: 18, backgroundColor: colors.paper,
     borderRadius: layout.controlRadius, borderWidth: 2, borderColor: colors.border },
   heading: { color: colors.ink, fontFamily: headingFont, fontSize: 28, lineHeight: 38, flexShrink: 1 },
@@ -144,8 +147,5 @@ const styles = StyleSheet.create({
   disabledAction: { backgroundColor: colors.muted, borderColor: colors.muted },
   pressed: { backgroundColor: colors.forestPressed },
   actionText: { color: colors.paper, fontSize: 22, lineHeight: 32, fontWeight: '600', textAlign: 'center', flexShrink: 1 },
-  message: { padding: 18, gap: 12, borderWidth: 2, borderColor: colors.border,
-    borderRadius: layout.controlRadius, backgroundColor: colors.paper },
-  assistant: { backgroundColor: colors.selected },
   reference: { color: colors.muted, fontSize: 18, lineHeight: 28, flexShrink: 1 },
 });

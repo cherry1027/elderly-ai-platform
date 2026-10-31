@@ -1,0 +1,183 @@
+import { apiBackoff } from '../src/api/backoff';
+import { digest } from 'expo-crypto';
+import { listSessionTranscripts, SIMULATED_TRANSCRIPT_NOTICE } from '../src/api/audio-transcripts';
+import { createRealSpeech, decodeCapabilities, decodeDraft, decodeMemory, decodeMessage, decodeTranscript, editRealDraft,
+  exportRealDraft, findRealOperation, generateRealDraft, getRealCapabilities, getRealDrafts, getRealMemories, getRealMessages, getRealOperation,
+  getRealSpeechAudio, getRealTranscripts, reviewRealMemory, sendRealMessage, transcribeRealRecording } from '../src/real-ai/api';
+import { realDate, realDraft, realIds as ids, realMemory, realMessage, realScope, realTranscript } from './real-ai-fixtures';
+jest.mock('expo-crypto', () => ({ CryptoDigestAlgorithm: { SHA256: 'SHA-256' }, digest: jest.fn() }));
+
+const response = (value: unknown, status = 200, headers: Record<string, string> = {}) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json', ...headers } });
+const capabilities = { contract: 'real-v2', mode: 'real', enabled: false, transcription: false, conversation: false, writing: false, speech: false, reason: 'LIVE_AI_DISABLED' };
+function fixture(value: unknown = []) {
+  const request = jest.fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>(async () => response(value));
+  return { request, scope: { ...realScope(), request } };
+}
+beforeEach(() => apiBackoff.clear());
+describe('real-v2 strict contracts with synthetic HTTP, no paid or hosted requests', () => {
+  it('reports disabled capabilities honestly and requests only the fixed v2 resource', async () => {
+    const f = fixture(capabilities);
+    await expect(getRealCapabilities(f.scope)).resolves.toEqual(capabilities);
+    expect(f.request).toHaveBeenCalledWith(f.scope.baseUrl + '/api/v2/capabilities', expect.objectContaining({ method: 'GET', redirect: 'error', credentials: 'omit', cache: 'no-store' }));
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+  it.each([{ ...capabilities, mode: 'mock' }, { ...capabilities, contract: 'v1' }, { ...capabilities, transcription: true },
+    { ...capabilities, secret: 'forbidden' }])('rejects incompatible or internally contradictory capabilities %#', value => {
+    expect(() => decodeCapabilities(value)).toThrow();
+  });
+  it.each(['en', 'sv'] as const)('accepts original %s text only with owned session/project and real provenance', language => {
+    const value = realTranscript({ language, text: language === 'sv' ? 'Syntetisk svensk kontraktstext.' : 'Synthetic English contract text.' });
+    expect(decodeTranscript(value, { ...realScope(), language })).toEqual(value);
+  });
+  it.each([
+    { project_id: '10000000-0000-4000-8000-000000000002' }, { session_id: '20000000-0000-4000-8000-000000000002' },
+    { language: 'sv' }, { text: SIMULATED_TRANSCRIPT_NOTICE + 'Fixture' }, { provenance: { mode: 'mock' } }, { status: 'pending' },
+  ])('rejects wrong ownership/language and simulated provenance %#', changes => {
+    expect(() => decodeTranscript({ ...realTranscript(), ...changes }, realScope())).toThrow();
+  });
+  it('keeps strict v1 mock parsing unchanged; real payload never masquerades as a mock transcript', async () => {
+    const f = fixture([realTranscript()]);
+    await expect(listSessionTranscripts({ ...f.scope, expectedLanguage: 'en' })).rejects.toMatchObject({ kind: 'invalid-response' });
+    expect(f.request.mock.calls[0][0]).toContain('/api/v1/');
+  });
+  it('sends only a saved transcript reference and explicit key; validates pending memory evidence linkage', async () => {
+    const f = fixture({ user_message: realMessage(), message: realMessage('assistant'), memories: [realMemory()], mode: 'real' });
+    await expect(sendRealMessage(f.scope, { source_transcript_id: ids.transcript }, ids.key)).resolves.toMatchObject({ mode: 'real' });
+    const [url, init] = f.request.mock.calls[0];
+    expect(url).toBe(`${f.scope.baseUrl}/api/v2/story-sessions/${ids.session}/messages`);
+    expect(JSON.parse(init!.body as string)).toEqual({ source_transcript_id: ids.transcript, language: 'en' });
+    expect(init!.headers).toMatchObject({ Authorization: 'Bearer synthetic.access-token.signature', 'Idempotency-Key': ids.key });
+  });
+  it.each([
+    { memories: [realMemory({ status: 'confirmed' })] },
+    { memories: [realMemory({ source_message_id: ids.assistant })] },
+    { message: realMessage('assistant', { sequence: 4 }) },
+    { message: realMessage('assistant', { project_id: ids.memory }) },
+    { mode: 'mock' }, { clarifications: [] },
+  ])('never accepts auto-confirmation, cross-user turns or extra result envelopes %#', async changes => {
+    const f = fixture({ user_message: realMessage(), message: realMessage('assistant'), memories: [realMemory()], mode: 'real', ...changes });
+    await expect(sendRealMessage(f.scope, { source_transcript_id: ids.transcript }, ids.key)).rejects.toMatchObject({ kind: 'invalid-response', mayHaveWritten: true });
+  });
+  it('keeps source values/evidence immutable during an explicit versioned correction', async () => {
+    const f = fixture(realMemory({ status: 'confirmed', corrected_value: 'A correction', version: 2 }));
+    await expect(reviewRealMemory(f.scope, realMemory(), 'confirmed', 'A correction')).resolves.toMatchObject({ version: 2, corrected_value: 'A correction' });
+    expect(JSON.parse(f.request.mock.calls[0][1]!.body as string)).toEqual({ expected_version: 1, status: 'confirmed', corrected_value: 'A correction' });
+    f.request.mockResolvedValueOnce(response(realMemory({ status: 'confirmed', version: 2, evidence: 'Changed original evidence' })));
+    await expect(reviewRealMemory(f.scope, realMemory(), 'confirmed')).rejects.toMatchObject({ kind: 'invalid-response', mayHaveWritten: true });
+  });
+  it('requires model review, preserves generated prose independent of source sentence concatenation', () => {
+    expect(decodeDraft(realDraft(), realScope()).verification.status).toBe('needs_review');
+    expect(() => decodeDraft({ ...realDraft(), verification: { ...realDraft().verification, status: 'passed' } }, realScope())).toThrow();
+    expect(() => decodeDraft({ ...realDraft(), mode: 'mock' }, realScope())).toThrow();
+  });
+  it('creates a new version only after an explicit generation request with a stable key', async () => {
+    const f = fixture(realDraft()); await generateRealDraft(f.scope, ids.key);
+    expect(JSON.parse(f.request.mock.calls[0][1]!.body as string)).toEqual({ language: 'en', style: 'warm', confirm_generation: true });
+    expect(f.request.mock.calls[0][1]!.headers).toHaveProperty('Idempotency-Key', ids.key);
+  });
+  it('saves edits with optimistic revision and refuses overwritten originals or source snapshots', async () => {
+    const baseline = realDraft(), after = realDraft({ revision: 2, status: 'edited', content: 'An explicit edit.',
+      verification: { ...baseline.verification, method: 'manual_unverified', checked_revision: 2 } });
+    const f = fixture(after); await expect(editRealDraft(f.scope, baseline, after.content)).resolves.toEqual(after);
+    expect(JSON.parse(f.request.mock.calls[0][1]!.body as string)).toEqual({ expected_revision: 1, content: after.content });
+    f.request.mockResolvedValueOnce(response({ ...after, original_content: 'Overwritten' }));
+    await expect(editRealDraft(f.scope, baseline, after.content)).rejects.toMatchObject({ mayHaveWritten: true });
+  });
+  it('does not interpret server availability or missing funding as a fabricated success', async () => {
+    const f = fixture(); f.request.mockResolvedValueOnce(response({ error: { code: 'LIVE_AI_DISABLED', message: 'private provider content' } }, 503));
+    await expect(generateRealDraft(f.scope, ids.key)).rejects.toMatchObject({ kind: 'unavailable', code: 'LIVE_AI_DISABLED', mayHaveWritten: false });
+    expect(f.request).toHaveBeenCalledTimes(1);
+  });
+  it('marks an interrupted dispatched paid action uncertain and never automatically retries', async () => {
+    const f = fixture(); f.request.mockRejectedValueOnce(new Error('private token / path / payload'));
+    await expect(generateRealDraft(f.scope, ids.key)).rejects.toMatchObject({ kind: 'network', mayHaveWritten: true });
+    expect(f.request).toHaveBeenCalledTimes(1);
+  });
+  it('retains a validated server operation ID separately from the client action key after a claimed failure', async () => {
+    const f = fixture(); f.request.mockResolvedValueOnce(response({ error: { code: 'REAL_AI_UNCERTAIN' } }, 503, { 'X-Memy-Operation-Id': ids.memory }));
+    await expect(generateRealDraft(f.scope, ids.key)).rejects.toMatchObject({ operationId: ids.memory, mayHaveWritten: true });
+    expect(f.request.mock.calls[0][1]!.headers).toHaveProperty('Idempotency-Key', ids.key);
+  });
+  it('looks up lost-response actions by kind/key without treating the idempotency key as a server ID', async () => {
+    const f = fixture({ operation_id: ids.memory, project_id: ids.project, session_id: ids.session, kind: 'conversation', status: 'uncertain',
+      created_at: realDate, updated_at: realDate, error_code: null, result: null });
+    await expect(findRealOperation(f.scope, 'conversation', ids.key)).resolves.toMatchObject({ operation_id: ids.memory });
+    expect(f.request.mock.calls[0][0]).toBe(`${f.scope.baseUrl}/api/v2/operations/by-key/conversation/${ids.key}`);
+  });
+  it('preserves only validated owned speech metadata from a completed operation for read-only replay', async () => {
+    const metadata = { speech_id: ids.draft, assistant_message_id: ids.assistant, language: 'en', media_type: 'audio/wav',
+      audio_sha256: '0'.repeat(64), audio_size: 64, expires_at: '2020-10-29T12:00:00Z', status: 'ready' };
+    const f = fixture({ operation_id: ids.memory, project_id: ids.project, session_id: ids.session, kind: 'speech', status: 'completed',
+      created_at: realDate, updated_at: realDate, error_code: null, result: metadata });
+    await expect(getRealOperation(f.scope, ids.memory)).resolves.toMatchObject({ result: metadata });
+    f.request.mockResolvedValueOnce(response({ operation_id: ids.memory, project_id: ids.project, session_id: ids.session, kind: 'speech', status: 'completed',
+      created_at: realDate, updated_at: realDate, error_code: null, result: { ...metadata, language: 'sv' } }));
+    await expect(getRealOperation(f.scope, ids.memory)).rejects.toMatchObject({ kind: 'invalid-response' });
+  });
+  it.each(['AI_RATE_LIMIT', 'AI_USAGE_LIMIT', 'AI_BUSY', 'AUDIO_BUSY'])('preserves %s and honors its shared admission cooldown without retrying', async code => {
+    apiBackoff.activate('synthetic-owner'); const f = fixture();
+    f.request.mockResolvedValueOnce(response({ error: { code } }, 429, { 'Retry-After': '120' }));
+    await expect(generateRealDraft(f.scope, ids.key)).rejects.toMatchObject({ code, retry: { code: 'RATE_LIMITED', retryAfterSeconds: 120 }, mayHaveWritten: false });
+    await expect(generateRealDraft(f.scope, ids.key)).rejects.toMatchObject({ retry: { retryAfterSeconds: 120 } }); expect(f.request).toHaveBeenCalledTimes(1);
+  });
+  it('verifies owned WAV content against the saved hash before returning bytes to native playback', async () => {
+    const wave = new Uint8Array(64); wave.set(new TextEncoder().encode('RIFF')); wave.set(new TextEncoder().encode('WAVE'), 8);
+    const metadata = { speech_id: ids.draft, assistant_message_id: ids.assistant, language: 'en' as const, media_type: 'audio/wav' as const,
+      audio_sha256: '0'.repeat(64), audio_size: 64, expires_at: '2099-10-29T12:00:00Z', status: 'ready' as const };
+    const f = fixture(); f.request.mockResolvedValueOnce(new Response(wave, { headers: { 'Content-Type': 'audio/wav', 'Cache-Control': 'private, no-store' } }));
+    jest.mocked(digest).mockResolvedValueOnce(new Uint8Array(32).buffer);
+    await expect(getRealSpeechAudio(f.scope, metadata)).resolves.toEqual(wave);
+    expect(digest).toHaveBeenCalledWith('SHA-256', expect.any(ArrayBuffer));
+    f.request.mockResolvedValueOnce(new Response(wave, { headers: { 'Content-Type': 'audio/wav', 'Cache-Control': 'private, no-store' } }));
+    jest.mocked(digest).mockResolvedValueOnce(new Uint8Array(32).fill(1).buffer);
+    await expect(getRealSpeechAudio(f.scope, metadata)).rejects.toMatchObject({ kind: 'invalid-response' });
+  });
+  it('keeps additional saved pages reachable through validated offsets', async () => {
+    const f = fixture([realMessage('assistant')]); await getRealMessages(f.scope, 100);
+    expect(f.request.mock.calls[0][0]).toContain('/messages?limit=100&offset=100');
+    expect(() => getRealMessages(f.scope, -1)).toThrow(); expect(() => getRealMessages(f.scope, 1.5)).toThrow();
+  });
+  it.each([null, '', 'sb_publishable_synthetic', 'sb_secret_synthetic', 'token with whitespace'])('rejects absent or key-like Bearer credentials %#', async token => {
+    const f = fixture(); f.scope.getAccessToken = async () => token;
+    await expect(getRealTranscripts(f.scope)).rejects.toMatchObject({ kind: 'authentication' }); expect(f.request).not.toHaveBeenCalled();
+  });
+  it('fences a token resolver after cancellation before dispatch', async () => {
+    const f = fixture(); const controller = new AbortController(); let resolve!: (value: string) => void;
+    f.scope.getAccessToken = () => new Promise(yes => { resolve = yes; });
+    const result = getRealMessages({ ...f.scope, signal: controller.signal }); controller.abort(); resolve('synthetic.token');
+    await expect(result).rejects.toMatchObject({ kind: 'cancelled' }); expect(f.request).not.toHaveBeenCalled();
+  });
+  it('validates safe operation status then reloads owned resources instead of trusting result payload', async () => {
+    const f = fixture({ operation_id: ids.key, project_id: ids.project, session_id: ids.session, kind: 'transcription', status: 'completed',
+      created_at: realDate, updated_at: realDate, error_code: null, result: { not_a_valid_transcript: 'must not be displayed' } });
+    await expect(getRealOperation(f.scope, ids.key)).resolves.toMatchObject({ status: 'completed', result: null });
+    f.request.mockResolvedValueOnce(response({ operation_id: ids.key, project_id: ids.memory, session_id: ids.session, kind: 'transcription', status: 'completed', created_at: realDate, updated_at: realDate, error_code: null, result: null }));
+    await expect(getRealOperation(f.scope, ids.key)).rejects.toMatchObject({ kind: 'invalid-response' });
+  });
+  it.each([getRealTranscripts, getRealMessages, getRealMemories, getRealDrafts])('validates owned bounded list responses %#', async method => {
+    const f = fixture(Array(101).fill(realTranscript())); await expect(method(f.scope)).rejects.toMatchObject({ kind: 'invalid-response' });
+  });
+  it('rejects malformed memory/message data outside turn responses too', () => {
+    expect(() => decodeMemory({ ...realMemory(), corrected_value: 'automatic correction' }, realScope())).toThrow();
+    expect(() => decodeMessage(realMessage('assistant', { role: 'user', sequence: 0 }), realScope())).toThrow();
+  });
+  it('requests revision-specific private PDF bytes and rejects stale revision headers', async () => {
+    const bytes = new TextEncoder().encode('%PDF-1.4\nsynthetic bounded bytes\n%%EOF');
+    const f = fixture(); f.request.mockResolvedValueOnce(new Response(bytes, { headers: { 'Content-Type': 'application/pdf', 'Cache-Control': 'private, no-store', 'X-Memy-Draft-Version': '1', 'X-Memy-Draft-Revision': '1' } }));
+    await expect(exportRealDraft(f.scope, realDraft())).resolves.toEqual(bytes);
+    expect(JSON.parse(f.request.mock.calls[0][1]!.body as string)).toEqual({ expected_revision: 1, include_title_page: true, include_page_numbers: true });
+    f.request.mockResolvedValueOnce(new Response(bytes, { headers: { 'Content-Type': 'application/pdf', 'Cache-Control': 'private, no-store', 'X-Memy-Draft-Version': '1', 'X-Memy-Draft-Revision': '2' } }));
+    await expect(exportRealDraft(f.scope, realDraft())).rejects.toMatchObject({ kind: 'invalid-response' });
+  });
+  it('never accepts a spoken reply for a different assistant message or simulated media', async () => {
+    const f = fixture({ speech_id: ids.key, assistant_message_id: ids.userMessage, language: 'en', media_type: 'audio/wav',
+      audio_sha256: '0'.repeat(64), audio_size: 44, expires_at: '2099-10-29T12:00:00Z', status: 'ready' });
+    await expect(createRealSpeech(f.scope, ids.assistant, ids.key)).rejects.toMatchObject({ kind: 'invalid-response', mayHaveWritten: true });
+  });
+  it('requires explicit recording consent and validates native URI before any request', () => {
+    const f = fixture(), clip = { uri: 'file:///synthetic/recording.m4a', name: 'recording.m4a' as const, type: 'audio/mp4' as const, size: 100, durationMs: 1000 };
+    expect(() => transcribeRealRecording(f.scope, clip, false, ids.key)).toThrow();
+    expect(() => transcribeRealRecording(f.scope, { ...clip, uri: 'https://unowned.example/clip.m4a' }, true, ids.key)).toThrow();
+    expect(f.request).not.toHaveBeenCalled();
+  });
+});

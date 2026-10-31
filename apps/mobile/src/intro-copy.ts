@@ -8,7 +8,7 @@ export const introCopy = {
   en: {
     scenes: [
       { eyebrow: 'Your memories', title: 'Every life has a story.', description: 'Start with the memories you want to tell.', caption: 'A little moment. A familiar place. Begin wherever you like.' },
-      { eyebrow: 'Your voice, your words', title: 'Speak at your own pace.', description: 'Talk or type. Memy helps you tell your story.', caption: 'There is no rush. Your words are always the starting point.' },
+      { eyebrow: 'Your voice, your words', title: 'Speak at your own pace.', description: 'Record a memory. Memy helps you tell your story.', caption: 'There is no rush. Your words are always the starting point.' },
       { eyebrow: 'A book that is yours', title: 'Your memories. Your autobiography.', description: 'Memy can help turn memories you have confirmed into a personal story draft.', caption: 'Review and edit your draft. You decide what belongs in your story.' },
     ],
     next: 'Next',
@@ -27,7 +27,7 @@ export const introCopy = {
   sv: {
     scenes: [
       { eyebrow: 'Dina minnen', title: 'Varje liv har en berättelse.', description: 'Börja med de minnen du vill berätta om.', caption: 'Ett litet ögonblick. En välbekant plats. Börja där du vill.' },
-      { eyebrow: 'Din röst, dina ord', title: 'Prata i din egen takt.', description: 'Prata eller skriv. Memy hjälper dig att berätta din historia.', caption: 'Det är ingen brådska. Dina ord är alltid utgångspunkten.' },
+      { eyebrow: 'Din röst, dina ord', title: 'Prata i din egen takt.', description: 'Spela in ett minne. Memy hjälper dig att berätta din historia.', caption: 'Det är ingen brådska. Dina ord är alltid utgångspunkten.' },
       { eyebrow: 'En bok som är din', title: 'Dina minnen. Din självbiografi.', description: 'Memy kan hjälpa till att göra minnen som du har bekräftat till ett utkast till din egen berättelse.', caption: 'Granska och redigera ditt utkast. Du bestämmer vad som hör till din berättelse.' },
     ],
     next: 'Nästa',

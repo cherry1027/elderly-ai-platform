@@ -53,9 +53,14 @@ function Editor(props: DraftEditingProps) {
   const latest = useRef<DraftEditingState>(emptyEditor());
   // Kept in RAM only. An uncertain retry always uses this exact frozen payload.
   const attempt = useRef<{ baseline: StoryDraft; input: DraftEditInput } | null>(null);
-  const warningOpen = useRef(false);
-  const publish = useCallback((value: DraftEditingState) => { latest.current = value; setState(value); }, []);
-  const clear = useCallback(() => { attempt.current = null; warningOpen.current = false; publish(emptyEditor()); }, [publish]);
+  // Non-content, single-use leave authority. A native Alert callback must not
+  // retain wording or authorize discarding a later edit / revalidated view.
+  const warningSequence = useRef(0), warningOpen = useRef<number | null>(null);
+  const retireWarning = useCallback(() => { warningSequence.current++; warningOpen.current = null; }, []);
+  const publish = useCallback((value: DraftEditingState) => {
+    retireWarning(); latest.current = value; setState(value);
+  }, [retireWarning]);
+  const clear = useCallback(() => { attempt.current = null; publish(emptyEditor()); }, [publish]);
   const fail = useCallback((error: unknown) => {
     const safe = safeError(error);
     if (accessFailure(safe)) { blockedRef.current = true; attempt.current = null; publish({ ...emptyEditor(), phase: 'error', error: safe.kind }); }
@@ -76,23 +81,27 @@ function Editor(props: DraftEditingProps) {
       if (next !== 'active') { activeRef.current = false; cancel(); clear(); }
       else if (!activeRef.current) { activeRef.current = true; reload(); }
     });
-    return () => { aliveRef.current = false; cancel(); attempt.current = null; listener.remove(); };
-  }, [aliveRef, activeRef, cancel, clear, reload]);
+    return () => { aliveRef.current = false; cancel(); attempt.current = null; retireWarning(); listener.remove(); };
+  }, [aliveRef, activeRef, cancel, clear, reload, retireWarning]);
 
   const leave = useCallback(() => {
+    if (!aliveRef.current || !activeRef.current) return;
     const finish = () => {
       if (!aliveRef.current || !activeRef.current) return;
       activeRef.current = false; cancel(); clear(); onBack();
     };
     if (!latest.current.dirty && !attempt.current) { finish(); return; }
-    if (warningOpen.current) return;
-    warningOpen.current = true;
+    if (warningOpen.current !== null) return;
+    const intent = ++warningSequence.current;
+    warningOpen.current = intent;
+    const currentWarning = () => aliveRef.current && activeRef.current &&
+      warningOpen.current === intent && warningSequence.current === intent;
     const copy = draftEditingCopy[language];
     Alert.alert(copy.discardTitle, copy.discardHelp, [
-      { text: copy.stay, style: 'cancel', onPress: () => { warningOpen.current = false; } },
-      { text: copy.discard, style: 'destructive', onPress: () => { warningOpen.current = false; finish(); } },
+      { text: copy.stay, style: 'cancel', onPress: () => { if (currentWarning()) retireWarning(); } },
+      { text: copy.discard, style: 'destructive', onPress: () => { if (!currentWarning()) return; retireWarning(); finish(); } },
     ], { cancelable: false });
-  }, [aliveRef, activeRef, cancel, clear, onBack, language]);
+  }, [aliveRef, activeRef, cancel, clear, onBack, language, retireWarning]);
   useEffect(() => {
     const listener = BackHandler.addEventListener('hardwareBackPress', () => { leave(); return true; });
     return () => listener.remove();

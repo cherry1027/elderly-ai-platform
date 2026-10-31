@@ -88,7 +88,7 @@ function identity(sessionId: unknown, language: unknown): { sessionId: string; l
   return { sessionId: id, language };
 }
 
-function validateRecording(recording: AudioRecording): void {
+export function validateRecording(recording: AudioRecording): void {
   if (!recording || typeof recording !== 'object' || Array.isArray(recording) ||
     recording.name !== 'recording.m4a' || recording.type !== 'audio/mp4' ||
     !Number.isSafeInteger(recording.size) || recording.size < 1 || recording.size > 25_000_000 ||

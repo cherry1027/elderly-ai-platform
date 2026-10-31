@@ -7,7 +7,7 @@ import { usePdfPrivacy, type PdfPrivacyValue } from '../src/exports/PdfPrivacy';
 import { NativePdfError, type PrivatePdfHandle, type PrivatePdfStore } from '../src/exports/native-pdf';
 import { getStoryDraft, generateStoryDraft, editStoryDraft, type StoryDraft } from '../src/api/story-drafts';
 import { getStoryProject, StoryProjectsError, type StoryProject } from '../src/api/story-projects';
-import { downloadStoryPdf, exportStoryPdf, listStoryExports, StoryExportsError, type StoryExport, type StoryPdf } from '../src/api/story-exports';
+import { downloadStoryPdf, exportStoryPdf, listStoryExports, StoryExportsError, type StoryExport, type StoryPdf, type StoryPdfOptions } from '../src/api/story-exports';
 import { patchMemory } from '../src/api/memory-review';
 import { readStoryPreviewEnabled } from '../src/development/story-preview-config';
 
@@ -104,6 +104,74 @@ it.each(['en', 'sv'] as const)('enters with authenticated GET-only reads of the 
   expect(privacy.createStore).toHaveBeenCalledWith('account-a');
   await jest.mocked(getStoryDraft).mock.calls[0][0].getAccessToken(); expect(token).toHaveBeenCalledWith('account-a');
   expect(exportStoryPdf).not.toHaveBeenCalled(); expect(cache.save).not.toHaveBeenCalled(); expect(cache.share).not.toHaveBeenCalled();
+});
+it.each([true, false].flatMap(include_title_page => [true, false].map(include_page_numbers => ({ include_title_page, include_page_numbers }))))(
+  'captures and matches the explicit PDF options $include_title_page / $include_page_numbers', async selected => {
+    jest.mocked(listStoryExports).mockImplementation(async () => ({ items: jest.mocked(exportStoryPdf).mock.calls.length ? [audit(selected)] : [], hasMore: false }));
+    await render(<StoryExports {...props()} />); await ready(); const reads = jest.mocked(getStoryDraft).mock.calls.length;
+    await act(() => ui().onOptionsChange!(selected));
+    expect(ui().pdfOptions).toEqual(selected); expect(ui().optionsLocked).toBe(false);
+    expect(getStoryDraft).toHaveBeenCalledTimes(reads); expect(exportStoryPdf).not.toHaveBeenCalled(); expect(cache.share).not.toHaveBeenCalled();
+    await act(() => ui().onPrepare()); await prepared();
+    expect(jest.mocked(exportStoryPdf).mock.calls[0][0].pdfOptions).toEqual(selected);
+    expect(ui().state.prepared).toMatchObject(selected); expect(ui().optionsLocked).toBe(true);
+    expect(cache.share).not.toHaveBeenCalled();
+  });
+it('cannot change frozen options during an export or while its prepared file awaits explicit sharing', async () => {
+  const pending = deferred<StoryPdf>(), selected = { include_title_page: false, include_page_numbers: false };
+  jest.mocked(exportStoryPdf).mockReturnValueOnce(pending.promise);
+  jest.mocked(listStoryExports).mockImplementation(async () => ({ items: jest.mocked(exportStoryPdf).mock.calls.length ? [audit(selected)] : [], hasMore: false }));
+  await render(<StoryExports {...props()} />); await ready(); const change = ui().onOptionsChange!;
+  await act(() => change(selected)); await act(() => ui().onPrepare());
+  await waitFor(() => expect(exportStoryPdf).toHaveBeenCalledTimes(1));
+  await act(() => change({ include_title_page: true, include_page_numbers: true }));
+  expect(ui().pdfOptions).toEqual(selected); expect(ui().optionsLocked).toBe(true);
+  await act(async () => pending.resolve(pdf())); await prepared();
+  await act(() => change({ include_title_page: true, include_page_numbers: true }));
+  expect(ui().pdfOptions).toEqual(selected); expect(ui().state.prepared).toMatchObject(selected); expect(cache.share).not.toHaveBeenCalled();
+});
+it('ignores an obsolete ready-state option callback instead of overwriting a newer deliberate choice', async () => {
+  await render(<StoryExports {...props()} />); await ready();
+  const oldChange = ui().onOptionsChange!;
+  await act(() => {
+    oldChange({ include_title_page: false, include_page_numbers: true });
+    oldChange({ include_title_page: true, include_page_numbers: false });
+  });
+  expect(ui().pdfOptions).toEqual({ include_title_page: false, include_page_numbers: true });
+  await act(() => oldChange({ include_title_page: true, include_page_numbers: false }));
+  expect(ui().pdfOptions).toEqual({ include_title_page: false, include_page_numbers: true });
+  await act(() => ui().onOptionsChange!({ include_title_page: false, include_page_numbers: false }));
+  expect(ui().pdfOptions).toEqual({ include_title_page: false, include_page_numbers: false });
+  expect(exportStoryPdf).not.toHaveBeenCalled(); expect(downloadStoryPdf).not.toHaveBeenCalled(); expect(cache.share).not.toHaveBeenCalled();
+});
+it('keeps uncertain option choices frozen through read-only reconciliation and the exact explicit retry', async () => {
+  const selected = { include_title_page: false, include_page_numbers: true };
+  jest.mocked(exportStoryPdf).mockRejectedValueOnce(new StoryProjectsError('timeout', undefined, true));
+  jest.mocked(listStoryExports).mockResolvedValue({ items: [], hasMore: false });
+  await render(<StoryExports {...props()} />); await ready(); await act(() => ui().onOptionsChange!(selected));
+  await act(() => ui().onPrepare()); await waitFor(() => expect(ui().state.notice).toBe('uncertain'));
+  await act(() => ui().onOptionsChange!({ include_title_page: true, include_page_numbers: false }));
+  expect(ui().pdfOptions).toEqual(selected); expect(ui().optionsLocked).toBe(true);
+  await act(() => ui().onRefresh()); await ready();
+  expect(exportStoryPdf).toHaveBeenCalledTimes(1); expect(ui().optionsLocked).toBe(true);
+  jest.mocked(listStoryExports).mockImplementation(async () => ({ items: jest.mocked(exportStoryPdf).mock.calls.length >= 2 ? [audit(selected)] : [], hasMore: false }));
+  await act(() => ui().onPrepare()); await prepared();
+  expect(jest.mocked(exportStoryPdf).mock.calls.map(call => call[0].pdfOptions)).toEqual([selected, selected]);
+});
+it('downloads historical options exactly without changing the current preparation choices or creating an export', async () => {
+  const old = audit({ include_title_page: false, include_page_numbers: false, title: 'Original audited title', draft_revision: 1 });
+  jest.mocked(listStoryExports).mockResolvedValue({ items: [old], hasMore: false });
+  await render(<StoryExports {...props()} />); await ready(); await act(() => ui().onDownload(old.export_id)); await prepared();
+  expect(downloadStoryPdf).toHaveBeenCalledWith(expect.objectContaining({ metadata: old }));
+  expect(ui().state.prepared).toEqual(old); expect(ui().pdfOptions).toEqual({ include_title_page: true, include_page_numbers: true });
+  expect(exportStoryPdf).not.toHaveBeenCalled(); expect(cache.share).not.toHaveBeenCalled();
+});
+it.each([null, { include_title_page: 'false', include_page_numbers: true }, { include_title_page: false },
+  { include_title_page: true, include_page_numbers: true, extra: false }])('ignores invalid presentation options without changing scope or writing %#', async invalid => {
+  await render(<StoryExports {...props()} />); await ready();
+  await act(() => ui().onOptionsChange!(invalid as unknown as StoryPdfOptions));
+  expect(ui().pdfOptions).toEqual({ include_title_page: true, include_page_numbers: true });
+  expect(exportStoryPdf).not.toHaveBeenCalled(); expect(downloadStoryPdf).not.toHaveBeenCalled();
 });
 it.each(['RATE_LIMITED', 'API_BUSY'] as const)('%s preserves the export snapshot without automatic reconciliation or sharing', async code => {
   const advice = { code, retryAfterSeconds: 60, retryAt: Date.now() + 60_000 };

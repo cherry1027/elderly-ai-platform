@@ -1,21 +1,21 @@
 import { getComponent } from './component-probe';
 import { nativeNodes } from './native-tree';
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { fireEvent, render, screen, within } from '@testing-library/react-native';
 import { StyleSheet } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import type { AudioTranscript } from '../src/api/audio-transcripts';
 import type { ConversationMessage } from '../src/api/conversation-messages';
 import { RecordingPanel, type AudioPanelState } from '../src/audio/RecordingPanel';
 import { audioCopy } from '../src/audio/audio-copy';
 import { ConversationPanel, type TranscriptConversationState } from '../src/conversation/ConversationPanel';
 import { transcriptConversationCopy } from '../src/conversation/conversation-copy';
-import { Screen } from '../src/components/Screen';
 import { conversationCopy } from '../src/conversation-copy';
 import { ConversationScreen } from '../src/screens/ConversationScreen';
 
-jest.mock('../src/components/Screen', () => {
-  const actual = jest.requireActual<typeof import('../src/components/Screen')>('../src/components/Screen');
+jest.mock('react-native-safe-area-context', () => {
+  const actual = jest.requireActual<typeof import('react-native-safe-area-context')>('react-native-safe-area-context');
   const { observeComponent } = jest.requireActual<typeof import('./component-probe')>('./component-probe');
-  return { ...actual, Screen: observeComponent(actual.Screen) };
+  return { ...actual, SafeAreaView: observeComponent(actual.SafeAreaView) };
 });
 
 const transcript: AudioTranscript = {
@@ -35,18 +35,26 @@ const conversationActions = () => ({ onSelect: jest.fn(), onProcess: jest.fn(), 
 it.each(['en', 'sv'] as const)('puts Stop before saved history and secondary navigation without inventing a prompt in %s', async language => {
   const text = audioCopy[language], actions = recordingActions();
   const onBack = jest.fn(), onSignOut = jest.fn(), onReview = jest.fn();
-  const view = await render(<ConversationScreen language={language} state={{ status: 'ready',
+  await render(<ConversationScreen language={language} state={{ status: 'ready',
     project: { title: 'A fictional story', language }, resumed: true,
     session: { id: transcript.session_id, language } }} onCheck={jest.fn()} onBack={onBack}
     onSignOut={onSignOut} onReviewMemories={onReview}
-    recordingPanel={<RecordingPanel language={language}
-      state={{ ...audioState, phase: 'recording', durationMs: 8000, transcripts: [transcript], historyFailed: true }}
-      {...actions} />} />);
-  const tree = JSON.stringify(view.toJSON());
-  // This nested screen has no bottom root tabs: retain Screen's bottom safe area.
-  expect(getComponent(Screen).props.working).not.toBe(true);
-  expect(tree.indexOf(text.stop)).toBeLessThan(tree.indexOf(transcript.text));
-  expect(tree.indexOf(text.stop)).toBeLessThan(tree.indexOf(conversationCopy[language].review));
+    recordingPanel={<ConversationPanel language={language} state={conversationState} transcripts={[transcript]}
+      {...conversationActions()} composer={<RecordingPanel language={language} presentation="composer"
+        state={{ ...audioState, phase: 'recording', durationMs: 8000, transcripts: [transcript], historyFailed: true }}
+        {...actions} />} />} />);
+  // A fixed bottom composer replaces the old full-page prose-tree order. Its
+  // Stop control never scrolls with history or secondary navigation; safe areas
+  // and independently bounded regions preserve the original reachability intent.
+  expect(getComponent(SafeAreaView).props.edges).toEqual(['top', 'bottom', 'left', 'right']);
+  expect(within(screen.getByTestId('chat-thread-scroll')).queryByRole('button', { name: text.stop })).toBeNull();
+  expect(within(screen.getByTestId('conversation-header-scroll')).queryByRole('button', { name: text.stop })).toBeNull();
+  expect(within(screen.getByTestId('conversation-header-scroll')).getByRole('button', { name: conversationCopy[language].review })).toBeOnTheScreen();
+  expect(within(screen.getByTestId('chat-composer-dock')).getByRole('button', { name: text.stop })).toBeOnTheScreen();
+  expect(within(screen.getByTestId('recording-composer-details')).queryByRole('button', { name: text.stop })).toBeNull();
+  expect(screen.getByTestId('conversation-header-scroll')).toHaveStyle({ maxHeight: '28%' });
+  expect(screen.getByTestId('chat-composer-dock')).toHaveStyle({ maxHeight: '55%' });
+  expect(screen.getAllByText(transcript.text)).toHaveLength(1);
   expect(screen.getByRole('button', { name: text.stop })).toHaveStyle({ minHeight: 56 });
   expect(screen.getByText(text.simulation)).toBeOnTheScreen();
   expect(screen.queryByRole('button', { name: text.start })).toBeNull();
@@ -106,7 +114,9 @@ it.each(['en', 'sv'] as const)('keeps actual saved replies separate from immutab
     selectedId: source.transcript_id, processedIds: [source.transcript_id] }} transcripts={[source]} {...actions} />);
   expect(screen.getByText(text.notice)).toBeOnTheScreen();
   expect(screen.getByText(messages[1].text)).toBeOnTheScreen();
-  expect(screen.queryByText(source.text)).toBeNull();
+  // The unified thread now owns the immutable source once; the saved reply is
+  // still its own backend row, not a fabricated adjacent pair or duplicate.
+  expect(screen.getAllByText(source.text)).toHaveLength(1);
   expect(screen.getByRole('header', { name: text.assistantMessage })).toBeOnTheScreen();
   expect(screen.getByRole('button', { name: text.process })).toBeDisabled();
   expect(screen.queryByText(`${text.reference}: ${source.transcript_id}`)).toBeNull();

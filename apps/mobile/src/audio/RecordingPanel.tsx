@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AccessibilityInfo, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { AccessibilityInfo, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Svg, { Path, Rect } from 'react-native-svg';
 import type { AudioTranscript, AudioUploadDiagnostic } from '../api/audio-transcripts';
 import { useApiBackoff } from '../api/ApiBackoff';
@@ -31,6 +31,7 @@ export interface RecordingPanelProps {
   onUpload: () => void;
   onDiscard: () => void;
   onRetryHistory: () => void;
+  presentation?: 'panel' | 'composer';
 }
 
 function durationLabel(milliseconds: number) {
@@ -51,7 +52,7 @@ function MicrophoneMark({ recording }: { recording: boolean }) {
 
 /** View only: recording, explicit upload consent, file disposal and identity guards belong to the controller. */
 export function RecordingPanel({ language, state, onStart, onStop, onConsentChange, onUpload,
-  onDiscard, onRetryHistory }: RecordingPanelProps) {
+  onDiscard, onRetryHistory, presentation = 'panel' }: RecordingPanelProps) {
   const text = audioCopy[language];
   const { waiting } = useApiBackoff();
   const locale = accessibilityLanguages[language];
@@ -62,23 +63,27 @@ export function RecordingPanel({ language, state, onStart, onStop, onConsentChan
   const canStart = !state.hasRecording && ['idle', 'completed', 'error'].includes(state.phase) &&
     !['configuration', 'authentication', 'access', 'completed-session'].includes(state.error ?? '');
   const status = state.error ? text.errors[state.error] : text.phases[state.phase];
+  const composer = presentation === 'composer';
   useEffect(() => {
     if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(status);
   }, [status]);
 
-  return <View style={styles.panel} accessibilityState={{ busy }}>
+  const content = <>
     <View style={[styles.recordingCard, state.phase === 'recording' && styles.activeCard]}>
-    <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.heading}>{text.title}</Text>
+    {!composer && <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.heading}>{text.title}</Text>}
     {!busy && !state.hasRecording && state.phase !== 'recording' &&
       <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.introduction}</Text>}
-    <MicrophoneMark recording={state.phase === 'recording'} />
+    {!composer && <MicrophoneMark recording={state.phase === 'recording'} />}
     <Text accessibilityRole={state.error ? 'alert' : undefined} accessibilityLanguage={locale}
       accessibilityLiveRegion="polite" allowFontScaling style={styles.body}>{status}</Text>
-    {(state.phase === 'recording' || state.hasRecording) && <Text accessibilityLanguage={locale}
+    {!composer && (state.phase === 'recording' || state.hasRecording) && <Text accessibilityLanguage={locale}
       allowFontScaling style={styles.duration}>{text.duration}: {durationLabel(state.durationMs)}</Text>}
+    {state.hasRecording && <Text accessibilityLanguage={locale} allowFontScaling style={styles.unsent}>
+      {state.phase === 'ready' ? text.unsent : text.localCopy}</Text>}
+    <Text accessibilityLanguage={locale} allowFontScaling style={styles.limit}>{text.limit}</Text>
     {state.phase === 'uncertain' && <Text accessibilityLanguage={locale} allowFontScaling style={styles.notice}>{text.uncertain}</Text>}
-    {canStart && <LargeButton language={language} label={text.start} onPress={onStart} />}
-    {state.phase === 'recording' && <LargeButton language={language} label={text.stop} onPress={onStop} />}
+    {!composer && canStart && <LargeButton language={language} label={text.start} onPress={onStart} />}
+    {!composer && state.phase === 'recording' && <LargeButton language={language} label={text.stop} onPress={onStop} />}
     {canManageRecording && <>
       {canUpload && <>
         <Pressable accessibilityRole="checkbox" accessibilityLabel={text.consent} accessibilityHint={text.consentHint}
@@ -110,7 +115,7 @@ export function RecordingPanel({ language, state, onStart, onStop, onConsentChan
       {!busy && state.phase !== 'recording' && <LargeButton language={language} label={text.retryHistory}
         variant="secondary" disabled={waiting} onPress={onRetryHistory} />}
     </>}
-    {state.transcripts.map(transcript => <View key={transcript.transcript_id} style={styles.transcript}>
+    {!composer && state.transcripts.map(transcript => <View key={transcript.transcript_id} style={styles.transcript}>
       <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.transcriptHeading}>{text.transcriptTitle}</Text>
       <Text accessibilityLanguage={accessibilityLanguages[transcript.language]} allowFontScaling selectable
         style={styles.body}>{transcript.text}</Text>
@@ -130,11 +135,28 @@ export function RecordingPanel({ language, state, onStart, onStop, onConsentChan
           {state.uploadDiagnostic.code ? ' · ' + state.uploadDiagnostic.code : ''}
         </Text>}
       </StoryDisclosure>}
+  </>;
+  if (composer) return <View testID="recording-composer" style={styles.composer} accessibilityState={{ busy }}>
+    {/* Stop is outside the details scroller and comes first, including at large
+        Dynamic Type. Labels/elapsed time/consent can scroll, never cover it. */}
+    {state.phase === 'recording' && <LargeButton language={language} label={text.stop} onPress={onStop} />}
+    {canStart && <LargeButton language={language} label={text.start} onPress={onStart} />}
+    <ScrollView testID="recording-composer-details" style={styles.composerDetails}
+      contentContainerStyle={styles.composerContent} keyboardShouldPersistTaps="handled" alwaysBounceVertical={false}>
+      <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.composerTitle}>{text.title}</Text>
+      {(state.phase === 'recording' || state.hasRecording) && <Text accessibilityLanguage={locale} allowFontScaling
+        style={styles.duration}>{text.duration}: {durationLabel(state.durationMs)}</Text>}
+      {content}
+    </ScrollView>
   </View>;
+  return <View style={styles.panel} accessibilityState={{ busy }}>{content}</View>;
 }
 
 const styles = StyleSheet.create({
   panel: { width: '100%', gap: 18 },
+  composer: { width: '100%', flexShrink: 1, minHeight: 0, gap: 6 },
+  composerTitle: { color: colors.ink, fontSize: 20, lineHeight: 30, fontWeight: '600', flexShrink: 1 },
+  composerDetails: { flexShrink: 1, minHeight: 0 }, composerContent: { gap: 10, paddingBottom: 4 },
   recordingCard: { width: '100%', padding: 18, gap: 16, borderRadius: layout.controlRadius,
     borderWidth: 2, borderColor: colors.border, backgroundColor: colors.paper },
   activeCard: { borderColor: colors.forest },
@@ -144,6 +166,8 @@ const styles = StyleSheet.create({
   heading: { color: colors.ink, fontFamily: headingFont, fontSize: 28, lineHeight: 38, flexShrink: 1 },
   body: { color: colors.ink, fontSize: 22, lineHeight: 32, flexShrink: 1 },
   duration: { color: colors.forest, fontSize: 25, lineHeight: 35, fontWeight: '600' },
+  unsent: { color: colors.forest, fontSize: 21, lineHeight: 31, fontWeight: '700', flexShrink: 1 },
+  limit: { color: colors.muted, fontSize: 18, lineHeight: 28, flexShrink: 1 },
   notice: { color: colors.ink, fontSize: 19, lineHeight: 29, padding: 14,
     borderRadius: 14, backgroundColor: colors.selected },
   consent: { minHeight: layout.minimumTouchTarget, borderWidth: 2, borderColor: colors.forest,

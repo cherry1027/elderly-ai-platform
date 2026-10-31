@@ -4,8 +4,8 @@ import { AccessibilityInfo, Keyboard, KeyboardAvoidingView, Platform, Pressable,
 import type { StoryDraft } from '../api/story-drafts';
 import { useApiBackoff } from '../api/ApiBackoff';
 import type { StoryProjectsErrorKind } from '../api/story-projects';
-import { MemyBrand } from '../components/BrandArtwork';
-import { Screen, screenStyles } from '../components/Screen';
+import { Screen } from '../components/Screen';
+import { StoryHeading } from '../components/StoryPresentation';
 import { accessibilityLanguages, type Language } from '../i18n';
 import { colors, headingFont, layout } from '../theme';
 import { draftEditingCopy } from './draft-editing-copy';
@@ -56,8 +56,11 @@ export function DraftEditorScreen({ language, storyLanguage, title, state, onCha
       : state.phase === 'uncertain' ? text.uncertain : state.phase === 'conflict' ? text.conflict
         : state.phase === 'saved' && state.draft ? text.saved : null;
   const canRetry = visible && state.canRetry && (state.phase === 'uncertain' || state.phase === 'error');
+  const unresolved = state.phase === 'saving' || state.phase === 'uncertain' || state.phase === 'conflict';
   const reveal = useCallback(() => {
-    if (message) scroll.current?.scrollTo({ y: Math.max(0, positions.current.content + positions.current.form + positions.current.notice - 16), animated: false });
+    // Native keyboard-aware scrolling owns the focused field while the keyboard
+    // is visible. Error layout must not pull it underneath the keyboard again.
+    if (message && !Keyboard.isVisible()) scroll.current?.scrollTo({ y: Math.max(0, positions.current.content + positions.current.form + positions.current.notice - 16), animated: false });
   }, [message]);
   useEffect(() => { submitted.current = false; }, [state]);
   useEffect(() => {
@@ -67,7 +70,7 @@ export function DraftEditorScreen({ language, storyLanguage, title, state, onCha
   useEffect(() => {
     if (!message) return;
     if (state.validation || state.error || state.phase === 'conflict' || state.phase === 'uncertain') {
-      Keyboard.dismiss(); reveal();
+      reveal();
     }
     if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(message);
   }, [message, state.validation, state.error, state.phase, reveal]);
@@ -81,10 +84,9 @@ export function DraftEditorScreen({ language, storyLanguage, title, state, onCha
     onSave();
   };
   const act = (callback: () => void) => { Keyboard.dismiss(); callback(); };
-  return <KeyboardAvoidingView style={styles.keyboard} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-    <Screen scrollViewRef={scroll} onContentLayout={event => { positions.current.content = event.nativeEvent.layout.y; reveal(); }}>
-      <MemyBrand />
-      <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={screenStyles.heading}>{text.editorTitle}</Text>
+  return <KeyboardAvoidingView style={styles.keyboard} enabled={Platform.OS !== 'ios'} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+    <Screen working keyboardAware scrollViewRef={scroll} onContentLayout={event => { positions.current.content = event.nativeEvent.layout.y; reveal(); }}>
+      <StoryHeading language={language} title={text.editorTitle} />
       {!accessFailed && <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[storyLanguage]}
         allowFontScaling selectable style={styles.storyTitle}>{title}</Text>}
       <View style={styles.form} accessibilityState={{ busy }} testID="draft-editor-form"
@@ -95,6 +97,11 @@ export function DraftEditorScreen({ language, storyLanguage, title, state, onCha
           onLayout={event => { positions.current.notice = event.nativeEvent.layout.y; reveal(); }}>{message}</Text>}
         {state.phase === 'uncertain' && state.error && <Text accessibilityLanguage={locale} allowFontScaling style={styles.notice}>{text.uncertain}</Text>}
         {visible && <>
+          <View style={styles.status} testID="autobiography-editor-status">
+            <Text accessibilityLanguage={locale} allowFontScaling style={styles.label}>{unresolved ? text.pendingStatus : state.dirty ? text.unsavedStatus : text.savedStatus}</Text>
+            {!unresolved && <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{state.dirty ? text.dirty : text.unchanged}</Text>}
+            <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.generation}: {state.draft!.version} · {text.selectedRevision}: {state.draft!.revision}</Text>
+          </View>
           <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.privacy}</Text>
           <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.preservation}</Text>
           <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>
@@ -112,7 +119,6 @@ export function DraftEditorScreen({ language, storyLanguage, title, state, onCha
             submitBehavior="newline" onSubmitEditing={() => Keyboard.dismiss()}
             onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} style={[styles.input, focused && styles.focused]} />
           <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.help}</Text>
-          {editable && <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{state.dirty ? text.dirty : text.unchanged}</Text>}
           <DraftEditingButton language={language} label={text.done} disabled={busy} onPress={() => Keyboard.dismiss()} />
           {state.phase === 'conflict' && state.compare ? <>
             <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.keepMineHelp}</Text>
@@ -138,6 +144,7 @@ export function DraftEditorScreen({ language, storyLanguage, title, state, onCha
   </KeyboardAvoidingView>;
 }
 const styles = StyleSheet.create({
+  status: { width: '100%', gap: 8, padding: 16, backgroundColor: colors.selected, borderRadius: layout.controlRadius },
   keyboard: { flex: 1 }, form: { width: '100%', gap: 24 }, comparison: { width: '100%', gap: 16, padding: 16,
     borderWidth: 2, borderColor: colors.forest, borderRadius: layout.controlRadius, backgroundColor: colors.selected },
   storyTitle: { color: colors.ink, fontFamily: headingFont, fontSize: 30, lineHeight: 40, textAlign: 'center', flexShrink: 1 },
@@ -145,7 +152,7 @@ const styles = StyleSheet.create({
   label: { color: colors.ink, fontSize: 22, lineHeight: 32, fontWeight: '600', flexShrink: 1 },
   help: { color: colors.muted, fontSize: 20, lineHeight: 30, flexShrink: 1 },
   input: { width: '100%', minHeight: 260, borderWidth: 2, borderColor: colors.border, borderRadius: layout.controlRadius,
-    backgroundColor: colors.paper, color: colors.ink, fontSize: 22, lineHeight: 34, padding: 16 },
+    backgroundColor: colors.paper, color: colors.ink, fontFamily: headingFont, fontSize: 24, lineHeight: 38, padding: 20 },
   notice: { color: colors.ink, fontSize: 22, lineHeight: 32, padding: 16, borderWidth: 2,
     borderColor: colors.forest, borderRadius: layout.controlRadius, backgroundColor: colors.paper },
   button: { width: '100%', minHeight: layout.minimumTouchTarget, paddingVertical: 16, paddingHorizontal: 24,

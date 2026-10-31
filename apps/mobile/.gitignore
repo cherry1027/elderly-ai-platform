@@ -7,5 +7,6 @@ coverage/
 .env.*
 development.auth.local.json
 development.api.local.json
+real-ai.api.local.json
 *.log
 expo-env.d.ts

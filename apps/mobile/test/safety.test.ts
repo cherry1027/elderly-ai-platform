@@ -13,9 +13,11 @@ const sources = sourceFiles(path.join(appRoot, 'src'));
 const source = sources.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
 const authSources = sources.filter((file) => file.startsWith(path.join(appRoot, 'src/auth') + path.sep));
 const authSource = authSources.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
-const apiSources = sources.filter((file) => file.startsWith(path.join(appRoot, 'src/api') + path.sep));
+const realServiceFiles = ['api.ts', 'config.ts'].map(name => path.join(appRoot, 'src/real-ai', name));
+const apiSources = sources.filter((file) => file.startsWith(path.join(appRoot, 'src/api') + path.sep) || realServiceFiles.includes(file));
 const apiSource = apiSources.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
-const presentationSource = sources.filter((file) => !authSources.includes(file) && !apiSources.includes(file) && !file.endsWith(path.join('audio', 'native-recorder.ts'))).map((file) => fs.readFileSync(file, 'utf8')).join('\n');
+const nativeAdapters = [path.join(appRoot, 'src/audio/native-recorder.ts'), path.join(appRoot, 'src/real-ai/native-playback.ts')];
+const presentationSource = sources.filter((file) => !authSources.includes(file) && !apiSources.includes(file) && !nativeAdapters.includes(file)).map((file) => fs.readFileSync(file, 'utf8')).join('\n');
 const manifest = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
 const config = JSON.parse(fs.readFileSync(path.join(appRoot, 'app.json'), 'utf8')).expo;
 
@@ -38,7 +40,7 @@ describe('development-only mobile application boundaries', () => {
   it('imports only local native UI, Router and platform modules', () => {
     // Expo Router's published navigation types describe the existing native stack;
     // permit this exact SDK subpath, without allowing arbitrary external imports.
-    const allowed = new Set(['react', 'react-native', 'react-native-svg', 'react-native-safe-area-context', 'expo-router', 'expo-router/react-navigation', 'expo-status-bar', 'expo-constants', 'expo-secure-store', 'expo-audio', 'expo-file-system', 'expo-crypto', '@supabase/supabase-js', '@react-native-async-storage/async-storage']);
+    const allowed = new Set(['react', 'react-native', 'react-native-svg', 'react-native-safe-area-context', 'expo-router', 'expo-router/react-navigation', 'expo-status-bar', 'expo-constants', 'expo-secure-store', 'expo-audio', 'expo-file-system', 'expo-crypto', 'expo/fetch', '@supabase/supabase-js', '@react-native-async-storage/async-storage']);
     const imports = [...source.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((match) => match[1]);
     expect(imports.length).toBeGreaterThan(0);
     for (const name of imports) expect(name.startsWith('.') || allowed.has(name)).toBe(true);

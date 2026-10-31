@@ -174,6 +174,7 @@ const appRoot = path.resolve(__dirname, '..');
 const configSource = fs.readFileSync(path.join(appRoot, 'app.config.cjs'), 'utf8');
 const authSource = fs.readFileSync(path.join(appRoot, 'scripts/auth-config.cjs'), 'utf8');
 const apiSource = fs.readFileSync(path.join(appRoot, 'scripts/api-config.cjs'), 'utf8');
+const realAiSource = fs.readFileSync(path.join(appRoot, 'scripts/real-ai-config.cjs'), 'utf8');
 const launcherSource = fs.readFileSync(path.join(appRoot, 'scripts/run.cjs'), 'utf8');
 const identity = { name: 'Synthetic app', slug: 'synthetic-memy', scheme: 'memy-foundation' };
 
@@ -191,6 +192,7 @@ function evaluateAppConfig(environment: Record<string, string>, read: jest.Mock 
   const configure = load(configSource, {
     './scripts/auth-config.cjs': load(authSource, modules),
     './scripts/api-config.cjs': load(apiSource, modules),
+    './scripts/real-ai-config.cjs': load(realAiSource, { ...modules, './api-config.cjs': load(apiSource, modules) }),
   }) as (input: { config: typeof identity & { extra: unknown } }) => typeof identity & { extra: Record<string, unknown> };
   const result = configure({ config: { ...identity, extra: { unapprovedInheritedSetting: true } } });
   return { result, read };
@@ -205,6 +207,33 @@ function syntheticLocalRead() {
     throw new Error('Unexpected local configuration path.');
   });
 }
+
+describe('protected real-v2 launcher selection', () => {
+  it('uses the explicit real contract and keeps v1 CRUD on the same approved origin', () => {
+    const { environment } = launchEnvironment('start-real', {});
+    expect(environment.MEMY_MOBILE_REAL_AI).toBe('1'); expect(environment.MEMY_MOBILE_AUTH_MODE).toBe('development');
+    const read = syntheticLocalRead();
+    const previous = read.getMockImplementation()!;
+    read.mockImplementation(filename => filename === path.join(appRoot, 'real-ai.api.local.json')
+      ? JSON.stringify({ baseUrl: normalReady.memyDevelopmentApi.baseUrl, apiContract: 'real-v2' }) : previous(filename));
+    const { result } = evaluateAppConfig(environment, read);
+    expect(result.extra.memyRealAiRequested).toBe(true);
+    expect(result.extra.memyRealAiApi).toEqual({ enabled: true, baseUrl: normalReady.memyDevelopmentApi.baseUrl, apiContract: 'real-v2' });
+    expect(result.extra.memyDevelopmentApi).toEqual(normalReady.memyDevelopmentApi);
+  });
+  it('fails closed with missing real configuration even when a working legacy mock URL exists', () => {
+    const { environment } = launchEnvironment('start-real', {});
+    const { result } = evaluateAppConfig(environment, syntheticLocalRead());
+    expect(result.extra.memyRealAiRequested).toBe(true); expect(result.extra.memyDevelopmentApi).toEqual({ enabled: false });
+    expect(result.extra.memyRealAiApi).toBeUndefined(); expect(result.extra.memyStoryPreviewEnabled).toBe(false);
+  });
+  it('never lets inherited real/provider flags activate a verification export', () => {
+    const { environment } = launchEnvironment('bundle-ios', { MEMY_MOBILE_REAL_AI: '1' });
+    expect(environment.MEMY_MOBILE_REAL_AI).toBeUndefined();
+    const { result, read } = evaluateAppConfig(environment);
+    expect(result.extra.memyRealAiRequested).toBeUndefined(); expect(read).not.toHaveBeenCalled();
+  });
+});
 function launchEnvironment(action: string, inherited: Record<string, string>) {
   const spawnSync = jest.fn(() => ({ status: 0 }));
   const exit = new Error('Synthetic launcher exit.');
@@ -252,7 +281,7 @@ describe('sample app configuration with mocked filesystem only', () => {
     expect(result.extra.memyStoryPreviewEnabled).toBe(false);
     expect(result.extra.memyDevelopmentAuth).toEqual(expect.objectContaining({ enabled: true }));
     expect(result.extra.memyDevelopmentApi).toEqual(expect.objectContaining({ enabled: true }));
-    expect(read).toHaveBeenCalledTimes(2);
+    expect(read).toHaveBeenCalledTimes(3);
     expect(result.name).toBe(identity.name); expect(result.slug).toBe(identity.slug); expect(result.scheme).toBe(identity.scheme);
   });
 });
@@ -274,6 +303,7 @@ describe('protected launcher to app-config handoff with synthetic local settings
     expect(result.slug).toBe(identity.slug); expect(result.scheme).toBe(identity.scheme);
     expect(read.mock.calls.map(([filename]) => filename).sort()).toEqual([
       path.join(appRoot, 'development.api.local.json'), path.join(appRoot, 'development.auth.local.json'),
+      path.join(appRoot, 'real-ai.api.local.json'),
     ].sort());
     await withExtra(result.extra, () => expect(readStoryPreviewEnabled()).toBe(false));
   });
@@ -350,6 +380,7 @@ describe('SDK 58 CLI NODE_ENV changes do not grant configuration authority', () 
       expect(result.extra).toEqual(normalReady); expect(result.extra.memyStoryPreviewEnabled).toBe(false);
       expect(read.mock.calls.map(([filename]) => filename).sort()).toEqual([
         path.join(appRoot, 'development.auth.local.json'), path.join(appRoot, 'development.api.local.json'),
+        path.join(appRoot, 'real-ai.api.local.json'),
       ].sort());
       // Production-looking NODE_ENV never adds a production endpoint or a root
       // .env read. The only two reads above are supplied by the in-memory stub.

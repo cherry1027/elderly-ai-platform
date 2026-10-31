@@ -1,7 +1,7 @@
 
 import { downloadStoryPdf, exportStoryPdf, listStoryExports, StoryExportsError,
   type DownloadStoryPdfOptions, type ExportStoryPdfOptions, type ListStoryExportsOptions,
-  type StoryExport } from '../src/api/story-exports';
+  type StoryExport, type StoryPdfOptions } from '../src/api/story-exports';
 import type { StoryDraft } from '../src/api/story-drafts';
 
 const baseUrl = 'http://192.168.20.40:8000', projectId = '10000000-0000-4000-8000-000000000001';
@@ -52,6 +52,27 @@ async function flush() { for (let i = 0; i < 15; i++) await Promise.resolve(); }
 afterEach(() => jest.useRealTimers());
 
 describe('private PDF shared transport', () => {
+  it.each([true, false].flatMap(include_title_page => [true, false].map(include_page_numbers => ({ include_title_page, include_page_numbers }))))(
+    'sends only the selected supported PDF options $include_title_page / $include_page_numbers', async pdfOptions => {
+      const f = fixture(); await f.create({ pdfOptions });
+      expect(JSON.parse(f.request.mock.calls[0][1]!.body as string)).toEqual({ format: 'pdf', ...pdfOptions });
+      expect(f.request).toHaveBeenCalledTimes(1);
+    });
+  it.each([null, true, [], {}, { include_title_page: 'false', include_page_numbers: true },
+    { include_title_page: true, include_page_numbers: 0 }, { include_title_page: null, include_page_numbers: true },
+    { include_title_page: false, include_page_numbers: true, template: 'premium' }])('rejects malformed PDF options before authentication %#', async value => {
+    const f = fixture();
+    await expect(f.create({ pdfOptions: value as unknown as StoryPdfOptions })).rejects.toMatchObject({ kind: 'validation' });
+    expect(f.getAccessToken).not.toHaveBeenCalled(); expect(f.request).not.toHaveBeenCalled();
+  });
+  it('freezes the chosen options before delayed authentication instead of reading later UI changes', async () => {
+    const f = fixture(), pdfOptions = { include_title_page: false, include_page_numbers: true };
+    let allow!: (value: string | null) => void;
+    f.getAccessToken.mockImplementationOnce(() => new Promise(resolve => { allow = resolve; }));
+    const pending = f.create({ pdfOptions }); pdfOptions.include_title_page = true; pdfOptions.include_page_numbers = false;
+    allow(token); await pending;
+    expect(JSON.parse(f.request.mock.calls[0][1]!.body as string)).toEqual({ format: 'pdf', include_title_page: false, include_page_numbers: true });
+  });
   it('POSTs only fixed approved options and returns validated actual binary', async () => {
     const f = fixture(), result = await f.create();
     expect(result).toEqual({ exportId, draftVersion: 1, draftRevision: 1, pageCount: 2, filename, bytes: pdfBytes });

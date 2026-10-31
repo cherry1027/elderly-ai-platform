@@ -18,6 +18,8 @@ import { AuthenticatedShell } from '../navigation/AuthenticatedShell';
 import { HomeScreen } from '../screens/HomeScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import type { RootTab } from '../root-navigation-copy';
+import { readRealAiConfig, readRealAiRequested } from '../real-ai/config';
+import { RealStoryWorkspace } from '../real-ai/RealStoryWorkspace';
 
 interface Props {
   language: Language;
@@ -45,6 +47,8 @@ export function StoriesHome(props: Props) {
 }
 function StoryViews(props: Props) {
   const [view, setView] = useState<View>(() => rootView(props.initialRootTab ?? 'home'));
+  const [realConfig] = useState(readRealAiConfig);
+  const [realRequested] = useState(readRealAiRequested);
   const currentView = useRef(view);
   const selectedGenerations = useRef(new Map<string, string>());
   const navigationEpoch = useRef(0), alive = useRef(true), focused = useRef(false);
@@ -129,6 +133,11 @@ function StoryViews(props: Props) {
   const scopedProps = { ...props, onSignOut: signOut };
   if (view.kind === 'inactive' || view.kind === 'returning') return <PreferenceLoading language={props.language} />;
   if (view.kind === 'create') return <CreateStory {...scopedProps} onBack={showList} />;
+  if (realConfig && (view.kind === 'conversation' || view.kind === 'generation')) return <RealStoryWorkspace
+    {...scopedProps} config={realConfig} project={view.project}
+    initialTab={view.kind === 'generation' ? 'book' : view.reviewOnOpen ? 'memories' : 'chat'}
+    initialDraftId={view.kind === 'generation' ? view.initialDraftId : view.returnDraftId}
+    onBack={() => showDetails(view.project.id)} />;
   if (view.kind === 'generation') return <GenerateStory {...scopedProps} project={view.project} initialDraftId={view.initialDraftId}
     onBack={() => showDetails(view.project.id)}
     onSelectionChange={draftId => {
@@ -163,7 +172,8 @@ function StoryViews(props: Props) {
     navigate(view, rootView(next));
   };
   return <AuthenticatedShell language={props.language} tab={tab} onSelectTab={selectTab}>
-    {view.kind === 'home' ? <HomeScreen language={props.language} onOpenStories={showList} onCreateStory={showCreate} />
+    {view.kind === 'home' ? <HomeScreen language={props.language} onOpenStories={showList} onCreateStory={showCreate}
+      apiContract={realRequested ? 'real-v2' : undefined} />
       : view.kind === 'settings' ? <SettingsScreen language={props.language} user={user}
         onSelectLanguage={language => {
           if (alive.current && focused.current && currentView.current === view) props.onSelectLanguage(language);

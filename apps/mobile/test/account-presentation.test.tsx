@@ -18,7 +18,7 @@ it.each(['primary', 'secondary', 'quiet'] as const)('%s account action keeps a c
   expect(native).toBeDefined();
   const style = native!.props.style;
   if (typeof style !== 'function') throw new Error('Expected the actual Pressable style callback.');
-  const pressed = StyleSheet.flatten(style({ pressed: true }));
+  const pressed = StyleSheet.flatten(style({ pressed: true, hovered: false }));
   if (!pressed) throw new Error('Expected actual pressed native styles.');
   expect(pressed.backgroundColor).toBe(variant === 'primary' ? colors.forestPressed : colors.selected);
   expect(screen.getByText('Log In')).toHaveStyle({ color: variant === 'primary' ? colors.paper : colors.forest });

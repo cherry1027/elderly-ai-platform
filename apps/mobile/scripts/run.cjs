@@ -4,6 +4,7 @@ const { spawnSync } = require('node:child_process');
 const appRoot = path.resolve(__dirname, '..');
 const actions = {
   start: ['expo/bin/cli', ['start', '--go', '--lan']],
+  'start-real': ['expo/bin/cli', ['start', '--go', '--lan']],
   android: ['expo/bin/cli', ['start', '--go', '--lan', '--android']],
   'preview-stories': ['expo/bin/cli', ['start', '--go', '--lan']],
   typecheck: ['typescript/bin/tsc', ['--noEmit']],
@@ -20,7 +21,7 @@ if (!action) {
   console.error('Choose a supported mobile command.');
   process.exit(1);
 }
-const interactive = ['start', 'android', 'preview-stories'].includes(actionName);
+const interactive = ['start', 'start-real', 'android', 'preview-stories'].includes(actionName);
 let forwarded = process.argv.slice(3);
 let toolArguments = action[1];
 if (interactive) {
@@ -58,7 +59,7 @@ const childEnv = {
 // settings enter only through the validated mobile-local JSON configuration.
 for (const key of Object.keys(childEnv)) {
   const normalized = key.toUpperCase();
-  if (normalized.startsWith('EXPO_PUBLIC_') || ['MEMY_MOBILE_STORY_PREVIEW', 'MEMY_MOBILE_AUTH_MODE', 'EXPO_OFFLINE', 'RCT_METRO_PORT'].includes(normalized)) delete childEnv[key];
+  if (normalized.startsWith('EXPO_PUBLIC_') || ['MEMY_MOBILE_REAL_AI', 'MEMY_MOBILE_STORY_PREVIEW', 'MEMY_MOBILE_AUTH_MODE', 'EXPO_OFFLINE', 'RCT_METRO_PORT'].includes(normalized)) delete childEnv[key];
 }
 childEnv.MEMY_MOBILE_AUTH_MODE = 'verification';
 // LAN hosting and Expo's offline option are mutually exclusive. Clear even an
@@ -67,11 +68,12 @@ if (interactive) {
   delete childEnv.EXPO_OFFLINE;
   if (actionName === 'preview-stories') childEnv.MEMY_MOBILE_STORY_PREVIEW = '1';
   else childEnv.MEMY_MOBILE_AUTH_MODE = 'development';
+  if (actionName === 'start-real') childEnv.MEMY_MOBILE_REAL_AI = '1';
 } else {
   childEnv.EXPO_OFFLINE = '1';
 }
 if (interactive) {
-  console.log(actionName === 'preview-stories' ? 'MEMY SAMPLE STORIES PREVIEW' : 'MEMY NORMAL APP');
+  console.log(actionName === 'preview-stories' ? 'MEMY SAMPLE STORIES PREVIEW' : actionName === 'start-real' ? 'MEMY REAL AI APP (server activation required)' : 'MEMY NORMAL APP');
   console.log('Scan the NEW QR code shown in this terminal. An older QR code can open a different running preview.');
 }
 const result = spawnSync(process.execPath, [

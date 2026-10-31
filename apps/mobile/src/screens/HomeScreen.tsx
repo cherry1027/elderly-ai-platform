@@ -7,9 +7,9 @@ import { RootScreenHeading } from '../navigation/AuthenticatedShell';
 import { rootNavigationCopy } from '../root-navigation-copy';
 import { colors } from '../theme';
 
-interface Props { language: Language; onOpenStories: () => void; onCreateStory: () => void }
+interface Props { language: Language; onOpenStories: () => void; onCreateStory: () => void; apiContract?: 'real-v2' }
 /** Local orientation, never a second dashboard or an inferred recent story. */
-export function HomeScreen({ language, onOpenStories, onCreateStory }: Props) {
+export function HomeScreen({ language, onOpenStories, onCreateStory, apiContract }: Props) {
   const text = rootNavigationCopy[language], locale = accessibilityLanguages[language];
   return <Screen working>
     <View style={styles.composition}>
@@ -22,7 +22,7 @@ export function HomeScreen({ language, onOpenStories, onCreateStory }: Props) {
         <LargeButton language={language} label={text.createStory} variant="secondary" onPress={onCreateStory} />
       </View>
       <View style={styles.artwork}><MemoryBookArtwork /></View>
-      <Text accessibilityLanguage={locale} allowFontScaling style={styles.note}>{text.simulation}</Text>
+      <Text accessibilityLanguage={locale} allowFontScaling style={styles.note}>{apiContract === 'real-v2' ? text.realAvailability : text.simulation}</Text>
     </View>
   </Screen>;
 }

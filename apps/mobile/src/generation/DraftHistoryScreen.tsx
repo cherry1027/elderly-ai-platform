@@ -3,8 +3,8 @@ import { AccessibilityInfo, Platform, ScrollView, StyleSheet, Text, View } from 
 import type { StoryDraft, StoryEdit } from '../api/story-drafts';
 import { useApiBackoff } from '../api/ApiBackoff';
 import type { StoryProjectsErrorKind } from '../api/story-projects';
-import { MemyBrand } from '../components/BrandArtwork';
-import { Screen, screenStyles } from '../components/Screen';
+import { Screen } from '../components/Screen';
+import { StoryHeading } from '../components/StoryPresentation';
 import { accessibilityLanguages, type Language } from '../i18n';
 import { colors, headingFont, layout } from '../theme';
 import { DraftEditingButton } from './DraftEditorScreen';
@@ -44,9 +44,8 @@ function DraftHistoryView({ language, storyLanguage, title, state, onLoadMore, o
     setSelected(next);
     if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(text.item + ' ' + (next + 1) + ' ' + text.of + ' ' + state.items.length);
   };
-  return <Screen scrollViewRef={scroll} onContentLayout={event => { contentY.current = event.nativeEvent.layout.y; }}>
-    <MemyBrand />
-    <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={screenStyles.heading}>{text.historyTitle}</Text>
+  return <Screen working scrollViewRef={scroll} onContentLayout={event => { contentY.current = event.nativeEvent.layout.y; }}>
+    <StoryHeading language={language} title={text.historyTitle} />
     {!accessFailed && <Text accessibilityRole="header" accessibilityLanguage={contentLocale} allowFontScaling selectable style={styles.storyTitle}>{title}</Text>}
     <View style={styles.panel} accessibilityState={{ busy }} onLayout={event => { panelY.current = event.nativeEvent.layout.y; }}>
       <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.historyIntro}</Text>
@@ -59,6 +58,9 @@ function DraftHistoryView({ language, storyLanguage, title, state, onLoadMore, o
           {text.language}: {storyLanguage === 'sv' ? text.swedish : text.english}
         </Text>
         <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.loadedOnly}</Text>
+        <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.historySeparation}</Text>
+        <Text accessibilityLanguage={locale} allowFontScaling style={styles.label}>{text.generation}: {state.draft.version}</Text>
+        <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.selectedRevision}: {state.draft.revision}</Text>
         {state.bounded && <Text accessibilityLanguage={locale} allowFontScaling style={styles.notice}>{text.historyBounded}</Text>}
         <DraftEditingButton language={language} label={originalOpen ? text.hideOriginal : text.showOriginal} expanded={originalOpen}
           onPress={() => setOriginalOpen(open => !open)} />

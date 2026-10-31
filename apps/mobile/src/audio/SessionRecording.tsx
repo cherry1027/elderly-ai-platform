@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { Alert, AppState } from 'react-native';
+import { Alert, AppState, ScrollView } from 'react-native';
 import { listSessionTranscripts, uploadSessionRecording, AudioTranscriptError,
   type AudioRecording } from '../api/audio-transcripts';
 import { StoryProjectsError } from '../api/story-projects';
@@ -74,6 +74,14 @@ const RecordingScope = forwardRef<SessionRecordingHandle, Props>(function Record
   const upload = useRef<AbortController | null>(null);
   const history = useRef<AbortController | null>(null);
   const historyVersion = useRef(0);
+  // Native alerts can outlive the view/lifecycle that opened them. Their
+  // authority is single-use and never transfers to a later recording or prompt.
+  const warningSequence = useRef(0);
+  const warningOpen = useRef<number | null>(null);
+  const retireWarning = () => { warningSequence.current += 1; warningOpen.current = null; };
+  const dismissWarning = (intent: number) => {
+    if (warningOpen.current === intent && warningSequence.current === intent) retireWarning();
+  };
   const enabled = !!baseUrl && !readStoryPreviewEnabled();
   const update = (patch: Partial<AudioPanelState>) => {
     stateRef.current = { ...stateRef.current, ...patch };
@@ -86,6 +94,7 @@ const RecordingScope = forwardRef<SessionRecordingHandle, Props>(function Record
     if (item && driver.current) await driver.current.discard(item.recording).catch(() => {});
   };
   const shutdown = () => {
+    retireWarning();
     alive.current = false;
     epoch.current += 1;
     upload.current?.abort();
@@ -152,6 +161,7 @@ const RecordingScope = forwardRef<SessionRecordingHandle, Props>(function Record
 
   const stop = async () => {
     if (!alive.current || stateRef.current.phase !== 'recording' || !driver.current) return;
+    retireWarning();
     const version = epoch.current;
     update({ phase: 'stopping' });
     const recorder = driver.current;
@@ -174,6 +184,7 @@ const RecordingScope = forwardRef<SessionRecordingHandle, Props>(function Record
       try {
         const status = driver.current?.getStatus();
         if (!status || status.interrupted) {
+          retireWarning();
           update({ phase: 'error', error: 'recording-interrupted' });
           const recorder = driver.current;
           driver.current = null;
@@ -193,6 +204,7 @@ const RecordingScope = forwardRef<SessionRecordingHandle, Props>(function Record
   const start = async () => {
     if (!alive.current || !enabled || !baseUrl || pending.current ||
       !['idle', 'completed', 'error'].includes(stateRef.current.phase)) return;
+    retireWarning();
     const version = epoch.current;
     // Ref state changes synchronously, before either a second tap or permission await.
     update({ phase: 'permission', error: undefined, durationMs: 0, consent: false, canRetry: false, uploadDiagnostic: undefined });
@@ -226,6 +238,7 @@ const RecordingScope = forwardRef<SessionRecordingHandle, Props>(function Record
     if (!alive.current || !enabled || !baseUrl || !item || !stateRef.current.consent ||
       !['ready', 'uncertain', 'error'].includes(stateRef.current.phase) || upload.current ||
       (['error', 'uncertain'].includes(stateRef.current.phase) && !stateRef.current.canRetry)) return;
+    retireWarning();
     const version = epoch.current;
     const controller = new AbortController();
     upload.current = controller;
@@ -255,41 +268,57 @@ const RecordingScope = forwardRef<SessionRecordingHandle, Props>(function Record
     }
   };
   const discard = () => {
-    if (!alive.current || !pending.current || ['uploading', 'stopping'].includes(stateRef.current.phase)) return;
+    if (!alive.current || !pending.current || warningOpen.current !== null || ['uploading', 'stopping'].includes(stateRef.current.phase)) return;
+    const item = pending.current, version = epoch.current;
+    const intent = ++warningSequence.current;
+    warningOpen.current = intent;
+    const currentWarning = () => current(version) && warningOpen.current === intent &&
+      warningSequence.current === intent && pending.current === item && !upload.current;
     const uncertain = stateRef.current.phase === 'uncertain';
     Alert.alert(language === 'sv' ? 'Ta bort inspelningen?' : 'Discard recording?',
       uncertain
         ? language === 'sv' ? 'Uppladdningen kan redan ha behandlats. Det här tar bara bort den lokala inspelningen och möjligheten att försöka igen.'
           : 'The upload may already have been processed. This removes only the local recording and the ability to retry it.'
         : language === 'sv' ? 'Din inspelning tas bort från den här enheten.' : 'Your recording will be removed from this device.',
-      [{ text: language === 'sv' ? 'Behåll' : 'Keep', style: 'cancel' },
+      [{ text: language === 'sv' ? 'Behåll' : 'Keep', style: 'cancel', onPress: () => dismissWarning(intent) },
         { text: language === 'sv' ? 'Ta bort' : 'Discard', style: 'destructive', onPress: () => {
-          if (!alive.current || upload.current) return;
+          if (!currentWarning()) return;
+          retireWarning();
           update({ phase: 'stopping' });
           void clearLocal().finally(() => {
-            if (alive.current) update({ phase: 'idle', durationMs: 0, hasRecording: false, consent: false, error: undefined, uploadDiagnostic: undefined });
+            if (current(version)) update({ phase: 'idle', durationMs: 0, hasRecording: false, consent: false, error: undefined, uploadDiagnostic: undefined });
           });
-        } }]);
+        } }], { onDismiss: () => dismissWarning(intent) });
   };
   useImperativeHandle(ref, () => ({
     requestLeave(proceed) {
       if (!alive.current) { proceed(); return; }
       const leave = () => { if (!alive.current) return; shutdown(); proceed(); };
       if (!pending.current && !['permission', 'preparing', 'recording', 'stopping'].includes(stateRef.current.phase)) { leave(); return; }
+      if (warningOpen.current !== null) return;
+      const item = pending.current, version = epoch.current;
+      const intent = ++warningSequence.current;
+      warningOpen.current = intent;
+      const currentWarning = () => current(version) && warningOpen.current === intent &&
+        warningSequence.current === intent && pending.current === item;
       Alert.alert(language === 'sv' ? 'Lämna inspelningen?' : 'Leave recording?',
         language === 'sv'
           ? 'Den lokala inspelningen tas bort. En påbörjad uppladdning kan redan ha behandlats; du kan se sparade simuleringar när du kommer tillbaka.'
           : 'The local recording will be removed. A started upload may already have been processed; saved simulations can be checked when you return.',
-        [{ text: language === 'sv' ? 'Stanna' : 'Stay', style: 'cancel' },
-          { text: language === 'sv' ? 'Lämna' : 'Leave', style: 'destructive', onPress: leave }]);
+        [{ text: language === 'sv' ? 'Stanna' : 'Stay', style: 'cancel', onPress: () => dismissWarning(intent) },
+          { text: language === 'sv' ? 'Lämna' : 'Leave', style: 'destructive', onPress: () => {
+            if (!currentWarning()) return;
+            retireWarning(); leave();
+          } }], { onDismiss: () => dismissWarning(intent) });
     },
   }));
-  return <><RecordingPanel language={language} state={state} onStart={() => { void start(); }}
+  const composer = <RecordingPanel language={language} state={state} presentation={enabled ? 'composer' : 'panel'} onStart={() => { void start(); }}
     onStop={() => { void stop(); }} onConsentChange={consent => {
       if (alive.current && pending.current && ['ready', 'error', 'uncertain'].includes(stateRef.current.phase)) update({ consent });
-    }} onUpload={() => { void send(); }} onDiscard={discard} onRetryHistory={loadHistory} />
-    {enabled && <TranscriptConversation language={language} ownerId={ownerId} projectId={projectId}
+    }} onUpload={() => { void send(); }} onDiscard={discard} onRetryHistory={loadHistory} />;
+  return enabled ? <TranscriptConversation language={language} ownerId={ownerId} projectId={projectId}
       sessionId={sessionId} sessionLanguage={sessionLanguage} baseUrl={baseUrl}
-      getAccessToken={getAccessToken} transcripts={state.transcripts} />}
-  </>;
+      getAccessToken={getAccessToken} transcripts={state.transcripts} composer={composer} /> :
+    <ScrollView testID="disabled-recording-scroll" style={{ flex: 1, minHeight: 0 }}
+      contentContainerStyle={{ paddingBottom: 16 }} alwaysBounceVertical={false}>{composer}</ScrollView>;
 });

@@ -24,7 +24,7 @@ const earlier: StoryExport = { ...first, export_id: '95600000-0000-4000-8000-000
 const initial: ExportScreenState = { phase: 'ready', draft, items: [first, earlier], hasMore: false, fileReady: false };
 async function open(state: ExportScreenState = initial, language: Language = 'en', storyLanguage: Language = 'en') {
   const actions = { onPrepare: jest.fn(), onShare: jest.fn(), onDownload: jest.fn(), onLoadMore: jest.fn(),
-    onRefresh: jest.fn(), onBack: jest.fn(), onSignOut: jest.fn() };
+    onRefresh: jest.fn(), onBack: jest.fn(), onSignOut: jest.fn(), onOptionsChange: jest.fn() };
   return { ...await render(<StoryExportsScreen language={language} storyLanguage={storyLanguage} title="Fictional story"
     state={state} {...actions} />), ...actions };
 }
@@ -190,4 +190,75 @@ it('fails closed if a ready phase still carries an unresolved error', async () =
   const actions = await open({ ...initial, error: 'network' }), text = exportCopy.en;
   await tap(text.history); expect(screen.getByRole('button', { name: text.open })).toBeDisabled();
   await fireEvent.press(screen.getByRole('button', { name: text.open })); expect(actions.onDownload).not.toHaveBeenCalled();
+});
+
+it.each(['en', 'sv'] as const)('presents saved selection, options and explicit share as separate truthful steps in %s', async language => {
+  const actions = await open(initial, language), text = exportCopy[language];
+  expect(screen.getByRole('header', { name: text.current })).toBeOnTheScreen();
+  expect(screen.getByRole('header', { name: text.optionsTitle })).toBeOnTheScreen();
+  expect(screen.getByText(text.savedOnly)).toBeOnTheScreen(); expect(screen.getByText(text.manualReview)).toBeOnTheScreen();
+  expect(screen.getByText(text.steps)).toBeOnTheScreen();
+  expect(screen.getByRole('checkbox', { name: text.titlePage })).toBeChecked();
+  expect(screen.getByRole('checkbox', { name: text.pageNumbers })).toBeChecked();
+  await fireEvent.press(screen.getByRole('checkbox', { name: text.titlePage }));
+  expect(actions.onOptionsChange).toHaveBeenCalledWith({ include_title_page: false, include_page_numbers: true });
+  expect(actions.onPrepare).not.toHaveBeenCalled(); expect(actions.onShare).not.toHaveBeenCalled(); expect(actions.onDownload).not.toHaveBeenCalled();
+  await tap(text.history); expect(actions.onPrepare).not.toHaveBeenCalled(); expect(actions.onDownload).not.toHaveBeenCalled();
+});
+
+it.each([true, false].flatMap(include_title_page => [true, false].map(include_page_numbers => ({ include_title_page, include_page_numbers }))))(
+  'shows the controlled supported PDF options $include_title_page / $include_page_numbers without fabricating a PDF', async pdfOptions => {
+    const actions = await open();
+    await actions.rerender(<StoryExportsScreen language="en" storyLanguage="en" title="Fictional story" state={initial}
+      pdfOptions={pdfOptions} {...actions} />);
+    expect(screen.getByRole('checkbox', { name: exportCopy.en.titlePage }).props.accessibilityState.checked).toBe(pdfOptions.include_title_page);
+    expect(screen.getByRole('checkbox', { name: exportCopy.en.pageNumbers }).props.accessibilityState.checked).toBe(pdfOptions.include_page_numbers);
+    expect(screen.queryByText(exportCopy.en.pages + ': 3')).toBeNull();
+    expect(screen.queryByRole('button', { name: exportCopy.en.share })).toBeNull(); expect(actions.onPrepare).not.toHaveBeenCalled();
+  });
+
+it.each(['exporting', 'downloading', 'sharing', 'checking', 'uncertain'] as const)('locks PDF choices during %s without disabling Back or Sign Out', async phase => {
+  const actions = await open({ ...initial, phase }), text = exportCopy.en;
+  for (const label of [text.titlePage, text.pageNumbers]) {
+    const option = screen.getByRole('checkbox', { name: label }); expect(option).toBeDisabled(); await fireEvent.press(option);
+  }
+  expect(actions.onOptionsChange).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: text.back })).toBeEnabled(); expect(screen.getByRole('button', { name: text.signOut })).toBeEnabled();
+});
+
+it('locks a ready but unresolved option snapshot until reconciliation, not merely until a timer expires', async () => {
+  const actions = await open({ ...initial, notice: 'uncertain' });
+  expect(screen.getByRole('checkbox', { name: exportCopy.en.titlePage })).toBeDisabled();
+  expect(screen.getByText(exportCopy.en.optionsLocked)).toBeOnTheScreen();
+  expect(screen.getByText(exportCopy.en.uncertain)).toBeOnTheScreen();
+  expect(actions.onPrepare).not.toHaveBeenCalled(); expect(actions.onOptionsChange).not.toHaveBeenCalled();
+});
+
+it.each(['en', 'sv'] as const)('distinguishes historical audited options and title from today’s saved selection in %s', async language => {
+  const historical = { ...earlier, include_title_page: false, include_page_numbers: false };
+  const actions = await open({ ...initial, prepared: historical, fileReady: true, selectedExportId: historical.export_id }, language), text = exportCopy[language];
+  expect(screen.getByText(text.preparedHistorical)).toBeOnTheScreen(); expect(screen.queryByText(text.preparedCurrent)).toBeNull();
+  expect(screen.getByText(text.titlePage + ': ' + text.notIncluded)).toBeOnTheScreen();
+  expect(screen.getByText(text.pageNumbers + ': ' + text.notIncluded)).toBeOnTheScreen();
+  expect(screen.getByText(text.notPreview)).toBeOnTheScreen(); expect(screen.getByText(text.disclosure)).toBeOnTheScreen();
+  expect(screen.getByRole('checkbox', { name: text.titlePage })).toBeChecked();
+  expect(screen.getByRole('checkbox', { name: text.titlePage })).toBeDisabled();
+  for (const option of screen.getAllByRole('checkbox')) expect(option).toHaveStyle({ minHeight: 56 });
+  await tap(text.share); expect(actions.onShare).toHaveBeenCalledTimes(1); expect(actions.onPrepare).not.toHaveBeenCalled();
+});
+
+it('shows historical title-page and page-number metadata read-only rather than today’s selected options', async () => {
+  const old = { ...earlier, include_title_page: false, include_page_numbers: true };
+  const actions = await open({ ...initial, items: [old] }); await tap(exportCopy.en.history);
+  expect(screen.getByText(exportCopy.en.titlePage + ': ' + exportCopy.en.notIncluded)).toBeOnTheScreen();
+  expect(screen.getByText(exportCopy.en.pageNumbers + ': ' + exportCopy.en.included)).toBeOnTheScreen();
+  expect(screen.getByText(old.title)).toBeOnTheScreen();
+  expect(actions.onPrepare).not.toHaveBeenCalled(); expect(actions.onDownload).not.toHaveBeenCalled(); expect(actions.onOptionsChange).not.toHaveBeenCalled();
+});
+
+it('identifies a historical PDF with different options even when its title and saved revision match today’s selection', async () => {
+  await open({ ...initial, prepared: { ...first, title: 'Fictional story', include_title_page: false }, fileReady: true });
+  expect(screen.getByText(exportCopy.en.preparedHistorical)).toBeOnTheScreen();
+  expect(screen.queryByText(exportCopy.en.preparedCurrent)).toBeNull();
+  expect(screen.getByText(exportCopy.en.titlePage + ': ' + exportCopy.en.notIncluded)).toBeOnTheScreen();
 });

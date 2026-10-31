@@ -13,7 +13,18 @@ export interface StoryExport {
 export interface StoryPdf {
   exportId: string; draftVersion: number; draftRevision: number; pageCount: number; filename: string; bytes: Uint8Array;
 }
-export interface ExportStoryPdfOptions extends StoryDraftOptions { baseline: StoryDraft; title: string }
+export interface StoryPdfOptions { include_title_page: boolean; include_page_numbers: boolean }
+export const DEFAULT_STORY_PDF_OPTIONS: Readonly<StoryPdfOptions> = Object.freeze({ include_title_page: true, include_page_numbers: true });
+/** Only the existing renderer's two strict boolean choices are supported. */
+export function validateStoryPdfOptions(value: unknown = DEFAULT_STORY_PDF_OPTIONS): Readonly<StoryPdfOptions> {
+  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+    Object.keys(value).sort().join(',') !== 'include_page_numbers,include_title_page' ||
+    typeof (value as StoryPdfOptions).include_title_page !== 'boolean' ||
+    typeof (value as StoryPdfOptions).include_page_numbers !== 'boolean') throw new StoryExportsError('validation');
+  return Object.freeze({ include_title_page: (value as StoryPdfOptions).include_title_page,
+    include_page_numbers: (value as StoryPdfOptions).include_page_numbers });
+}
+export interface ExportStoryPdfOptions extends StoryDraftOptions { baseline: StoryDraft; title: string; pdfOptions?: StoryPdfOptions }
 export interface DownloadStoryPdfOptions extends StoryDraftOptions { metadata: StoryExport }
 export interface ListStoryExportsOptions extends StoryDraftOptions { limit?: number; offset?: number }
 export interface StoryExportsPage { items: StoryExport[]; hasMore: boolean }
@@ -130,12 +141,13 @@ async function safe<T>(operation: () => Promise<T>): Promise<T> {
 /** Export only the captured persisted revision; callers reconcile the returned audit before sharing. */
 export function exportStoryPdf(options: ExportStoryPdfOptions): Promise<StoryPdf> {
   return safe(async () => {
+    const pdfOptions = validateStoryPdfOptions(options.pdfOptions);
     const selected = selection(options), before = options.baseline;
     if (!sameDraftOriginal(before, before) || before.project_id.toLowerCase() !== selected.projectId ||
       before.language !== selected.language || !validTitle(options.title)) throw new StoryExportsError('validation');
     const draftId = validateStoryProjectId(before.draft_id), version = before.version, revision = before.revision;
     return executeStoryExportRequest({ ...options, timeoutMs: options.timeoutMs ?? 30_000 }, {
-      action: 'create', projectId: selected.projectId, draftId,
+      action: 'create', projectId: selected.projectId, draftId, pdfOptions,
       onHttpError: (status, code, retry) => httpError(status, code, true, retry),
     }, value => pdf(value, { version, revision }));
   });

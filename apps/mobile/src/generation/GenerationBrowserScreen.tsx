@@ -3,8 +3,8 @@ import { useApiBackoff } from '../api/ApiBackoff';
 import { AccessibilityInfo, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { StoryDraft } from '../api/story-drafts';
 import type { StoryProjectsErrorKind } from '../api/story-projects';
-import { MemyBrand } from '../components/BrandArtwork';
-import { Screen, screenStyles } from '../components/Screen';
+import { Screen } from '../components/Screen';
+import { StoryHeading } from '../components/StoryPresentation';
 import { accessibilityLanguages, type Language } from '../i18n';
 import { colors, layout } from '../theme';
 import { generationBrowserCopy } from './generation-browser-copy';
@@ -43,6 +43,7 @@ function BrowserView({ language, storyLanguage, title, selectedDraftId, state, o
   const busy = state.phase === 'loading' || state.phase === 'checking';
   const accessFailed = ['authentication', 'forbidden', 'not-found'].includes(state.error ?? '');
   const items = accessFailed || state.phase === 'loading' ? [] : state.items;
+  const selected = items.find(value => value.draft_id === selectedDraftId);
   const index = Math.min(position, Math.max(0, items.length - 1)), item = items[index];
   const actionable = state.phase === 'ready' && !state.error && !accessFailed;
   const message = state.error ? text.errors[state.error] : state.phase === 'loading' ? text.loading
@@ -57,23 +58,28 @@ function BrowserView({ language, storyLanguage, title, selectedDraftId, state, o
     if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(`${text.position} ${next + 1} ${text.of} ${items.length}`);
   };
   const open = () => { if (!waiting && item && actionable && !sent.current) { sent.current = true; onOpen(item.draft_id); } };
-  return <Screen>
-    <MemyBrand />
-    <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={screenStyles.heading}>{text.title}</Text>
+  return <Screen working>
+    <StoryHeading language={language} title={text.title} />
     {!accessFailed && <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[storyLanguage]}
       allowFontScaling selectable style={styles.storyTitle}>{title}</Text>}
     <View style={styles.panel} accessibilityState={{ busy }}>
       <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.introduction}</Text>
       <Text accessibilityLanguage={locale} allowFontScaling style={styles.notice}>{text.simulation}</Text>
+      {selected && item?.draft_id !== selected.draft_id && <Text accessibilityLanguage={locale} allowFontScaling style={styles.selectionContext}>
+        {text.selectionContext}: {text.generation} {selected.version} · {text.revision} {selected.revision}
+      </Text>}
       {message && <Text accessibilityRole={state.error ? 'alert' : undefined} accessibilityLiveRegion="polite"
         accessibilityLanguage={locale} allowFontScaling style={styles.notice}>{message}</Text>}
       {state.phase === 'ready' && !item && !state.error && <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.empty}</Text>}
-      {item && <View style={styles.card}>
+      {item && <View style={[styles.card, item.draft_id === selectedDraftId && styles.selectedCard]}
+        testID="saved-autobiography-selection" accessibilityState={{ selected: item.draft_id === selectedDraftId }}>
         <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.subheading}>
           {text.position} {index + 1} {text.of} {items.length}
         </Text>
         <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.generation}: {item.version}</Text>
         <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.revision}: {item.revision}</Text>
+        {typeof item.created_at === 'string' && Number.isFinite(Date.parse(item.created_at)) &&
+          <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.savedAt}: {new Date(item.created_at).toLocaleString(locale)}</Text>}
         {item.draft_id === selectedDraftId && <Text accessibilityLanguage={locale} allowFontScaling style={styles.notice}>{text.selected}</Text>}
         <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.verification}: {
           item.verification.method === 'manual_unverified' ? text.manual
@@ -95,12 +101,14 @@ function BrowserView({ language, storyLanguage, title, selectedDraftId, state, o
   </Screen>;
 }
 const styles = StyleSheet.create({
-  panel: { width: '100%', gap: 24 },
+  panel: { width: '100%', gap: 24 }, selectedCard: { borderWidth: 2, borderColor: colors.forest, backgroundColor: colors.selected },
   storyTitle: { color: colors.ink, fontSize: 28, lineHeight: 38, textAlign: 'center', flexShrink: 1 },
   card: { width: '100%', gap: 20, padding: 16, borderWidth: 1, borderColor: colors.border,
     borderRadius: layout.controlRadius, backgroundColor: colors.paper },
   subheading: { color: colors.ink, fontSize: 24, lineHeight: 34, fontWeight: '600', flexShrink: 1 },
   body: { color: colors.ink, fontSize: 22, lineHeight: 32, flexShrink: 1 },
+  help: { color: colors.muted, fontSize: 20, lineHeight: 30, flexShrink: 1 },
+  selectionContext: { color: colors.ink, fontSize: 21, lineHeight: 32, flexShrink: 1, padding: 16, borderLeftWidth: 3, borderLeftColor: colors.forest },
   notice: { color: colors.ink, fontSize: 22, lineHeight: 32, padding: 16, borderWidth: 2,
     borderColor: colors.forest, borderRadius: layout.controlRadius, backgroundColor: colors.paper, flexShrink: 1 },
   button: { width: '100%', minHeight: layout.minimumTouchTarget, paddingVertical: 16, paddingHorizontal: 24,

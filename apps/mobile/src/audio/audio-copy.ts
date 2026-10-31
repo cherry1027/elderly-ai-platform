@@ -1,6 +1,9 @@
 export const audioCopy = {
   en: {
     title: 'Your recording',
+    unsent: 'UNSENT local recording — not a saved transcript. Choose consent and Upload recording explicitly.',
+    localCopy: 'A local recording is retained for this upload. Its server result may be uncertain; check the status before retrying or discarding.',
+    limit: 'The native recorder stops at 60 seconds. Upload validation remains limited to 90 seconds and 25 MB.',
     introduction: 'Speak at your own pace. For this development test, share a short, made-up memory. Start when you are ready.',
     simulation: 'SIMULATION — this service returns fixed fictional text. It does not recognize what you said. A separate action below can request an AI simulation from the saved text.',
     start: 'Start recording', stop: 'Stop recording', discard: 'Discard recording', upload: 'Upload recording',
@@ -19,7 +22,7 @@ export const audioCopy = {
       idle: 'Ready to record. Your microphone has not been started.',
       permission: 'Checking microphone permission…', preparing: 'Preparing the microphone. Recording has not started yet…', recording: 'Recording. Choose Stop recording when you finish.',
       stopping: 'Finishing your recording…', ready: 'Your recording is ready. Review the consent choice before uploading.',
-      uploading: 'Sending your recording for processing. Please wait…', completed: 'Your recording was processed. The saved fictional simulated text is shown below.',
+      uploading: 'Sending your recording for processing. Please wait…', completed: 'Your upload returned a saved fictional simulated transcript. It appears in the conversation; requesting a reply is a separate explicit action.',
       error: 'The recording or upload could not be completed.', uncertain: 'The upload result could not be confirmed.',
     },
     errors: {
@@ -49,6 +52,9 @@ export const audioCopy = {
   },
   sv: {
     title: 'Din inspelning',
+    unsent: 'OSKICKAD lokal inspelning — inte en sparad transkription. Välj samtycke och Ladda upp inspelning uttryckligen.',
+    localCopy: 'En lokal inspelning finns kvar för uppladdningen. Serverresultatet kan vara osäkert; kontrollera statusen innan du försöker igen eller kastar den.',
+    limit: 'Den inbyggda inspelaren stoppar efter 60 sekunder. Uppladdningen kontrolleras fortfarande mot högst 90 sekunder och 25 MB.',
     introduction: 'Berätta i din egen takt. Dela ett kort, påhittat minne i det här utvecklingstestet. Börja när du är redo.',
     simulation: 'SIMULERING — tjänsten returnerar en fast, påhittad text. Den känner inte igen det du säger. En separat åtgärd nedan kan begära en AI-simulering från den sparade texten.',
     start: 'Starta inspelning', stop: 'Stoppa inspelning', discard: 'Kasta inspelningen', upload: 'Ladda upp inspelning',
@@ -67,7 +73,7 @@ export const audioCopy = {
       idle: 'Redo att spela in. Mikrofonen har inte startats.',
       permission: 'Kontrollerar mikrofonbehörighet…', preparing: 'Förbereder mikrofonen. Inspelningen har inte börjat ännu…', recording: 'Spelar in. Välj Stoppa inspelning när du är klar.',
       stopping: 'Avslutar inspelningen…', ready: 'Inspelningen är redo. Kontrollera ditt samtycke innan du laddar upp.',
-      uploading: 'Skickar inspelningen för bearbetning. Vänta…', completed: 'Inspelningen har bearbetats. Den sparade påhittade simulerade texten visas nedan.',
+      uploading: 'Skickar inspelningen för bearbetning. Vänta…', completed: 'Uppladdningen gav en sparad påhittad simulerad transkription. Den visas i samtalet; att begära ett svar är en separat, uttrycklig åtgärd.',
       error: 'Inspelningen eller uppladdningen kunde inte slutföras.', uncertain: 'Uppladdningens resultat kunde inte bekräftas.',
     },
     errors: {

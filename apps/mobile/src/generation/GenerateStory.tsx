@@ -254,10 +254,21 @@ function ScopedGeneration({ language, user, project, baseUrl, getAccessToken,
     title={project.title} ownerId={user.id} projectId={project.id} draftId={subview.draftId} baseUrl={baseUrl}
     getAccessToken={getAccessToken} onBack={() => closeSubview(subview.token)}
     onSignOut={() => childSignOut(subview.token)} />;
+  // A reader/menu callback belongs to this exact committed view, not merely
+  // this owner. Once an editor opens, a saved read replaces it, or privacy
+  // teardown starts, an obsolete control must not leave or mutate that view.
+  const readerIsCurrent = () => alive.current && active.current && !subviewRef.current &&
+    currentState.current === state;
   return <StoryDraftScreen language={language} storyLanguage={project.language} title={project.title} state={state}
-    onGenerate={generate} onRetry={retry} onRefresh={refresh} onEdit={() => open('edit')} onHistory={() => open('history')} onExport={() => open('export')}
-    onGenerations={() => open('generations')} onContinueStory={onContinueStory ? continueStory : undefined}
-    onPreviousGeneration={() => { const previous = currentState.current.previousGeneration; if (previous) selectGeneration(previous.draftId); }}
-    onReviewMemories={() => { if (!subviewRef.current && alive.current && active.current && !blocked.current) leave(() => onReviewMemories(selectedDraftId.current ?? undefined)); }} onBack={() => leave(onBack)}
-    onSignOut={() => leave(onSignOut, true)} />;
+    onGenerate={() => { if (readerIsCurrent()) generate(); }} onRetry={() => { if (readerIsCurrent()) retry(); }}
+    onRefresh={() => { if (readerIsCurrent()) refresh(); }}
+    onEdit={() => { if (readerIsCurrent()) open('edit'); }} onHistory={() => { if (readerIsCurrent()) open('history'); }}
+    onExport={() => { if (readerIsCurrent()) open('export'); }} onGenerations={() => { if (readerIsCurrent()) open('generations'); }}
+    onContinueStory={onContinueStory ? () => { if (readerIsCurrent()) continueStory(); } : undefined}
+    onPreviousGeneration={() => {
+      if (!readerIsCurrent()) return;
+      const previous = currentState.current.previousGeneration; if (previous) selectGeneration(previous.draftId);
+    }}
+    onReviewMemories={() => { if (readerIsCurrent() && !blocked.current) leave(() => onReviewMemories(selectedDraftId.current ?? undefined)); }}
+    onBack={() => { if (readerIsCurrent()) leave(onBack); }} onSignOut={() => { if (readerIsCurrent()) leave(onSignOut, true); }} />;
 }

@@ -26,7 +26,10 @@ def test_openapi_schema_is_deterministic_and_does_not_embed_configured_credentia
     spec = json.loads(initial)
     assert spec["info"]["version"] == "0.8.1"
     methods = {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
-    assert sum(method in methods for item in spec["paths"].values() for method in item) == 25
+    assert sum(method in methods for path,item in spec["paths"].items() for method in item
+               if not path.startswith("/api/v2/")) == 25
+    assert sum(method in methods for path,item in spec["paths"].items() for method in item
+               if path.startswith("/api/v2/")) == 19
 
 
 def test_fresh_export_fails_safely_on_invalid_environment_configuration():

@@ -28,7 +28,7 @@ from app.core.errors import APIError
 
 
 SUPPORTED_AI_OPERATIONS = frozenset({
-    "transcription", "conversation", "memory_extraction", "story_writer", "story_verifier",
+    "transcription", "conversation", "memory_extraction", "story_writer", "story_verifier", "speech_synthesis",
 })
 _APPROVAL_FIELDS = frozenset({
     "approval_id", "approved_by", "expires_at", "max_calls", "max_calls_per_minute",
@@ -246,6 +246,12 @@ class AISpendingGovernor:
             connection.execute("CREATE INDEX reservations_approval_time ON reservations(approval_id,reserved_at)")
         elif application_id != _APPLICATION_ID or schema_version != _SCHEMA_VERSION:
             raise ValueError("Unsupported ledger")
+
+    def check_approval(self, models: tuple[str, ...]) -> None:
+        """Non-spending preflight. Actual limits are still reserved per request."""
+        approval = _load_approval(self.approval_path)
+        if self._now() >= approval.expires_at or any(model not in approval.allowed_models for model in models):
+            raise _not_approved()
 
     def reserve(self, operation: str, model: str) -> str:
         """Commit a conservative reservation before one paid network attempt."""

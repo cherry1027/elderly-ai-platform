@@ -10,7 +10,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 MAX_API_BODY_BYTES = 262_144  # Fits 20k story characters even as escaped JSON.
 API_BODY_TIMEOUT_SECONDS = 30
-_AUDIO_PATH = re.compile(r"^/api/v1/story-sessions/[^/]+/transcribe/?$")
+_AUDIO_PATH = re.compile(r"^/api/v[12]/story-sessions/[^/]+/transcribe/?$")
 logger = logging.getLogger("memy.api")
 
 
@@ -21,7 +21,7 @@ class APISafetyMiddleware:
         self._active_requests = 0
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send):
-        if scope["type"] != "http" or not scope["path"].startswith("/api/v1/"):
+        if scope["type"] != "http" or not scope["path"].startswith(("/api/v1/", "/api/v2/")):
             await self.app(scope, receive, send)
             return
 

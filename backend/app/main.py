@@ -13,6 +13,7 @@ from app.api.audio import router as audio_router
 from app.api.conversations import router as conversations_router
 from app.api.story_drafts import router as story_drafts_router
 from app.api.exports import router as exports_router
+from app.api.real_ai import router as real_ai_router
 from app.core.config import Settings
 from app.core.api_safety import APISafetyMiddleware
 from app.core.errors import APIError, api_error_handler, validation_error_handler
@@ -22,7 +23,8 @@ from app.services.conversation_provider import (
     ConversationProvider, DisabledConversationProvider, MockConversationProvider,
 )
 from app.services.story_writer import DisabledStoryWriter, MockStoryWriter, StoryWriter
-from app.services.pdf_export import PdfRenderer
+from app.services.pdf_export import PdfRenderer, RealPdfRenderer
+from app.services.real_ai_runtime import RealAIRuntime
 from app.services.supabase import ReadinessProbe
 ERROR_JSON_CONTENT = {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
 API_GUARD_RESPONSES = {
@@ -41,6 +43,7 @@ def create_app(
     conversation_provider: ConversationProvider | None = None,
     story_writer: StoryWriter | None = None,
     pdf_renderer: PdfRenderer | None = None,
+    real_ai_provider=None,
 ) -> FastAPI:
     config = settings if settings is not None else Settings()
     if config.ai_provider_mode == "openai" or any(
@@ -54,6 +57,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(application: FastAPI):
         application.state.audio_slots = asyncio.Semaphore(2)
+        application.state.real_ai_slots = asyncio.Semaphore(2)
         application.state.pdf_slots = asyncio.Semaphore(2)
         application.state.pdf_tasks = set()
         async with httpx.AsyncClient(
@@ -67,6 +71,7 @@ def create_app(
             try:
                 yield
             finally:
+                application.state.real_ai.cache.clear()
                 if application.state.pdf_tasks:
                     await asyncio.gather(*tuple(application.state.pdf_tasks), return_exceptions=True)
 
@@ -83,13 +88,15 @@ def create_app(
         MockStoryWriter() if config.story_generation_mode == "mock" else DisabledStoryWriter()
     )
     application.state.pdf_renderer = pdf_renderer or PdfRenderer()
+    application.state.real_pdf_renderer = RealPdfRenderer()
+    application.state.real_ai = RealAIRuntime(config, provider=real_ai_provider)
     application.add_exception_handler(APIError, api_error_handler)
     application.add_exception_handler(RequestValidationError, validation_error_handler)
 
     @application.middleware("http")
     async def protect_user_responses(request, call_next):
         response = await call_next(request)
-        if request.url.path.startswith("/api/v1/"):
+        if request.url.path.startswith(("/api/v1/", "/api/v2/")):
             if response.headers.get("Cache-Control") != "private, no-store":
                 response.headers["Cache-Control"] = "no-store"
         return response
@@ -102,7 +109,8 @@ def create_app(
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "Accept-Language", "Idempotency-Key"],
         expose_headers=["Retry-After", "Content-Disposition", "Content-Length", "X-Memy-Export-Id",
-                        "X-Memy-Draft-Version", "X-Memy-Draft-Revision", "X-Memy-Page-Count"],
+                        "X-Memy-Draft-Version", "X-Memy-Draft-Revision", "X-Memy-Page-Count",
+                        "X-Memy-Operation-Id", "X-Memy-Speech-Id", "X-Memy-Audio-Sha256"],
     )
     application.include_router(health_router)
     application.include_router(readiness_router)
@@ -111,6 +119,7 @@ def create_app(
     application.include_router(conversations_router, responses=API_GUARD_RESPONSES)
     application.include_router(story_drafts_router, responses=API_GUARD_RESPONSES)
     application.include_router(exports_router, responses=API_GUARD_RESPONSES)
+    application.include_router(real_ai_router, responses=API_GUARD_RESPONSES)
     return application
 
 

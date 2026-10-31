@@ -359,6 +359,10 @@ def _story_flowables(
 
 class PdfRenderer:
     renderer_version = "memy_pdf_v1"
+    subject_label = "Development mock story export"
+
+    def localized_text(self, language, draft_version, draft_revision):
+        return _localized_text(language, draft_version, draft_revision)
 
     def render(
         self,
@@ -382,7 +386,7 @@ class PdfRenderer:
                 include_title_page=include_title_page,
                 include_page_numbers=include_page_numbers,
             )
-            localized = _localized_text(language, draft_version, draft_revision)
+            localized = self.localized_text(language, draft_version, draft_revision)
             buffer = BytesIO()
             document = SimpleDocTemplate(
                 buffer,
@@ -394,7 +398,7 @@ class PdfRenderer:
                 title=title,
                 author="Memy AI",
                 subject=(
-                    f"Development mock story export, version {draft_version}, "
+                    f"{self.subject_label}, version {draft_version}, "
                     f"revision {draft_revision}"
                 ),
                 creator=f"Memy AI {self.renderer_version}",
@@ -459,4 +463,22 @@ class PdfRenderer:
             )
 
 
-__all__ = ["PdfDocument", "PdfRenderer"]
+class RealPdfRenderer(PdfRenderer):
+    """Same typography, explicit human-review notice for actual AI-assisted text."""
+
+    renderer_version = "memy_real_pdf_v1"
+    subject_label = "AI-assisted personal story; human review required"
+
+    def localized_text(self, language, draft_version, draft_revision):
+        text = super().localized_text(language, draft_version, draft_revision)
+        text["notice"] = (
+            "AI-assisterad berättelse baserad på granskade minnen. Läs och kontrollera "
+            "innehållet; AI-granskning ersätter inte din egen faktakontroll."
+            if language == "sv" else
+            "AI-assisted story based on reviewed memories. Please review the content; "
+            "AI review does not replace your own factual checks."
+        )
+        return text
+
+
+__all__ = ["PdfDocument", "PdfRenderer", "RealPdfRenderer"]

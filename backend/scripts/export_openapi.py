@@ -31,6 +31,7 @@ def render_specification() -> str:
         supabase_publishable_key=None,
         conversation_mode="disabled",
         story_generation_mode="disabled",
+        real_ai_enabled=False,
     )
     return json.dumps(create_app(settings).openapi(), ensure_ascii=False,
                       indent=2, sort_keys=True) + "\n"

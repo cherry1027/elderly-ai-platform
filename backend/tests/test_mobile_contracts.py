@@ -71,6 +71,7 @@ def test_openapi_keeps_all_25_operations_and_23_user_bearer_contracts():
         for path, item in schema["paths"].items()
         for method, operation in item.items()
         if method in {"get", "post", "patch", "delete", "put"}
+        and not path.startswith("/api/v2/")
     }
     assert set(operations) == OPERATIONS
     assert len(PROTECTED_OPERATIONS) == 23

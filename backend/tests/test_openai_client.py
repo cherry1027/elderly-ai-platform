@@ -53,6 +53,7 @@ def test_responses_are_stateless_bounded_reserved_and_never_send_keys_in_payload
         assert request.headers["authorization"] == f"Bearer {KEY}"
         body = json.loads(request.content)
         assert body["store"] is False
+        assert body["service_tier"] == "default"
         assert body["model"] == "test-configured-model"
         assert body["max_output_tokens"] == 2048
         assert body["text"]["format"]["type"] == "json_schema"
@@ -104,6 +105,40 @@ def test_network_failure_remains_reserved_and_safe(failure):
     assert raised.value.code in {"AI_PROVIDER_TIMEOUT", "AI_PROVIDER_UNAVAILABLE"}
     assert "private detail" not in raised.value.message
     assert len(budget.calls) == 1
+
+
+@pytest.mark.parametrize("status,code,expected", [
+    (429,"insufficient_quota","AI_PROVIDER_QUOTA_EXHAUSTED"),
+    (429,"billing_hard_limit_reached","AI_PROVIDER_QUOTA_EXHAUSTED"),
+    (429,"rate_limit_exceeded","AI_PROVIDER_RATE_LIMIT"),
+    (429,"private-unrecognized-code","AI_PROVIDER_RATE_LIMIT"),
+    (401,"invalid_api_key","AI_PROVIDER_AUTHENTICATION_FAILED"),
+    (403,"model_not_found","AI_PROVIDER_ACCESS_DENIED"),
+])
+def test_provider_errors_distinguish_quota_from_rate_without_exposing_details(status,code,expected):
+    calls=[]
+    def reject(request):
+        calls.append(request)
+        return httpx.Response(status,json={"error":{"code":code,"message":KEY+" private content"}})
+    with pytest.raises(APIError) as error:
+        structured(client(reject))
+    assert error.value.code==expected and len(calls)==1
+    assert KEY not in error.value.message and "private" not in error.value.message
+
+
+def test_oversized_or_duplicate_provider_error_body_does_not_override_classification():
+    for body in (b"x"*8193,b'{"error":{"code":"insufficient_quota","code":"rate_limit_exceeded"}}'):
+        with pytest.raises(APIError) as error:
+            structured(client(lambda _:httpx.Response(429,content=body)))
+        assert error.value.code=="AI_PROVIDER_RATE_LIMIT"
+
+
+def test_quota_error_type_is_recognized_even_when_code_is_absent():
+    with pytest.raises(APIError) as error:
+        structured(client(lambda _:httpx.Response(429,json={"error":{"type":"insufficient_quota","code":None,"message":KEY}})))
+    assert error.value.code=="AI_PROVIDER_QUOTA_EXHAUSTED"
+    assert error.value.provider_diagnostics["provider_error_type"]=="insufficient_quota"
+    assert KEY not in str(error.value.provider_diagnostics)
 
 
 @pytest.mark.parametrize("response", [

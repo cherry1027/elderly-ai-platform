@@ -3,6 +3,7 @@
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from uuid import UUID
 
 
 class APIError(Exception):
@@ -14,6 +15,12 @@ class APIError(Exception):
 
 async def api_error_handler(request: Request, exc: APIError) -> JSONResponse:
     headers = {"Cache-Control": "no-store"}
+    operation_id = getattr(exc, "operation_id", None)
+    if operation_id is not None:
+        try:
+            headers["X-Memy-Operation-Id"] = str(UUID(str(operation_id)))
+        except (ValueError, TypeError):
+            pass
     if exc.status_code == 401:
         headers["WWW-Authenticate"] = "Bearer"
     if exc.status_code == 429:

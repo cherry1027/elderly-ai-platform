@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     live_ai_approval_path: Path | None = None
     ai_usage_ledger_path: Path = BACKEND_DIR / ".private" / "ai-usage.sqlite3"
     openai_timeout_seconds: float = Field(default=30, gt=0, le=60)
+    # v2 is a separate, explicit real-provider contract. Defaults make no paid calls.
+    real_ai_enabled: bool = False
+    supabase_secret_key: SecretStr | None = Field(default=None, validation_alias=AliasChoices(
+        "SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_ROLE_KEY"))
+    real_ai_transcription_model: str = ""
+    real_ai_speech_model: str = ""
+    real_ai_voice: str = "marin"
+    real_ai_usage_log_path: Path | None = None
 
     @classmethod
     def settings_customise_sources(

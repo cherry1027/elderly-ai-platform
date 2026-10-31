@@ -14,6 +14,8 @@ from pathlib import Path
 import re
 import stat
 from tempfile import TemporaryDirectory
+from contextvars import ContextVar
+from dataclasses import dataclass
 
 import httpx
 from pydantic import SecretStr
@@ -23,6 +25,20 @@ from app.core.errors import APIError
 MAX_JSON_BYTES = 128_000
 MAX_RESPONSE_BYTES = 512_000
 MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+
+
+@dataclass
+class DispatchTrace:
+    dispatched: bool = False
+
+
+ai_dispatch_trace: ContextVar[DispatchTrace | None] = ContextVar("memy_ai_dispatch", default=None)
+
+
+def mark_ai_dispatched():
+    trace = ai_dispatch_trace.get()
+    if trace is not None:
+        trace.dispatched = True
 
 
 def invalid_response():
@@ -38,10 +54,72 @@ def strict_object(pairs):
     return result
 
 
+def structured_body(model, operation, instructions, payload, schema, max_output_tokens):
+    body = {
+        "model": model, "store": False, "service_tier": "default",
+        "instructions": instructions,
+        "input": [{"role": "user", "content": json.dumps(payload, ensure_ascii=False, allow_nan=False)}],
+        "text": {"format": {"type": "json_schema", "name": operation,
+                            "strict": True, "schema": schema}},
+        "max_output_tokens": max_output_tokens,
+    }
+    # The selected evaluation model documents this mode. Keep short responses
+    # from spending their output allowance on hidden reasoning tokens.
+    if model == "gpt-6.1-terra":
+        body["reasoning"] = {"effort": "none"}
+    return body
+
+
+async def provider_failure(response):
+    """Classify only allowlisted provider error codes; never expose raw bodies."""
+    code, kind = None, None
+    if response.status_code in {400, 401, 403, 429}:
+        data = bytearray()
+        async for chunk in response.aiter_bytes():
+            data.extend(chunk)
+            if len(data) > 8192:
+                break
+        if len(data) <= 8192:
+            try:
+                payload = json.loads(data, object_pairs_hook=strict_object)
+                detail = payload.get("error") if isinstance(payload, dict) else None
+                code = detail.get("code") if isinstance(detail, dict) else None
+                kind = detail.get("type") if isinstance(detail, dict) else None
+            except (ValueError, UnicodeError, RecursionError):
+                pass
+    safe_codes = {"insufficient_quota", "billing_hard_limit_reached", "rate_limit_exceeded", "invalid_api_key", "model_not_found"}
+    safe_types = {"tokens", "requests", "insufficient_quota", "invalid_request_error", "rate_limit_error"}
+    diagnostics = {"http_status": response.status_code,
+        "provider_error_code": code if isinstance(code, str) and code in safe_codes else "unclassified",
+        "provider_error_type": kind if isinstance(kind, str) and kind in safe_types else "unclassified"}
+    for header in ("retry-after", "x-ratelimit-limit-requests", "x-ratelimit-limit-tokens",
+                   "x-ratelimit-remaining-requests", "x-ratelimit-remaining-tokens"):
+        raw = response.headers.get(header, "")
+        if re.fullmatch(r"\d{1,10}", raw):
+            diagnostics[header] = int(raw)
+
+    def failure(code, message):
+        error = APIError(503, code, message)
+        error.provider_diagnostics = diagnostics  # Safe metadata, never the provider body.
+        return error
+
+    if (response.status_code in {400, 429} and (
+        (isinstance(code, str) and code in {"insufficient_quota", "billing_hard_limit_reached"})
+        or kind == "insufficient_quota")):
+        return failure("AI_PROVIDER_QUOTA_EXHAUSTED", "The AI provider's API credits or billing limit require attention.")
+    if response.status_code == 401:
+        return failure("AI_PROVIDER_AUTHENTICATION_FAILED", "The AI provider's credentials require attention.")
+    if response.status_code == 403:
+        return failure("AI_PROVIDER_ACCESS_DENIED", "The AI provider's model access requires attention.")
+    if response.status_code == 429:
+        return failure("AI_PROVIDER_RATE_LIMIT", "The AI provider is busy; retry later.")
+    return failure("AI_PROVIDER_UNAVAILABLE", "The AI provider is temporarily unavailable.")
+
+
 class OpenAIClient:
     def __init__(self, api_key: SecretStr, text_model: str, governor, *,
                  transport: httpx.AsyncBaseTransport | None = None,
-                 timeout_seconds: float = 30):
+                 timeout_seconds: float = 30, usage_observer=None):
         if not isinstance(api_key, SecretStr) or not api_key.get_secret_value().strip():
             raise APIError(503, "AI_NOT_CONFIGURED", "The AI provider is not configured.")
         if not MODEL_NAME.fullmatch(text_model) or not 0 < timeout_seconds <= 60:
@@ -51,10 +129,13 @@ class OpenAIClient:
         self.governor = governor
         self._transport = transport
         self.timeout_seconds = timeout_seconds
+        self.usage_observer = usage_observer
 
     async def _request(self, operation: str, model: str, endpoint: str, **kwargs) -> dict:
         # No retry loop: uncertain failures/cancellation can still be charged.
-        self.governor.reserve(operation, model)
+        reservation_id = self.governor.reserve(operation, model)
+        reported_usage, service_tier, outcome = None, None, "failed"
+        mark_ai_dispatched()  # After approval, before any provider network attempt.
         try:
             async with asyncio.timeout(self.timeout_seconds):
                 async with httpx.AsyncClient(
@@ -66,10 +147,8 @@ class OpenAIClient:
                         headers={"Authorization": "Bearer " + self._key.get_secret_value()},
                         **kwargs,
                     ) as response:
-                        if response.status_code == 429:
-                            raise APIError(503, "AI_PROVIDER_RATE_LIMIT", "The AI provider is busy; retry later.")
                         if not 200 <= response.status_code < 300:
-                            raise APIError(503, "AI_PROVIDER_UNAVAILABLE", "The AI provider is temporarily unavailable.")
+                            raise await provider_failure(response)
                         if response.headers.get("content-type", "").split(";", 1)[0].strip() != "application/json":
                             raise invalid_response()
                         data = bytearray()
@@ -80,6 +159,9 @@ class OpenAIClient:
             result = json.loads(data, object_pairs_hook=strict_object)
             if not isinstance(result, dict):
                 raise invalid_response()
+            reported_usage = result.get("usage")
+            service_tier = result.get("service_tier")
+            outcome = "completed"
             return result
         except (TimeoutError, httpx.TimeoutException):
             raise APIError(504, "AI_PROVIDER_TIMEOUT", "The AI provider timed out.") from None
@@ -91,20 +173,17 @@ class OpenAIClient:
             raise
         except Exception:
             raise APIError(503, "AI_PROVIDER_UNAVAILABLE", "The AI provider is temporarily unavailable.") from None
+        finally:
+            if self.usage_observer is not None:
+                self.usage_observer.record(operation, model, reported_usage,
+                    reservation_id=reservation_id, status=outcome, service_tier=service_tier)
 
     async def structured(self, operation: str, instructions: str, payload: dict,
                          schema: dict, max_output_tokens: int = 2048) -> dict:
         if type(max_output_tokens) is not int or not 16 <= max_output_tokens <= 4096:
             raise APIError(422, "AI_INPUT_LIMIT", "The AI request exceeds approved limits.")
         try:
-            body = {
-                "model": self.text_model, "store": False,
-                "instructions": instructions,
-                "input": [{"role": "user", "content": json.dumps(payload, ensure_ascii=False, allow_nan=False)}],
-                "text": {"format": {"type": "json_schema", "name": operation,
-                                    "strict": True, "schema": schema}},
-                "max_output_tokens": max_output_tokens,
-            }
+            body = structured_body(self.text_model, operation, instructions, payload, schema, max_output_tokens)
             encoded = json.dumps(body, ensure_ascii=False, allow_nan=False).encode("utf-8")
         except (ValueError, TypeError, UnicodeError, RecursionError):
             raise APIError(422, "AI_INPUT_LIMIT", "The AI request exceeds approved limits.") from None

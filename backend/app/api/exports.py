@@ -41,7 +41,7 @@ Limit = Annotated[int, Query(ge=1, le=100)]
 Offset = Annotated[int, Query(ge=0, le=100_000)]
 
 
-async def render_document(request: Request, **options) -> PdfDocument:
+async def render_document(request: Request, *, renderer=None, **options) -> PdfDocument:
     """Bound CPU work; a timed-out worker retains its slot until actually done."""
     slots = request.app.state.pdf_slots
     if slots.locked():
@@ -50,7 +50,8 @@ async def render_document(request: Request, **options) -> PdfDocument:
 
     async def work():
         try:
-            return await asyncio.to_thread(request.app.state.pdf_renderer.render, **options)
+            selected = renderer if renderer is not None else request.app.state.pdf_renderer
+            return await asyncio.to_thread(selected.render, **options)
         finally:
             slots.release()
 

@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, layout } from '../theme';
 import { ApiBackoffBanner } from '../api/ApiBackoff';
 import { accessibilityLanguages, type Language } from '../i18n';
+import { useEdgeSwipeBack } from '../navigation/useEdgeSwipeBack';
 
 type ScreenProps = PropsWithChildren<{
   scrollViewRef?: RefObject<ComponentRef<typeof ScrollView> | null>;
@@ -33,6 +34,7 @@ export function ScreenBackControl({ language, label, onPress }: NonNullable<Scre
 }
 
 export function Screen({ children, scrollViewRef, onContentLayout, working = false, keyboardAware = false, back, bottomControls }: ScreenProps) {
+  const edgeSwipe = useEdgeSwipeBack(back?.onPress);
   const internalScrollView = useRef<ComponentRef<typeof ScrollView>>(null);
   const scroll = scrollViewRef ?? internalScrollView;
   const focusedTarget = useRef<number | null>(null);
@@ -47,7 +49,8 @@ export function Screen({ children, scrollViewRef, onContentLayout, working = fal
     return () => { active = false; focusedTarget.current = null; shown.remove(); };
   }, [keyboardAware, revealFocus]);
   return (
-    <SafeAreaView style={styles.safeArea} edges={working ? ['top', 'left', 'right'] : ['top', 'bottom', 'left', 'right']}>
+    <SafeAreaView {...edgeSwipe} testID={back ? 'story-gesture-surface' : undefined}
+      style={styles.safeArea} edges={working ? ['top', 'left', 'right'] : ['top', 'bottom', 'left', 'right']}>
       {back && <ScreenBackControl {...back} />}
       <ScrollView
         ref={scroll}

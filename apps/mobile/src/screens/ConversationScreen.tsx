@@ -10,6 +10,7 @@ import { StoryHeading } from '../components/StoryPresentation';
 import { conversationCopy } from '../conversation-copy';
 import { accessibilityLanguages, type Language } from '../i18n';
 import { colors, headingFont, layout } from '../theme';
+import { useEdgeSwipeBack } from '../navigation/useEdgeSwipeBack';
 
 export type ConversationState =
   | { status: 'loading' }
@@ -33,6 +34,7 @@ export function ConversationScreen({ language, state, onCheck, onBack, onSignOut
   const text = conversationCopy[language];
   const { waiting } = useApiBackoff();
   const locale = accessibilityLanguages[language];
+  const edgeSwipe = useEdgeSwipeBack(state.status === 'ready' && recordingPanel ? onBack : undefined);
   const message = state.status === 'error' ? [text.errors[state.error], state.reconcile && text.uncertain].filter(Boolean).join(' ')
     : state.status === 'ready' ? text.ready : text.loading;
   useEffect(() => {
@@ -41,7 +43,7 @@ export function ConversationScreen({ language, state, onCheck, onBack, onSignOut
   // The authenticated recording scope owns the thread and its composer. It must
   // not sit inside Screen's full-page ScrollView or the microphone would scroll
   // away with the history. Keep header/actions bounded independently as text grows.
-  if (state.status === 'ready' && recordingPanel) return <SafeAreaView style={styles.chatSafeArea}
+  if (state.status === 'ready' && recordingPanel) return <SafeAreaView {...edgeSwipe} testID="story-gesture-surface" style={styles.chatSafeArea}
     edges={['top', 'bottom', 'left', 'right']}>
     <ScreenBackControl language={language} label={backLabel ?? text.back} onPress={onBack} />
     <View style={styles.chatWorkspace}>

@@ -1,6 +1,6 @@
 import { nativeNodes } from './native-tree';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
-import { AppState, type AppStateStatus } from 'react-native';
+import { AccessibilityInfo, AppState, BackHandler, Keyboard, Platform, type AppStateStatus } from 'react-native';
 import * as api from '../src/real-ai/api';
 import * as storyApi from '../src/api/story-projects';
 import { createNativeRecorder, createRecordingId } from '../src/audio/native-recorder';
@@ -9,6 +9,7 @@ import { realCopy } from '../src/real-ai/copy';
 import { realDraft, realIds as ids, realMemory, realMessage, realTranscript } from './real-ai-fixtures';
 import { mediaPrivacy } from '../src/real-ai/media-privacy';
 import { leaveCopy } from '../src/navigation/useGuardedLeave';
+import { completeEdgeSwipe } from './edge-swipe-events';
 jest.mock('../src/real-ai/api', () => ({ ...jest.requireActual('../src/real-ai/api'),
   getRealCapabilities: jest.fn(), getRealTranscripts: jest.fn(), getRealMessages: jest.fn(), getRealMemories: jest.fn(),
   getRealDrafts: jest.fn(), transcribeRealRecording: jest.fn(), sendRealMessage: jest.fn(), reviewRealMemory: jest.fn(),
@@ -348,5 +349,76 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     await press(t.signOut); expect(props.onSignOut).not.toHaveBeenCalled();
     await press(leaveCopy.en.keep); expect(screen.getByLabelText(t.editor).props.value).toBe('Unsaved autobiography.');
     await press(t.signOut); await press(leaveCopy.en.discard); expect(props.onSignOut).toHaveBeenCalledTimes(1);
+  });
+  it.each((['en', 'sv'] as const).flatMap(language => (['chat', 'memories', 'book'] as const).map(tab => ({ language, tab }))))(
+    'swipe uses the visible Back action from the %s workspace', async ({ language, tab }) => {
+      jest.spyOn(AccessibilityInfo, 'isScreenReaderEnabled').mockResolvedValue(false);
+      await render(<RealStoryWorkspace {...props} language={language} initialTab={tab} />); await ready();
+      expect(screen.getByTestId('story-top-back')).toBeOnTheScreen();
+      await completeEdgeSwipe(screen.getByTestId('story-gesture-surface')); expect(props.onBack).toHaveBeenCalledTimes(1);
+    },
+  );
+  it.each(['en', 'sv'] as const)('swipe dismisses the keyboard and keeps exact unsaved autobiography text after Keep Editing in %s', async language => {
+    jest.spyOn(AccessibilityInfo, 'isScreenReaderEnabled').mockResolvedValue(false);
+    jest.spyOn(Keyboard, 'isVisible').mockReturnValue(true); const dismiss = jest.spyOn(Keyboard, 'dismiss');
+    const copy = realCopy[language], warning = leaveCopy[language];
+    jest.mocked(api.getRealDrafts).mockResolvedValue([realDraft()]);
+    await render(<RealStoryWorkspace {...props} language={language} initialTab="book" />); await ready();
+    await press(copy.edit); await fireEvent.changeText(screen.getByLabelText(copy.editor), 'My exact unsaved text.\nSecond line.');
+    await completeEdgeSwipe(screen.getByTestId('story-gesture-surface'));
+    expect(dismiss).toHaveBeenCalled(); expect(props.onBack).not.toHaveBeenCalled();
+    expect(screen.getByText(warning.dirty)).toBeOnTheScreen(); await press(warning.keep);
+    expect(screen.getByLabelText(copy.editor).props.value).toBe('My exact unsaved text.\nSecond line.');
+    expect(api.editRealDraft).not.toHaveBeenCalled();
+  });
+  it.each(['en', 'sv'] as const)('swipe/cancel retains typed memory correction and evidence controls in %s', async language => {
+    jest.spyOn(AccessibilityInfo, 'isScreenReaderEnabled').mockResolvedValue(false);
+    jest.spyOn(Keyboard, 'isVisible').mockReturnValue(true);
+    const copy = realCopy[language]; jest.mocked(api.getRealMemories).mockResolvedValue([realMemory()]);
+    await render(<RealStoryWorkspace {...props} language={language} initialTab="memories" />); await ready();
+    await press(copy.correctAction); await fireEvent.changeText(screen.getByLabelText(copy.correct), 'Keep this exact correction.');
+    await press(copy.seeOriginal); await completeEdgeSwipe(screen.getByTestId('story-gesture-surface'));
+    expect(screen.getByText(leaveCopy[language].dirty)).toBeOnTheScreen(); await press(leaveCopy[language].keep);
+    expect(screen.getByLabelText(copy.correct).props.value).toBe('Keep this exact correction.');
+    expect(screen.getByText(realMemory().evidence)).toBeOnTheScreen();
+    expect(props.onBack).not.toHaveBeenCalled(); expect(api.reviewRealMemory).not.toHaveBeenCalled();
+  });
+  it.each(['active', 'local'] as const)('swipe retains the existing warning for an %s recording', async mode => {
+    jest.spyOn(AccessibilityInfo, 'isScreenReaderEnabled').mockResolvedValue(false);
+    await render(<RealStoryWorkspace {...props} />); await ready(); await press(t.start);
+    if (mode === 'local') await press(t.stop);
+    await completeEdgeSwipe(screen.getByTestId('story-gesture-surface'));
+    expect(screen.getByText(leaveCopy.en.dirty)).toBeOnTheScreen(); expect(props.onBack).not.toHaveBeenCalled();
+    await press(leaveCopy.en.keep); expect(screen.getByText(mode === 'active' ? t.stop : t.recorded)).toBeOnTheScreen();
+    expect(api.transcribeRealRecording).not.toHaveBeenCalled();
+  });
+  it('swipe retains the existing uncertain request warning without repeating a request', async () => {
+    jest.spyOn(AccessibilityInfo, 'isScreenReaderEnabled').mockResolvedValue(false);
+    jest.mocked(api.getRealTranscripts).mockResolvedValue([realTranscript()]);
+    jest.mocked(api.sendRealMessage).mockRejectedValueOnce(new api.RealAiError('network', undefined, true));
+    await render(<RealStoryWorkspace {...props} />); await ready(); await press(t.process);
+    await completeEdgeSwipe(screen.getByTestId('story-gesture-surface'));
+    expect(screen.getByText(leaveCopy.en.uncertain)).toBeOnTheScreen(); expect(props.onBack).not.toHaveBeenCalled();
+    await press(leaveCopy.en.keep); expect(api.sendRealMessage).toHaveBeenCalledTimes(1);
+  });
+  it('confirmed swipe leave retains a failed private-audio cleanup lease', async () => {
+    jest.spyOn(AccessibilityInfo, 'isScreenReaderEnabled').mockResolvedValue(false);
+    recorder.dispose.mockRejectedValueOnce(new Error('Synthetic cleanup failure'));
+    await render(<RealStoryWorkspace {...props} />); await ready(); await press(t.start); await press(t.stop);
+    await completeEdgeSwipe(screen.getByTestId('story-gesture-surface')); await press(leaveCopy.en.discard);
+    expect(props.onBack).toHaveBeenCalledTimes(1); await waitFor(() => expect(mediaPrivacy.isBlocked()).toBe(true));
+    expect(screen.getByRole('button', { name: t.start })).toBeDisabled();
+    expect(api.transcribeRealRecording).not.toHaveBeenCalled();
+  });
+  it('Android hardware Back still uses the same autobiography warning without an edge gesture', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android'); let hardwareBack = () => false;
+    jest.spyOn(BackHandler, 'addEventListener').mockImplementation((_event, callback) => { hardwareBack = () => callback({ type: 'hardwareBackPress', timeStamp: 1 }) === true; return { remove: jest.fn() }; });
+    jest.mocked(api.getRealDrafts).mockResolvedValue([realDraft()]);
+    await render(<RealStoryWorkspace {...props} initialTab="book" />); await ready();
+    expect(screen.getByTestId('story-gesture-surface').props.onMoveShouldSetResponderCapture).toBeUndefined();
+    await press(t.edit); await fireEvent.changeText(screen.getByLabelText(t.editor), 'Unsaved Android text.');
+    await act(() => { expect(hardwareBack()).toBe(true); });
+    expect(screen.getByText(leaveCopy.en.dirty)).toBeOnTheScreen(); await press(leaveCopy.en.keep);
+    expect(screen.getByLabelText(t.editor).props.value).toBe('Unsaved Android text.'); expect(props.onBack).not.toHaveBeenCalled();
   });
 });

@@ -113,7 +113,7 @@ export function MemoryReviewScreen({ language, storyLanguage = language, resetRe
     });
   };
   return <><KeyboardAvoidingView style={styles.keyboard} enabled={Platform.OS !== 'ios'} behavior="height">
-    <Screen keyboardAware scrollViewRef={scrollView} onContentLayout={event => { contentY.current = event.nativeEvent.layout.y; }}>
+    <Screen back={{ language, label: backLabel ?? text.back, onPress: () => requestLeave(onBack) }} keyboardAware scrollViewRef={scrollView} onContentLayout={event => { contentY.current = event.nativeEvent.layout.y; }}>
       <View style={styles.composition}>
       <StoryHeading language={language} title={text.title} />
       {!accessFailed && <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[storyLanguage]} allowFontScaling selectable style={styles.storyTitle}>{title}</Text>}

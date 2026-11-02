@@ -85,7 +85,7 @@ export function DraftEditorScreen({ language, storyLanguage, title, state, onCha
   };
   const act = (callback: () => void) => { Keyboard.dismiss(); callback(); };
   return <KeyboardAvoidingView style={styles.keyboard} enabled={Platform.OS !== 'ios'} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-    <Screen working keyboardAware scrollViewRef={scroll} onContentLayout={event => { positions.current.content = event.nativeEvent.layout.y; reveal(); }}>
+    <Screen back={{ language, label: text.back, onPress: () => act(onBack) }} working keyboardAware scrollViewRef={scroll} onContentLayout={event => { positions.current.content = event.nativeEvent.layout.y; reveal(); }}>
       <StoryHeading language={language} title={text.editorTitle} />
       {!accessFailed && <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[storyLanguage]}
         allowFontScaling selectable style={styles.storyTitle}>{title}</Text>}

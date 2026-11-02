@@ -104,7 +104,7 @@ export function CreateStoryScreen({ language, state, serviceAvailable, onSubmit,
   }
 
   return <KeyboardAvoidingView style={styles.keyboard} enabled={Platform.OS !== 'ios'} behavior="height">
-    <Screen keyboardAware scrollViewRef={scrollView} onContentLayout={event => {
+    <Screen back={{ language, label: text.back, onPress: () => leave(onBack) }} keyboardAware scrollViewRef={scrollView} onContentLayout={event => {
       layoutOffsets.current.content = event.nativeEvent.layout.y; revealTitleError();
     }}>
       <MemyBrand />

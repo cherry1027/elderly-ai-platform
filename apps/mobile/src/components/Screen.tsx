@@ -1,17 +1,38 @@
-import { useCallback, useEffect, useRef, type ComponentRef, type PropsWithChildren, type RefObject } from 'react';
-import { Keyboard, Platform, ScrollView, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
+import { useCallback, useEffect, useRef, useState, type ComponentRef, type PropsWithChildren, type ReactNode, type RefObject } from 'react';
+import { Keyboard, Platform, Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, layout } from '../theme';
 import { ApiBackoffBanner } from '../api/ApiBackoff';
+import { accessibilityLanguages, type Language } from '../i18n';
 
 type ScreenProps = PropsWithChildren<{
   scrollViewRef?: RefObject<ComponentRef<typeof ScrollView> | null>;
   onContentLayout?: (event: LayoutChangeEvent) => void;
   working?: boolean;
   keyboardAware?: boolean;
+  back?: { language: Language; label: string; onPress: () => void };
+  bottomControls?: ReactNode;
 }>;
 
-export function Screen({ children, scrollViewRef, onContentLayout, working = false, keyboardAware = false }: ScreenProps) {
+/** Presentation only: the owning screen supplies its existing safe leave action. */
+export function ScreenBackControl({ language, label, onPress }: NonNullable<ScreenProps['back']>) {
+  const [backFocused, setBackFocused] = useState(false);
+  return <View testID="story-top-navigation" style={styles.topNavigation}>
+    <View style={styles.fixedContent}>
+      <Pressable testID="story-top-back" accessibilityRole="button"
+        accessibilityLabel={`${language === 'sv' ? 'Gå tillbaka' : 'Go back'}: ${label}`}
+        accessibilityLanguage={accessibilityLanguages[language]} onPress={onPress}
+        onFocus={() => setBackFocused(true)} onBlur={() => setBackFocused(false)}
+        style={({ pressed }) => [styles.backButton, pressed && styles.backPressed, backFocused && styles.backFocused]}>
+        <Text accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
+          allowFontScaling style={styles.backArrow}>‹</Text>
+        <Text allowFontScaling style={styles.backLabel}>{language === 'sv' ? 'Tillbaka' : 'Back'}</Text>
+      </Pressable>
+    </View>
+  </View>;
+}
+
+export function Screen({ children, scrollViewRef, onContentLayout, working = false, keyboardAware = false, back, bottomControls }: ScreenProps) {
   const internalScrollView = useRef<ComponentRef<typeof ScrollView>>(null);
   const scroll = scrollViewRef ?? internalScrollView;
   const focusedTarget = useRef<number | null>(null);
@@ -27,9 +48,11 @@ export function Screen({ children, scrollViewRef, onContentLayout, working = fal
   }, [keyboardAware, revealFocus]);
   return (
     <SafeAreaView style={styles.safeArea} edges={working ? ['top', 'left', 'right'] : ['top', 'bottom', 'left', 'right']}>
+      {back && <ScreenBackControl {...back} />}
       <ScrollView
         ref={scroll}
-        style={keyboardAware ? styles.keyboardScroll : undefined}
+        testID={back || bottomControls ? 'story-content-scroll' : undefined}
+        style={back || bottomControls ? styles.boundedScroll : keyboardAware ? styles.keyboardScroll : undefined}
         automaticallyAdjustKeyboardInsets={keyboardAware && Platform.OS === 'ios'}
         contentInsetAdjustmentBehavior={keyboardAware ? 'never' : undefined}
         keyboardDismissMode={keyboardAware ? Platform.OS === 'ios' ? 'interactive' : 'on-drag' : undefined}
@@ -44,6 +67,10 @@ export function Screen({ children, scrollViewRef, onContentLayout, working = fal
       >
         <View style={[styles.content, working && styles.workingContent]} onLayout={onContentLayout}><ApiBackoffBanner />{children}</View>
       </ScrollView>
+      {bottomControls && <ScrollView testID="story-bottom-controls" style={styles.bottomControls}
+        contentContainerStyle={styles.bottomControlsContent} keyboardShouldPersistTaps="handled" alwaysBounceVertical={false}>
+        <View style={styles.fixedContent}>{bottomControls}</View>
+      </ScrollView>}
     </SafeAreaView>
   );
 }
@@ -78,7 +105,19 @@ export const screenStyles = StyleSheet.create({
 });
 
 const styles = StyleSheet.create({
-  keyboardScroll: { flex: 1 },
+  keyboardScroll: { flex: 1 }, boundedScroll: { flex: 1, minHeight: 0 },
+  topNavigation: { paddingHorizontal: layout.screenPadding, paddingVertical: 8, flexShrink: 0 },
+  fixedContent: { width: '100%', maxWidth: layout.contentWidth, alignSelf: 'center' },
+  backButton: { alignSelf: 'flex-start', maxWidth: '100%', minWidth: layout.minimumTouchTarget,
+    minHeight: layout.minimumTouchTarget, paddingHorizontal: 16, paddingVertical: 10, flexDirection: 'row',
+    alignItems: 'center', gap: 10, borderWidth: 2, borderColor: colors.forest, borderRadius: 16, backgroundColor: colors.paper },
+  backArrow: { color: colors.forest, fontSize: 30, lineHeight: 34 },
+  backLabel: { color: colors.forest, fontSize: 22, lineHeight: 32, fontWeight: '600', flexShrink: 1 },
+  backPressed: { backgroundColor: colors.selected }, backFocused: { borderColor: colors.ink },
+  // Separate, bounded scrolling keeps long consent text reachable at large text
+  // sizes without covering the history or letting it push the microphone away.
+  bottomControls: { flexGrow: 0, flexShrink: 1, maxHeight: '50%' },
+  bottomControlsContent: { paddingHorizontal: layout.screenPadding, paddingVertical: 12 },
   workingContent: { justifyContent: 'flex-start', alignItems: 'stretch', gap: 24 },
   safeArea: {
     flex: 1,

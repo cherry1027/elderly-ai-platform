@@ -44,7 +44,7 @@ function DraftHistoryView({ language, storyLanguage, title, state, onLoadMore, o
     setSelected(next);
     if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(text.item + ' ' + (next + 1) + ' ' + text.of + ' ' + state.items.length);
   };
-  return <Screen working scrollViewRef={scroll} onContentLayout={event => { contentY.current = event.nativeEvent.layout.y; }}>
+  return <Screen back={{ language, label: text.back, onPress: onBack }} working scrollViewRef={scroll} onContentLayout={event => { contentY.current = event.nativeEvent.layout.y; }}>
     <StoryHeading language={language} title={text.historyTitle} />
     {!accessFailed && <Text accessibilityRole="header" accessibilityLanguage={contentLocale} allowFontScaling selectable style={styles.storyTitle}>{title}</Text>}
     <View style={styles.panel} accessibilityState={{ busy }} onLayout={event => { panelY.current = event.nativeEvent.layout.y; }}>

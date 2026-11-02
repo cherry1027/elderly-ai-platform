@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { StoryProject, StoryProjectsErrorKind } from '../api/story-projects';
 import { AccountAction } from '../components/AccountPresentation';
 import { LargeButton } from '../components/LargeButton';
-import { Screen } from '../components/Screen';
+import { Screen, ScreenBackControl } from '../components/Screen';
 import { StoryHeading } from '../components/StoryPresentation';
 import { conversationCopy } from '../conversation-copy';
 import { accessibilityLanguages, type Language } from '../i18n';
@@ -43,6 +43,7 @@ export function ConversationScreen({ language, state, onCheck, onBack, onSignOut
   // away with the history. Keep header/actions bounded independently as text grows.
   if (state.status === 'ready' && recordingPanel) return <SafeAreaView style={styles.chatSafeArea}
     edges={['top', 'bottom', 'left', 'right']}>
+    <ScreenBackControl language={language} label={backLabel ?? text.back} onPress={onBack} />
     <View style={styles.chatWorkspace}>
       <ScrollView testID="conversation-header-scroll" style={styles.chatHeader}
         contentContainerStyle={styles.chatHeaderContent} keyboardShouldPersistTaps="handled" alwaysBounceVertical={false}>
@@ -63,7 +64,7 @@ export function ConversationScreen({ language, state, onCheck, onBack, onSignOut
       <View testID="conversation-live-workspace" style={styles.chatBody}>{recordingPanel}</View>
     </View>
   </SafeAreaView>;
-  return <Screen><View style={styles.workspace}>
+  return <Screen back={{ language, label: backLabel ?? text.back, onPress: onBack }}><View style={styles.workspace}>
     <StoryHeading language={language} title={text.title} />
     <View style={styles.details} accessibilityState={{ busy: state.status === 'loading' }}>
       {state.status === 'loading' && <Text accessibilityLiveRegion="polite" accessibilityLanguage={locale}

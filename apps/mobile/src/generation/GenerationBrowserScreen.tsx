@@ -58,7 +58,7 @@ function BrowserView({ language, storyLanguage, title, selectedDraftId, state, o
     if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(`${text.position} ${next + 1} ${text.of} ${items.length}`);
   };
   const open = () => { if (!waiting && item && actionable && !sent.current) { sent.current = true; onOpen(item.draft_id); } };
-  return <Screen working>
+  return <Screen back={{ language, label: text.back, onPress: onBack }} working>
     <StoryHeading language={language} title={text.title} />
     {!accessFailed && <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[storyLanguage]}
       allowFontScaling selectable style={styles.storyTitle}>{title}</Text>}

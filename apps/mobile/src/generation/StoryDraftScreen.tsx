@@ -108,7 +108,7 @@ function StoryDraftView({ language, storyLanguage, title, state, onGenerate, onR
     if (waiting || !canRetry || submitted.current) return;
     submitted.current = true; onRetry();
   };
-  return <Screen working scrollViewRef={scroll} onContentLayout={event => { contentY.current = event.nativeEvent.layout.y; }}>
+  return <Screen back={{ language, label: text.back, onPress: onBack }} working scrollViewRef={scroll} onContentLayout={event => { contentY.current = event.nativeEvent.layout.y; }}>
     <StoryHeading language={language} title={text.title} />
     {!accessFailed && <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[storyLanguage]}
       allowFontScaling selectable style={styles.storyTitle}>{title}</Text>}

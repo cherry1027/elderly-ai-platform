@@ -78,7 +78,7 @@ function StoryExportsView({ language, storyLanguage, title, state, onPrepare, on
     setSelected(next);
     if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(text.item + ' ' + (next + 1) + ' ' + text.of + ' ' + state.items.length);
   };
-  return <Screen scrollViewRef={scroll} onContentLayout={event => { position.current.content = event.nativeEvent.layout.y; }}>
+  return <Screen back={{ language, label: text.back, onPress: onBack }} scrollViewRef={scroll} onContentLayout={event => { position.current.content = event.nativeEvent.layout.y; }}>
     <DraftEditingButton language={language} label={text.back} onPress={onBack} />
     <StoryHeading language={language} title={text.title} kicker={text.kicker} />
     {!accessFailed && <Text accessibilityRole="header" accessibilityLanguage={contentLocale} allowFontScaling selectable style={styles.storyTitle}>{title}</Text>}

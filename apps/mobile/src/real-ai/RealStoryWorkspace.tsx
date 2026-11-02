@@ -7,7 +7,7 @@ import type { StoryEdit } from '../api/story-drafts';
 import { createNativeRecorder, createRecordingId, MAX_RECORDING_MS, type RecordingDriver } from '../audio/native-recorder';
 import { LargeButton } from '../components/LargeButton';
 import { Screen } from '../components/Screen';
-import { StoryHeading } from '../components/StoryPresentation';
+import { StoryDisclosure, StoryHeading } from '../components/StoryPresentation';
 import { usePdfPrivacy } from '../exports/PdfPrivacy';
 import type { PrivatePdfStore } from '../exports/native-pdf';
 import { accessibilityLanguages, type Language } from '../i18n';
@@ -355,7 +355,17 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const checkbox = (label: string, checked: boolean, action: () => void, disabled: boolean) => <Pressable accessibilityRole="checkbox"
     accessibilityLabel={label} accessibilityState={{ checked, disabled }} disabled={disabled} onPress={action} style={styles.checkbox}>
     <Text allowFontScaling accessibilityLanguage={locale} style={styles.body}>{checked ? '☑' : '☐'} {label}</Text></Pressable>;
-  return <Screen working keyboardAware><View style={styles.workspace}>
+  const recordingControls = !suspended && tab === 'chat' && <View style={styles.composer}>
+    {recording ? <><Text allowFontScaling accessibilityLiveRegion="polite" style={styles.speaker}>{t.recording} · {Math.floor(duration / 1000)}s / 60s</Text>
+      <ActionButton {...actionDefaults} label={t.stop} onPress={stopCapture} disabled={busy} primary /></>
+      : localRecording ? <>{note(t.recorded)}
+        {checkbox(t.consent, consent, () => setConsent(!consent), busy || !!unresolved)}
+        <ActionButton {...actionDefaults} label={t.transcribe} onPress={upload} disabled={busy || !!unresolved || usageBlocked || !consent || !capabilities?.transcription} primary />
+        <ActionButton {...actionDefaults} label={t.discard} onPress={discardAudio} disabled={busy || !!unresolved} />
+      </> : <ActionButton {...actionDefaults} label={t.start} onPress={startCapture} disabled={blocked || usageBlocked || !sessionId || !capabilities?.transcription} primary />}
+  </View>;
+  return <Screen working keyboardAware back={{ language, label: t.back, onPress: () => leave.requestLeave(() => latest.current.onBack()) }}
+    bottomControls={recordingControls}><View style={styles.workspace}>
     <StoryHeading kicker={t.eyebrow} title={project.title} language={language} storyLanguage={project.language} />
     <Text allowFontScaling style={styles.badge}>{t.real} · {project.language === 'sv' ? 'Svenska' : 'English'}</Text>
     {note(t.pending)}
@@ -365,7 +375,10 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       onPress={() => { void mediaPrivacy.retry(); }} /></View>}
     {suspended ? <>{note(t.background)}<ActionButton {...actionDefaults} label={t.resume} onPress={open} disabled={busy} primary /></> : <>
       {!capabilities && note(t.loading)}
-      {capabilities && !capabilities.enabled && <View style={styles.card}>{note(t.disabled)}</View>}
+      {capabilities && !capabilities.enabled && <View style={styles.card}>
+        {note(t.disabled)}
+        <StoryDisclosure language={language} label={t.details}>{note(t.disabledDetails)}</StoryDisclosure>
+      </View>}
       <View style={styles.tabs}>{(['chat', 'memories', 'book'] as const).map(item => <Pressable key={item} accessibilityRole="tab"
         accessibilityState={{ selected: tab === item, disabled: busy }} disabled={busy} onPress={() => navigate(item)}
         style={[styles.tab, tab === item && styles.selectedTab]}><Text allowFontScaling style={styles.tabText}>{t[item]}</Text></Pressable>)}</View>
@@ -386,15 +399,6 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
           <ActionButton {...actionDefaults} label={t.process} onPress={() => ask(source)} disabled={blocked || usageBlocked || !capabilities?.conversation} primary />
         </View>)}
         {playing && <ActionButton {...actionDefaults} label={t.stopVoice} onPress={stopVoice} disabled={false} primary />}
-        <View style={styles.composer}>
-          {recording ? <><Text allowFontScaling accessibilityLiveRegion="polite" style={styles.speaker}>{t.recording} · {Math.floor(duration / 1000)}s / 60s</Text>
-            <ActionButton {...actionDefaults} label={t.stop} onPress={stopCapture} disabled={busy} primary /></>
-            : localRecording ? <>{note(t.recorded)}
-              {checkbox(t.consent, consent, () => setConsent(!consent), busy || !!unresolved)}
-              <ActionButton {...actionDefaults} label={t.transcribe} onPress={upload} disabled={busy || !!unresolved || usageBlocked || !consent || !capabilities?.transcription} primary />
-              <ActionButton {...actionDefaults} label={t.discard} onPress={discardAudio} disabled={busy || !!unresolved} />
-            </> : <ActionButton {...actionDefaults} label={t.start} onPress={startCapture} disabled={blocked || usageBlocked || !sessionId || !capabilities?.transcription} primary />}
-        </View>
       </>}
       {tab === 'memories' && <>
         {note(t.reviewNotice)}{!memories.length && note(t.emptyMemories)}

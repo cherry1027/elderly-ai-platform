@@ -36,7 +36,7 @@ export function StoryDetailsScreen({ language, state, onEdit, onRefresh, onBack,
     if (message && Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(message);
   }, [message]);
   const locale = accessibilityLanguages[language];
-  return <Screen><View style={styles.workspace}>
+  return <Screen back={{ language, label: text.back, onPress: onBack }}><View style={styles.workspace}>
     <StoryHeading language={language} storyLanguage={state.status === 'ready' ? state.project.language : language}
       title={state.status === 'ready' ? state.project.title.trim() || text.untitled : text.title}
       kicker={state.status === 'ready' ? text.title : undefined} />

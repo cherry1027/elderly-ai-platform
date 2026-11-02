@@ -118,7 +118,7 @@ export function EditStoryScreen({ language, project, state, onSubmit, onBack, on
   }
 
   return <KeyboardAvoidingView style={styles.keyboard} enabled={Platform.OS !== 'ios'} behavior="height">
-    <Screen keyboardAware scrollViewRef={scrollView} onContentLayout={event => { offsets.current.content = event.nativeEvent.layout.y; revealError(); }}>
+    <Screen back={{ language, label: text.cancel, onPress: () => leave(onBack) }} keyboardAware scrollViewRef={scrollView} onContentLayout={event => { offsets.current.content = event.nativeEvent.layout.y; revealError(); }}>
       <MemyBrand />
       <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]}
         allowFontScaling style={[screenStyles.heading, styles.heading]}>{text.editTitle}</Text>

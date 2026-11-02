@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { nativeNodes } from './native-tree';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
 import { AppState, type AppStateStatus } from 'react-native';
 import * as api from '../src/real-ai/api';
 import * as storyApi from '../src/api/story-projects';
@@ -7,6 +8,7 @@ import { RealStoryWorkspace } from '../src/real-ai/RealStoryWorkspace';
 import { realCopy } from '../src/real-ai/copy';
 import { realDraft, realIds as ids, realMemory, realMessage, realTranscript } from './real-ai-fixtures';
 import { mediaPrivacy } from '../src/real-ai/media-privacy';
+import { leaveCopy } from '../src/navigation/useGuardedLeave';
 jest.mock('../src/real-ai/api', () => ({ ...jest.requireActual('../src/real-ai/api'),
   getRealCapabilities: jest.fn(), getRealTranscripts: jest.fn(), getRealMessages: jest.fn(), getRealMemories: jest.fn(),
   getRealDrafts: jest.fn(), transcribeRealRecording: jest.fn(), sendRealMessage: jest.fn(), reviewRealMemory: jest.fn(),
@@ -53,12 +55,77 @@ beforeEach(() => {
 afterEach(async () => { await mediaPrivacy.retry(); jest.restoreAllMocks(); AppState.currentState = 'active'; });
 
 describe('real mobile workspace, synthetic controller checks only; physical phone acceptance remains separate', () => {
-  it('shows disabled real AI honestly without recording, generating or falling back to simulations', async () => {
+  it.each(['en', 'sv'] as const)('shows a short AI-off status and accessible Details in %s without enabling AI', async language => {
+    const copy = realCopy[language];
     jest.mocked(api.getRealCapabilities).mockResolvedValue({ contract: 'real-v2', mode: 'real', enabled: false, transcription: false, conversation: false, writing: false, speech: false, reason: 'LIVE_AI_DISABLED' });
-    await render(<RealStoryWorkspace {...props} />); await ready();
-    expect(screen.getByText(t.disabled)).toBeTruthy(); expect(screen.queryByText(/SIMULATED TRANSCRIPT/)).toBeNull();
-    await press(t.start); expect(createNativeRecorder).not.toHaveBeenCalled(); expect(api.transcribeRealRecording).not.toHaveBeenCalled();
+    await render(<RealStoryWorkspace {...props} language={language} />); await ready();
+    expect(screen.getByText(copy.disabled)).toBeOnTheScreen();
+    expect(copy.disabled).toBe(language === 'en' ? 'AI is currently off. Your saved work is still available.'
+      : 'AI är avstängd just nu. Ditt sparade arbete finns kvar.');
+    expect(screen.queryByText(copy.disabledDetails)).toBeNull();
+    const details = screen.getByRole('button', { name: copy.details });
+    expect(details.props.accessibilityState.expanded).toBe(false); expect(details).toHaveStyle({ minHeight: 56 });
+    expect(details.props.accessibilityLanguage).toBe(language === 'sv' ? 'sv-SE' : 'en-GB');
+    await fireEvent.press(details); expect(details.props.accessibilityState.expanded).toBe(true);
+    expect(screen.getByText(copy.disabledDetails)).toBeOnTheScreen();
+    await fireEvent.press(details); expect(screen.queryByText(copy.disabledDetails)).toBeNull();
+    expect(screen.queryByText(/SIMULATED TRANSCRIPT/)).toBeNull();
+    await press(copy.start); expect(createNativeRecorder).not.toHaveBeenCalled(); expect(api.transcribeRealRecording).not.toHaveBeenCalled();
     expect(api.sendRealMessage).not.toHaveBeenCalled(); expect(api.generateRealDraft).not.toHaveBeenCalled();
+  });
+  it.each(['en', 'sv'] as const)('keeps top Back outside the scroll in all three workspace tabs in %s', async language => {
+    const copy = realCopy[language];
+    await render(<RealStoryWorkspace {...props} language={language} />); await ready();
+    for (const label of [copy.chat, copy.memories, copy.book]) {
+      await press(label);
+      expect(screen.getByTestId('story-top-back')).toBeOnTheScreen();
+      expect(within(screen.getByTestId('story-content-scroll')).queryByTestId('story-top-back')).toBeNull();
+    }
+    await fireEvent.press(screen.getByTestId('story-top-back')); expect(props.onBack).toHaveBeenCalledTimes(1);
+  });
+  it('keeps the microphone, stop, consent, save and discard in a separate scroll region beside a long history', async () => {
+    jest.mocked(api.getRealMessages).mockResolvedValue(Array.from({ length: 40 }, (_, index) => realMessage('user', {
+      id: `synthetic-message-${index}`, sequence: index + 1, text: `Saved memory ${index}: ${'A long memory. '.repeat(40)}`,
+    })));
+    await render(<RealStoryWorkspace {...props} />); await ready();
+    const history = screen.getByTestId('story-content-scroll');
+    const controls = () => within(screen.getByTestId('story-bottom-controls'));
+    expect(within(history).getByTestId('real-ai-chat-thread')).toBeOnTheScreen();
+    expect(within(history).queryByText(t.start)).toBeNull();
+    await fireEvent.scroll(history, { nativeEvent: { contentOffset: { y: 2000 } } });
+    await fireEvent.press(controls().getByRole('button', { name: t.start })); await act(async () => {});
+    expect(controls().getByRole('button', { name: t.stop })).toBeOnTheScreen();
+    await press(t.stop);
+    expect(controls().getByRole('checkbox', { name: t.consent })).toBeOnTheScreen();
+    expect(controls().getByRole('button', { name: t.transcribe })).toBeDisabled();
+    await fireEvent.press(controls().getByRole('checkbox'));
+    expect(controls().getByRole('button', { name: t.transcribe })).toBeEnabled();
+    await fireEvent.press(controls().getByRole('button', { name: t.discard })); await act(async () => {});
+    expect(recorder.discard).toHaveBeenCalledWith(clip); expect(controls().getByText(t.start)).toBeOnTheScreen();
+    expect(api.transcribeRealRecording).not.toHaveBeenCalled();
+  });
+  it.each(['en', 'sv'] as const)('top Back retains the existing unsaved autobiography warning in %s', async language => {
+    const copy = realCopy[language], warning = leaveCopy[language];
+    jest.mocked(api.getRealDrafts).mockResolvedValue([realDraft()]);
+    await render(<RealStoryWorkspace {...props} language={language} initialTab="book" />); await ready();
+    await press(copy.edit); await fireEvent.changeText(screen.getByLabelText(copy.editor), 'My unsaved correction.');
+    await fireEvent.press(screen.getByTestId('story-top-back'));
+    expect(screen.getByText(warning.dirty)).toBeOnTheScreen(); expect(props.onBack).not.toHaveBeenCalled();
+    await press(warning.keep); expect(screen.getByLabelText(copy.editor).props.value).toBe('My unsaved correction.');
+    await fireEvent.press(screen.getByTestId('story-top-back')); await press(warning.discard);
+    expect(props.onBack).toHaveBeenCalledTimes(1); expect(api.editRealDraft).not.toHaveBeenCalled();
+  });
+  it('top Back retains the uncertain-request warning and existing check-saved-result action', async () => {
+    jest.mocked(api.getRealTranscripts).mockResolvedValue([realTranscript()]);
+    jest.mocked(api.sendRealMessage).mockRejectedValueOnce(new api.RealAiError('network', undefined, true));
+    jest.mocked(api.findRealOperation).mockResolvedValue({ operation_id: ids.memory, project_id: ids.project, session_id: ids.session,
+      kind: 'conversation', status: 'uncertain', created_at: project.created_at, updated_at: project.created_at, error_code: null, result: null });
+    await render(<RealStoryWorkspace {...props} />); await ready(); await press(t.process);
+    await fireEvent.press(screen.getByTestId('story-top-back'));
+    expect(screen.getByText(leaveCopy.en.uncertain)).toBeOnTheScreen(); expect(props.onBack).not.toHaveBeenCalled();
+    await fireEvent.press(within(nativeNodes('modal')[0]).getByRole('button', { name: leaveCopy.en.check })); await act(async () => {});
+    expect(api.findRealOperation).toHaveBeenCalledTimes(1); expect(api.sendRealMessage).toHaveBeenCalledTimes(1);
+    expect(props.onBack).not.toHaveBeenCalled();
   });
   it('reuses the authenticated active session and never creates duplicates merely while loading', async () => {
     await render(<RealStoryWorkspace {...props} />); await ready();
@@ -175,7 +242,8 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     await press(t.resume); expect(screen.getByText(realMessage('assistant').text)).toBeTruthy(); await rendered.unmount();
   });
   it('requires a fresh confirmed leave intent for an unsaved native recording', async () => {
-    await render(<RealStoryWorkspace {...props} />); await ready(); await press(t.start); await press(t.stop); await press(t.back);
+    await render(<RealStoryWorkspace {...props} />); await ready(); await press(t.start); await press(t.stop);
+    await fireEvent.press(screen.getByTestId('story-top-back'));
     expect(props.onBack).not.toHaveBeenCalled(); expect(screen.getByText('Keep your changes?')).toBeTruthy();
     await press('Leave Without Saving'); expect(props.onBack).toHaveBeenCalledTimes(1); expect(recorder.dispose).toHaveBeenCalled();
   });

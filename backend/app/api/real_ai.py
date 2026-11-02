@@ -273,6 +273,33 @@ async def history(draft_id: UUID, gateway: Gateway, limit: Limit = 50, offset: O
     return [validated(StoryEditResponse, {k:v for k,v in r.items() if k != "project_id"}) for r in rows]
 
 
+@router.get("/conversation-messages/{message_id}/speech", response_model=RealSpeech)
+async def prepared_speech(message_id: UUID, request: Request, gateway: Gateway):
+    """Recover an owned prepared reply without paying to synthesize it again."""
+    message = validated(RealMessage, await gateway.one("real_conversation_messages", "id", message_id))
+    if message["role"] != "assistant":
+        raise APIError(422, "ASSISTANT_MESSAGE_REQUIRED", "Choose an interviewer reply.")
+    rows = await gateway.rows("real_speech", filters={
+        "assistant_message_id": f"eq.{message_id}",
+        "project_id": f"eq.{message['project_id']}",
+        "session_id": f"eq.{message['session_id']}",
+    }, limit=1, order="created_at.desc,speech_id.desc")
+    if not rows:
+        raise APIError(404, "RESOURCE_NOT_FOUND", "The requested resource was not found.")
+    row = rows[0]
+    if (not isinstance(row, dict) or row.get("assistant_message_id") != str(message_id)
+        or row.get("project_id") != message["project_id"] or row.get("session_id") != message["session_id"]):
+        raise unavailable()
+    metadata = await gateway.normalize_result("speech", row)
+    if metadata["assistant_message_id"] != str(message_id) or metadata["language"] != message["language"]:
+        raise unavailable()
+    if datetime.fromisoformat(metadata["expires_at"]) <= datetime.now(timezone.utc):
+        raise APIError(410, "SPEECH_EXPIRED", "Spoken reply expired. Request a new reply explicitly.")
+    # Gate-free owned read: an exhausted budget must not block existing audio.
+    request.app.state.real_ai.cache.get(gateway.user.id, UUID(metadata["speech_id"]), metadata["audio_sha256"])
+    return metadata
+
+
 @router.post("/conversation-messages/{message_id}/speech", response_model=RealSpeech)
 async def speak(message_id: UUID, payload: RealSpeechRequest, request: Request, gateway: Gateway, idempotency_key: Key):
     message = validated(RealMessage, await gateway.one("real_conversation_messages", "id", message_id))

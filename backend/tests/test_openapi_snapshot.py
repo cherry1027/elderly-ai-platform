@@ -29,7 +29,7 @@ def test_openapi_schema_is_deterministic_and_does_not_embed_configured_credentia
     assert sum(method in methods for path,item in spec["paths"].items() for method in item
                if not path.startswith("/api/v2/")) == 25
     assert sum(method in methods for path,item in spec["paths"].items() for method in item
-               if path.startswith("/api/v2/")) == 19
+               if path.startswith("/api/v2/")) == 20
 
 
 def test_fresh_export_fails_safely_on_invalid_environment_configuration():

@@ -66,7 +66,7 @@ For the actual device journey: sign in, open an owned story, choose **Share Memo
 
 ## v2 contract
 
-The OpenAPI snapshot contains all 25 unchanged legacy operations plus 19 new v2 operations. Every private route validates the Supabase user access token online. `capabilities` is the only public v2 route. Lists are arrays, paginated with `limit`/`offset`. Project language and ownership come from the owned project/session, never a client `user_id`.
+The OpenAPI snapshot contains all 25 unchanged legacy operations plus 20 v2 operations, including the free prepared-speech recovery read. Every private route validates the Supabase user access token online. `capabilities` is the only public v2 route. Lists are arrays, paginated with `limit`/`offset`. Project language and ownership come from the owned project/session, never a client `user_id`.
 
 | Method | `/api/v2` path | Purpose |
 |---|---|---|
@@ -82,7 +82,7 @@ The OpenAPI snapshot contains all 25 unchanged legacy operations plus 19 new v2 
 | POST | `/story-drafts/{id}/export` | PDF of the explicitly selected revision |
 | GET | `/story-projects/{id}/exports` | Immutable export metadata |
 | GET | `/story-exports/{id}/download` | Re-render that historical saved snapshot |
-| POST | `/conversation-messages/{id}/speech` | Explicit speech for a saved assistant reply |
+| POST / GET | `/conversation-messages/{id}/speech` | Explicit paid speech / free recovery of a prepared owned reply |
 | GET | `/spoken-replies/{id}/audio` | Authenticated transient WAV |
 | GET | `/operations/{id}` | Reconcile by server operation ID |
 | GET | `/operations/by-key/{kind}/{action_key}` | Reconcile a completely lost response |

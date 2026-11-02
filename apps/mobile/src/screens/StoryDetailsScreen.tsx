@@ -52,7 +52,6 @@ export function StoryDetailsScreen({ language, state, onEdit, onRefresh, onBack,
         <Text accessibilityLanguage={locale} allowFontScaling style={styles.language}>
           {text.language}: {state.project.language === 'sv' ? text.swedish : text.english}
         </Text>
-        <Text accessibilityLanguage={locale} allowFontScaling style={styles.body}>{text.introduction}</Text>
         {onConversation && <View style={styles.action}>
           <LargeButton label={text.conversation} language={language} density="compact" onPress={onConversation} />
           <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.shareHelp}</Text>
@@ -78,7 +77,7 @@ export function StoryDetailsScreen({ language, state, onEdit, onRefresh, onBack,
         </StoryDisclosure>
       </>}
       {state.status === 'error' && state.error !== 'authentication' &&
-        <LargeButton label={text.refresh} language={language} variant="secondary" density="compact" disabled={waiting} onPress={onRefresh} />}
+        <AccountAction label={text.refresh} language={language} quiet disabled={waiting} onPress={onRefresh} />}
       <LargeButton label={text.back} language={language} variant="secondary" density="compact" onPress={onBack} />
       <AccountAction label={text.signOut} language={language} quiet onPress={onSignOut} />
     </View>
@@ -87,7 +86,9 @@ export function StoryDetailsScreen({ language, state, onEdit, onRefresh, onBack,
 
 const styles = StyleSheet.create({
   workspace: { width: '100%', flexGrow: 1, gap: 20 },
-  details: { width: '100%', gap: 20 }, action: { width: '100%', gap: 8 },
+  details: { width: '100%', gap: 20 },
+  action: { width: '100%', gap: 8, padding: 16, borderWidth: 1, borderColor: colors.border,
+    borderRadius: 20, backgroundColor: colors.paper },
   language: { color: colors.forest, fontSize: 20, lineHeight: 30, flexShrink: 1 },
   body: { color: colors.ink, fontSize: 21, lineHeight: 31, flexShrink: 1 },
   help: { color: colors.muted, fontSize: 19, lineHeight: 28, flexShrink: 1 },

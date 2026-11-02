@@ -6,6 +6,7 @@ import type { AudioRecording } from '../api/audio-transcripts';
 import type { StoryEdit } from '../api/story-drafts';
 import { createNativeRecorder, createRecordingId, MAX_RECORDING_MS, type RecordingDriver } from '../audio/native-recorder';
 import { LargeButton } from '../components/LargeButton';
+import { AccountAction } from '../components/AccountPresentation';
 import { Screen } from '../components/Screen';
 import { StoryDisclosure, StoryHeading } from '../components/StoryPresentation';
 import { usePdfPrivacy } from '../exports/PdfPrivacy';
@@ -364,11 +365,14 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         <ActionButton {...actionDefaults} label={t.discard} onPress={discardAudio} disabled={busy || !!unresolved} />
       </> : <ActionButton {...actionDefaults} label={t.start} onPress={startCapture} disabled={blocked || usageBlocked || !sessionId || !capabilities?.transcription} primary />}
   </View>;
+  const generationControls = <>
+    {checkbox(t.generationConsent, generationConsent, () => setGenerationConsent(!generationConsent), blocked || editor !== null)}
+    <ActionButton {...actionDefaults} label={t.generate} onPress={generate} disabled={blocked || usageBlocked || editor !== null || !generationConsent || !capabilities?.writing || !memories.some(item => item.status === 'confirmed')} primary />
+  </>;
   return <Screen working keyboardAware back={{ language, label: t.back, onPress: () => leave.requestLeave(() => latest.current.onBack()) }}
     bottomControls={recordingControls}><View style={styles.workspace}>
     <StoryHeading kicker={t.eyebrow} title={project.title} language={language} storyLanguage={project.language} />
     <Text allowFontScaling style={styles.badge}>{t.real} · {project.language === 'sv' ? 'Svenska' : 'English'}</Text>
-    {note(t.pending)}
     {notice !== '' && <Text allowFontScaling accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.notice}>{notice}</Text>}
     {usageBlocked && note(t.usageLimit)}
     {mediaBlocked && <View style={styles.card}>{note(t.cleanupBlocked)}<ActionButton language={language} label={t.retryCleanup}
@@ -403,26 +407,28 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       {tab === 'memories' && <>
         {note(t.reviewNotice)}{!memories.length && note(t.emptyMemories)}
         {memories.map(memory => <View key={memory.id} style={styles.card}>
-          <Text allowFontScaling style={styles.speaker}>{memory.status === 'pending' ? t.pendingStatus : memory.status === 'confirmed' ? t.confirmed : t.rejected}</Text>
           <Text allowFontScaling selectable style={styles.body}>{memory.corrected_value ?? memory.value}</Text>
-          <Text allowFontScaling style={styles.sourceLabel}>{t.evidence}</Text>
-          <Text allowFontScaling selectable style={styles.quote}>{memory.evidence}</Text>
-          {memory.clarification_question && <>{note(t.question)}<Text allowFontScaling style={styles.body}>{memory.clarification_question}</Text></>}
-          <TextInput accessibilityLabel={t.correct} placeholder={t.correct} value={corrections[memory.id] ?? ''} multiline maxLength={1000}
-            editable={!blocked} style={styles.input} onChangeText={value => { if (!busy && active.current) setCorrections(previous => ({ ...previous, [memory.id]: value })); }} />
+          <Text allowFontScaling style={styles.speaker}>{memory.status === 'pending' ? t.pendingStatus : memory.status === 'confirmed' ? t.confirmed : t.rejected}</Text>
           <ActionButton {...actionDefaults} label={t.confirm} onPress={() => review(memory, 'confirmed')} primary />
+          <StoryDisclosure language={language} label={t.correctAction}>
+            <TextInput accessibilityLabel={t.correct} accessibilityLanguage={locale} allowFontScaling
+              placeholder={t.correct} value={corrections[memory.id] ?? ''} multiline maxLength={1000}
+              editable={!blocked} style={styles.input} onChangeText={value => { if (!busy && active.current) setCorrections(previous => ({ ...previous, [memory.id]: value })); }} />
+            {note(t.correctionHelp)}
+          </StoryDisclosure>
           <ActionButton {...actionDefaults} label={t.reject} onPress={() => review(memory, 'rejected')} />
+          {memory.clarification_question && <>{note(t.question)}<Text allowFontScaling style={styles.body}>{memory.clarification_question}</Text></>}
+          <StoryDisclosure language={language} label={t.seeOriginal}>
+            <Text allowFontScaling style={styles.sourceLabel}>{t.evidence}</Text>
+            <Text allowFontScaling selectable accessibilityLanguage={accessibilityLanguages[project.language]} style={styles.quote}>{memory.evidence}</Text>
+          </StoryDisclosure>
         </View>)}
       </>}
       {tab === 'book' && <>
-        {drafts.length > 1 && <View style={styles.card}>{drafts.map(item => <ActionButton key={item.draft_id} {...actionDefaults}
-          label={`${t.version} ${item.version} · ${t.revision} ${item.revision}`}
-          onPress={() => leave.requestLeave(() => { setSelected(item.draft_id); setEditor(null); setHistory(null); })} disabled={blocked || editor !== null} />)}</View>}
         {!draft && note(t.emptyBook)}
         {draft && <View style={styles.card}>
-          <Text allowFontScaling style={styles.bookTitle}>{project.title}</Text>
           {note(`${t.version} ${draft.version} · ${t.revision} ${draft.revision}`)}
-          {note(t.reviewDraft)}{note(t.modelReview)}
+          {note(t.reviewDraft)}
           {draft.verification.status === 'stale_sources' && note(t.stale)}
           {editor === null ? <Text allowFontScaling selectable accessibilityLanguage={accessibilityLanguages[project.language]} style={styles.bookProse}>{draft.content}</Text>
             : <><Text allowFontScaling style={styles.speaker}>{t.editor}</Text><TextInput accessibilityLabel={t.editor} value={editor}
@@ -432,22 +438,32 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
               <ActionButton {...actionDefaults} label={t.cancel} onPress={() => leave.requestLeave(() => setEditor(null))} disabled={busy} />
             </>}
           {editor === null && <><ActionButton {...actionDefaults} label={t.edit} onPress={() => { setEditor(draft.content); setHistory(null); }} />
-            <ActionButton {...actionDefaults} label={t.history} onPress={showHistory} />
             <ActionButton {...actionDefaults} label={t.export} onPress={sharePdf} disabled={blocked || !privacy.ready || privacy.failed} primary />{note(t.pdfNotice)}</>}
-          <Text allowFontScaling style={styles.speaker}>{t.sources}</Text>
-          {draft.source_memories.map(source => <View key={source.memory_id} style={styles.source}><Text allowFontScaling style={styles.body}>{source.corrected_value ?? source.value}</Text>
-            <Text allowFontScaling selectable style={styles.quote}>{source.evidence}</Text></View>)}
-          {history && <View style={styles.source}>{!history.length && note(t.noHistory)}{history.map(item => <View key={item.id}>
-            {note(`${t.revision} ${item.revision}`)}<Text allowFontScaling selectable style={styles.body}>{item.content}</Text></View>)}</View>}
+          <StoryDisclosure language={language} label={t.sources}>
+            {draft.source_memories.map(source => <View key={source.memory_id} style={styles.source}><Text allowFontScaling style={styles.body}>{source.corrected_value ?? source.value}</Text>
+              <Text allowFontScaling selectable style={styles.quote}>{source.evidence}</Text></View>)}
+          </StoryDisclosure>
+          <StoryDisclosure language={language} label={t.draftDetails}>{note(t.modelReview)}</StoryDisclosure>
+          <StoryDisclosure language={language} label={t.historySection}>
+            {editor === null && <ActionButton {...actionDefaults} label={t.history} onPress={showHistory} />}
+            {history && <View style={styles.source}>{!history.length && note(t.noHistory)}{history.map(item => <View key={item.id}>
+              {note(`${t.revision} ${item.revision}`)}<Text allowFontScaling selectable style={styles.body}>{item.content}</Text></View>)}</View>}
+          </StoryDisclosure>
         </View>}
-        {checkbox(t.generationConsent, generationConsent, () => setGenerationConsent(!generationConsent), blocked || editor !== null)}
-        <ActionButton {...actionDefaults} label={t.generate} onPress={generate} disabled={blocked || usageBlocked || editor !== null || !generationConsent || !capabilities?.writing || !memories.some(item => item.status === 'confirmed')} primary />
-        <ActionButton {...actionDefaults} label={t.exports} onPress={showExports} disabled={blocked || editor !== null} />
-        {exports && <View style={styles.card}>{!exports.length && note(t.noExports)}{exports.map(item => <View key={item.export_id} style={styles.source}>
-          <Text allowFontScaling style={styles.speaker}>{item.title}</Text>
-          {note(`${t.version} ${item.draft_version} · ${t.revision} ${item.draft_revision}`)}
-          <ActionButton {...actionDefaults} label={t.download} onPress={() => shareSavedPdf(item)} disabled={blocked || editor !== null || !privacy.ready || privacy.failed} />
-        </View>)}</View>}
+        {drafts.length > 1 && <StoryDisclosure language={language} label={t.versions}>
+          {drafts.map(item => <ActionButton key={item.draft_id} {...actionDefaults}
+            label={`${t.version} ${item.version} · ${t.revision} ${item.revision}`}
+            onPress={() => leave.requestLeave(() => { setSelected(item.draft_id); setEditor(null); setHistory(null); })} disabled={blocked || editor !== null} />)}
+        </StoryDisclosure>}
+        {draft ? <StoryDisclosure language={language} label={t.createVersion}>{generationControls}</StoryDisclosure> : generationControls}
+        <StoryDisclosure language={language} label={t.pdfVersions}>
+          <ActionButton {...actionDefaults} label={t.exports} onPress={showExports} disabled={blocked || editor !== null} />
+          {exports && <View style={styles.card}>{!exports.length && note(t.noExports)}{exports.map(item => <View key={item.export_id} style={styles.source}>
+            <Text allowFontScaling style={styles.speaker}>{item.title}</Text>
+            {note(`${t.version} ${item.draft_version} · ${t.revision} ${item.draft_revision}`)}
+            <ActionButton {...actionDefaults} label={t.download} onPress={() => shareSavedPdf(item)} disabled={blocked || editor !== null || !privacy.ready || privacy.failed} />
+          </View>)}</View>}
+        </StoryDisclosure>
       </>}
       {(Object.keys(pages) as Resource[]).filter(resource => pages[resource] !== null &&
         (tab === 'chat' ? ['transcripts', 'messages'].includes(resource) : tab === 'memories' ? resource === 'memories' : ['drafts', 'history', 'exports'].includes(resource))).map(resource =>
@@ -455,11 +471,15 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
           {(pages[resource] ?? 0) >= 1000 ? note(t.pageLimit) : <ActionButton {...actionDefaults} label={`${t.loadMore}: ${t[resource]}`} onPress={() => loadMore(resource)} disabled={blocked || editor !== null} />}
         </View>)}
       {(unresolved || ambiguousEdit) && <ActionButton {...actionDefaults} label={t.check} onPress={checkSaved} disabled={busy || recording || !sessionId} primary />}
-      <ActionButton {...actionDefaults} label={t.reload} onPress={() => { if (unresolved || ambiguousEdit) checkSaved(); else open(); }} disabled={busy || recording || !!localRecording || editor !== null} />
     </>}
     {busy && <Text accessibilityLiveRegion="polite" style={styles.note}>{t.busy}</Text>}
+    <StoryDisclosure language={language} label={t.moreActions}>
+      {!suspended && <AccountAction language={language} quiet label={t.reload}
+        onPress={() => { if (unresolved || ambiguousEdit) checkSaved(); else open(); }} disabled={busy || recording || !!localRecording || editor !== null} />}
+      {note(t.pending)}
+    </StoryDisclosure>
     <ActionButton {...actionDefaults} label={t.back} onPress={() => leave.requestLeave(() => latest.current.onBack())} disabled={false} />
-    <ActionButton {...actionDefaults} label={t.signOut} onPress={() => leave.requestLeave(() => latest.current.onSignOut())} disabled={false} />
+    <AccountAction language={language} quiet label={t.signOut} onPress={() => leave.requestLeave(() => latest.current.onSignOut())} />
     {leave.dialog}
   </View></Screen>;
 }
@@ -477,6 +497,6 @@ const styles = StyleSheet.create({
   checkbox: { minHeight: 56, paddingVertical: 8 }, sourceLabel: { fontSize: 16, color: colors.muted },
   quote: { fontSize: 18, lineHeight: 29, color: colors.muted, borderLeftWidth: 2, borderColor: colors.border, paddingLeft: 12 },
   input: { color: colors.ink, fontSize: 21, lineHeight: 33, minHeight: 80, textAlignVertical: 'top', padding: 14, borderRadius: 16, borderWidth: 1, borderColor: colors.forest, backgroundColor: colors.cream },
-  editor: { minHeight: 320 }, bookTitle: { color: colors.ink, fontFamily: headingFont, fontSize: 32, lineHeight: 42 },
+  editor: { minHeight: 320 },
   bookProse: { color: colors.ink, fontFamily: headingFont, fontSize: 22, lineHeight: 36 }, source: { gap: 12, paddingTop: 16, borderTopWidth: 1, borderColor: colors.border },
 });

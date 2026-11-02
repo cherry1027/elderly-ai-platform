@@ -71,3 +71,25 @@ it('keeps long content scalable and unclipped without unsupported controls', asy
   }
   expect(screen.queryByText(/premium|chapter|delete|PDF|recording/i)).toBeNull();
 });
+it.each(['en', 'sv'] as const)('keeps the three %s choices clear and metadata secondary', async language => {
+  const text = storyDetailsCopy[language];
+  const actions = { onConversation: jest.fn(), onReviewMemories: jest.fn(), onGenerate: jest.fn(),
+    onBack: jest.fn(), onEdit: jest.fn(), onRefresh: jest.fn(), onSignOut: jest.fn() };
+  await render(<StoryDetailsScreen language={language} state={{ status: 'ready', project }} {...actions} />);
+  expect(screen.queryByText(text.introduction)).toBeNull();
+  expect(screen.queryByText(`Status: ${text.draft}`)).toBeNull();
+  expect(screen.queryByText(project.description!)).toBeNull();
+  for (const [label, help, callback] of [[text.conversation, text.shareHelp, actions.onConversation],
+    [text.review, text.reviewHelp, actions.onReviewMemories], [text.generate, text.autobiographyHelp, actions.onGenerate]] as const) {
+    expect(screen.getByText(help)).toBeOnTheScreen();
+    const button = screen.getByRole('button', { name: label }); expect(button).toHaveStyle({ minHeight: 56 });
+    await fireEvent.press(button); expect(callback).toHaveBeenCalledTimes(1);
+  }
+  await fireEvent.press(screen.getByRole('button', { name: text.more }));
+  expect(screen.getByText(project.description!)).toHaveProp('selectable', true);
+  await fireEvent.press(screen.getByRole('button', { name: text.edit })); expect(actions.onEdit).toHaveBeenCalledTimes(1);
+  const refresh = screen.getByRole('button', { name: text.refresh }); expect(refresh).toHaveStyle({ backgroundColor: 'transparent' });
+  await fireEvent.press(refresh); expect(actions.onRefresh).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole('button', { name: text.signOut })).toHaveStyle({ backgroundColor: 'transparent' });
+  await fireEvent.press(screen.getByTestId('story-top-back')); expect(actions.onBack).toHaveBeenCalledTimes(1);
+});

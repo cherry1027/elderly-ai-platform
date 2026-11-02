@@ -44,7 +44,7 @@ node --check app.js
 node --check workspace.js
 ```
 
-All 63 offline API, welcome, workspace, and proxy checks passed. Browser startup showed
+All 96 offline API, welcome, workspace, and proxy checks passed. Browser startup showed
 the sign-in interface without console warnings or errors, and the local proxy
 reported the real-v2 backend ready. Mocked UI checks are
 separate from actual signed-in browser acceptance and actual iPhone acceptance.
@@ -129,3 +129,50 @@ local web pass. Actual-device and older-user acceptance remain separate checks.
 
 No new dependencies, provider calls, hosted changes, commits or pushes were made
 for this interaction pass.
+
+## Faster saved-work updates — 2 November 2026
+
+Initial capability and story-library reads now start together, removing one
+sequential network wave. Successful actions reread only collections they can
+change, instead of refreshing all six collections in an open story:
+
+| Action | Collection reads before | Collection reads now |
+|---|---:|---:|
+| Save original transcript | 6 | 1 |
+| Save conversation turn | 6 | 3 |
+| Review a memory | 6 | 2 |
+| Generate or edit a draft | 6 | 1 |
+| Prepare a new PDF | 6 | 1 |
+| Download a saved PDF | 6 | 0 |
+
+Counts assume each collection fits in its first page. Pagination is unchanged.
+Conversation and memory-review refreshes still include drafts so new clarification
+questions and changed source facts mark older wording accurately. Explicit **Reload saved story** and uncertain-action
+reconciliation still reread every collection. Private context/background cleanup,
+authentication, explicit transcript review, paid-action consent and retry controls
+are unchanged. Nothing is stored in a new browser or HTTP cache.
+
+Offline delayed-request and request-count checks verify the removed waterfall and
+redundant reads. These are not claims of measured live-model speed or actual-phone
+performance; no paid provider calls were used for these checks.
+
+## Unsent-action recovery and PDF guidance — 2 November 2026
+
+An operation that stopped before any provider dispatch can be recorded as
+`failed`, including a spending-reservation rejection after its operation was
+claimed. **Reload saved action** now releases that held client action only after
+the owned lookup returns the complete matching `RealOperation` envelope with a
+terminal `failed` status and `result: null`. The client checks the original
+operation ID when known, kind, project/session scope, canonical non-null failure
+code, timestamps and current
+client/action identity. Malformed, wrong-scope, disposed, in-progress and uncertain
+results remain held. A verified failed lookup reports that no AI request was sent
+for that operation; it never retries a POST or clears prior spending history.
+Starting a replacement still requires a later explicit click and a new action key.
+
+The autobiography view now explains that writing the first draft uses Real AI,
+while PDF preparation/download from an already saved draft makes no AI request.
+Local testing-allowance messages are distinguished from provider credit/billing
+rejections; the interface does not infer or display an account credit balance.
+These paths are verified with synthetic offline responses, including the actual
+client-to-workspace failure/recovery flow. No live provider call was used.

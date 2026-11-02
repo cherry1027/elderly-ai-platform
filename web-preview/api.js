@@ -1,6 +1,9 @@
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PATH = /^\/api\/v[12]\/[A-Za-z0-9_/-]+(?:\?[A-Za-z0-9_=&%-]+)?$/;
 const KINDS = new Set(['transcription', 'conversation', 'generation', 'speech']);
+const OPERATION_FIELDS = ['operation_id', 'kind', 'status', 'project_id', 'session_id', 'created_at', 'updated_at', 'error_code', 'result'];
+const awareTimestamp = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) &&
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(value);
 // These responses occur before execute() claims a paid operation. A matching
 // operation header always wins, including failures raised later by the same
 // shared helpers inside execute(). Unknown conflicts/server failures stay held.
@@ -22,6 +25,21 @@ function resultMatchesAction(result, action) {
   return action.kind !== 'speech' || result.assistant_message_id === action.assistantMessageId;
 }
 
+function verifiedFailedOperation(op, action) {
+  // Only the owned server operation's terminal failed state proves that this
+  // operation stopped before provider dispatch. An error code alone does not.
+  if (!op || typeof op !== 'object' || Array.isArray(op) ||
+      Object.keys(op).length !== OPERATION_FIELDS.length || OPERATION_FIELDS.some(field => !Object.hasOwn(op, field)) ||
+      !UUID.test(op.operation_id || '') || (action.operationId && op.operation_id !== action.operationId) ||
+      op.kind !== action.kind || op.status !== 'failed' || op.result !== null ||
+      !action.scope || !UUID.test(action.scope.projectId || '') || op.project_id !== action.scope.projectId ||
+      !awareTimestamp(op.created_at) || !awareTimestamp(op.updated_at) ||
+      typeof op.error_code !== 'string' || !/^[A-Z0-9_]{1,80}$/.test(op.error_code)) return false;
+  const expectedSession = action.kind === 'generation' ? null : action.scope.sessionId;
+  return expectedSession === null ? op.session_id === null :
+    UUID.test(expectedSession || '') && op.session_id === expectedSession;
+}
+
 export class AppError extends Error {
   constructor(message, code = 'REQUEST_FAILED', uncertain = false) {
     super(message); this.name = 'AppError'; this.code = code; this.uncertain = uncertain;
@@ -38,7 +56,8 @@ export function validatePath(path) {
 function messageFor(code, status) {
   if (status === 401) return 'Please sign in again. Your private content has been cleared.';
   if (status === 403 || status === 404) return 'This saved item is unavailable for your account.';
-  if (code === 'AI_USAGE_LIMIT' || code === 'AI_SPENDING_NOT_APPROVED') return 'The current AI testing allowance is closed. Your saved work is still available.';
+  if (code === 'AI_USAGE_LIMIT' || code === 'AI_SPENDING_NOT_APPROVED') return 'The local AI testing allowance has closed or reached its limit. This is separate from your OpenAI account balance. Your saved work and PDF export remain available.';
+  if (code === 'AI_PROVIDER_QUOTA_EXHAUSTED') return 'The AI provider rejected the request because of its credit or billing limit. This is separate from the local Memy testing allowance. Your saved work is still available.';
   if (code === 'LIVE_AI_DISABLED' || code === 'REAL_AI_NOT_CONFIGURED') return 'Real AI is currently switched off. Your saved work is still available.';
   if (code === 'NO_CONFIRMED_MEMORIES') return 'Review and confirm your memories before creating an autobiography.';
   if (code === 'CLARIFICATION_REQUIRED') return 'Resolve the open memory questions before creating your autobiography.';
@@ -133,10 +152,17 @@ export function createApi(auth, { request = fetch, timeoutMs = 145000, makeId = 
     },
     async reconcile() {
       if (!pending) throw new AppError('There is no action awaiting a saved result.');
-      const action = pending;
+      const action = pending, version = epoch;
       const op = await call('GET', `/api/v2/operations/by-key/${action.kind}/${action.key}`);
-      if (op.kind !== action.kind || op.status !== 'completed' || !op.result) throw new AppError('This action is still being checked. Refresh again later; it has not been resent.', 'ACTION_PENDING', true);
+      if (pending !== action || disposed || epoch !== version) throw new AppError('This view is closed.', 'CANCELLED', true);
+      if (!op || typeof op !== 'object' || op.kind !== action.kind) throw new AppError('The saved result could not be verified.', 'INVALID_RESPONSE', true);
       if (action.scope && (op.project_id !== action.scope.projectId || (action.scope.sessionId && op.session_id !== action.scope.sessionId))) throw new AppError('The saved result could not be verified.', 'INVALID_RESPONSE', true);
+      if (op.status === 'failed') {
+        if (!verifiedFailedOperation(op, action)) throw new AppError('The saved result could not be verified.', 'INVALID_RESPONSE', true);
+        pending = null;
+        throw new AppError('The server confirmed this action stopped before sending an AI request. Nothing was retried. Check AI availability before choosing to try again.', 'ACTION_NOT_PROCESSED', false);
+      }
+      if (op.status !== 'completed' || !op.result) throw new AppError('This action is still being checked. Refresh again later; it has not been resent.', 'ACTION_PENDING', true);
       if (!resultMatchesAction(op.result, action)) throw new AppError('The saved result could not be verified.', 'INVALID_RESPONSE', true);
       if (pending !== action || disposed) throw new AppError('This view is closed.', 'CANCELLED', true);
       pending = null; return op.result;

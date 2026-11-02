@@ -192,15 +192,30 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
     }
     throw Error('There is too much saved data to display in this preview.');
   }
-  async function refresh(g = epoch) {
+  async function refresh(g = epoch, resources = null) {
     if (!project) { const data = await collection('/api/v1/story-projects'); if (alive(g)) projects = data; return; }
     const projectId = project.id, sessionId = session?.id;
-    const paths = [`${v2}/story-projects/${projectId}/drafts`, `${v2}/story-projects/${projectId}/exports`, `/api/v1/story-projects/${projectId}/sessions`];
-    if (sessionId) paths.push(...['transcripts', 'messages', 'memories'].map(name => `${v2}/story-sessions/${sessionId}/${name}`));
-    const data = await Promise.all(paths.map(collection));
+    const paths = {
+      drafts: `${v2}/story-projects/${projectId}/drafts`,
+      exports: `${v2}/story-projects/${projectId}/exports`,
+      sessions: `/api/v1/story-projects/${projectId}/sessions`,
+      ...(sessionId ? Object.fromEntries(['transcripts', 'messages', 'memories'].map(name => [name, `${v2}/story-sessions/${sessionId}/${name}`])) : {}),
+    };
+    // An explicit reload still reads every owned collection. After a successful
+    // action, reread only the resources it can change; never cache private HTTP
+    // responses or retry a paid request to make the interface feel faster.
+    const names = resources || Object.keys(paths);
+    if (names.some(name => !Object.hasOwn(paths, name))) throw Error('The saved data request is unavailable.');
+    const data = await Promise.all(names.map(name => collection(paths[name])));
     if (!alive(g)) return;
-    [drafts, exports, sessions] = data;
-    [transcripts, messages, memories] = sessionId ? data.slice(3) : [[], [], []];
+    const updated = Object.fromEntries(names.map((name, index) => [name, data[index]]));
+    if (updated.drafts) drafts = updated.drafts;
+    if (updated.exports) exports = updated.exports;
+    if (updated.sessions) sessions = updated.sessions;
+    if (updated.transcripts) transcripts = updated.transcripts;
+    if (updated.messages) messages = updated.messages;
+    if (updated.memories) memories = updated.memories;
+    if (!sessionId) [transcripts, messages, memories] = [[], [], []];
     messages.sort((a, b) => a.sequence - b.sequence);
     if (!transcripts.some(t => t.transcript_id === selectedTranscript)) selectedTranscript = transcripts.at(-1)?.transcript_id || '';
     if (!drafts.some(d => d.draft_id === selectedDraft)) selectedDraft = drafts[0]?.draft_id || '';
@@ -310,7 +325,8 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
     const name = safePdfName(response.headers, filename);
     clearDownload(); downloadName = name;
     downloadUrl = URL.createObjectURL(new Blob([response.bytes], { type: 'application/pdf' }));
-    await refresh(g); notice = 'Your PDF is ready. Use the download link below.';
+    if (options) await refresh(g, ['exports']);
+    notice = 'Your PDF is ready. Use the download link below.';
   }
   async function startRecording(g) {
     if (!consent || !session) throw Error('Give recording and transcription consent first.');
@@ -514,14 +530,14 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
           const form = new FormData(); form.append('file', audioFile, `recording.${audioName.split('.').at(-1).toLowerCase()}`); form.append('language', project.language); form.append('consent', 'true');
           const result = await performPaid('transcription', `${v2}/story-sessions/${session.id}/transcribe`, { form }, g);
           if (!result) return;
-          selectedTranscript = result.transcript_id; audioFile = null; audioName = ''; consent = false; await refresh(g); notice = 'Original transcript saved. Review it before sending a conversation turn.';
+          selectedTranscript = result.transcript_id; audioFile = null; audioName = ''; consent = false; await refresh(g, ['transcripts']); notice = 'Original transcript saved. Review it before sending a conversation turn.';
         }, !audioFile || !consent || Boolean(recording) || !active), audioFile && button('Discard audio', () => { audioFile = null; audioName = ''; consent = false; }, false, 'text-button')),
       panel('record-options', 'Use an audio file instead', p('Choose a WAV, MP3, M4A or WebM file, up to 25 MB. It stays in memory until you explicitly save its transcript.', 'field-help'), label('Or choose an audio file', file)));
     const transcriptReview = el('section', { class: 'transcript-review card' }, p('PRESERVED IN YOUR OWN WORDS', 'eyebrow'), el('h2', {}, 'Saved original transcripts'),
       transcripts.length ? el('div', {}, label('Choose transcript', source), chosen && el('div', {}, prose(chosen.text), provenance(chosen), p('Your saved original remains unchanged.', 'field-help'),
         paidButton(used.has(chosen.transcript_id) ? 'Transcript already sent' : 'Send selected transcript · Real AI', async g => {
           await performPaid('conversation', `${v2}/story-sessions/${session.id}/messages`, { json: { source_transcript_id: chosen.transcript_id, language: project.language } }, g);
-          if (alive(g)) { await refresh(g); notice = 'Conversation turn saved. Review the suggested memories.'; }
+          if (alive(g)) { await refresh(g, ['messages', 'memories', 'drafts']); notice = 'Conversation turn saved. Review the suggested memories.'; }
         }, used.has(chosen.transcript_id) || !active))) : p('Your original words will appear here after you save a transcript.', 'muted'));
     return [el('div', { class: 'conversation-layout' }, chat, recorder), transcriptReview, nextStep()];
   }
@@ -535,7 +551,7 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
         const review = async (g, status, corrected) => {
           const payload = { expected_version: memory.version, status }; if (corrected) payload.corrected_value = corrected;
           await api.call('PATCH', `${v2}/memories/${memory.id}`, { json: payload });
-          if (alive(g)) { correctionInputs.delete(memory.id); await refresh(g); notice = 'Memory review saved.'; }
+          if (alive(g)) { correctionInputs.delete(memory.id); await refresh(g, ['memories', 'drafts']); notice = 'Memory review saved.'; }
         };
         return el('article', { class: `memory-card card memory-${memory.status}` },
           el('div', { class: 'memory-heading' }, p(memory.fact_type, 'eyebrow'), badge(memory.status === 'confirmed' ? 'Confirmed by you' : memory.status === 'rejected' ? 'Left out' : 'Needs your review', 'memory-status')),
@@ -552,9 +568,10 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
     const generateAction = async g => {
       if (!allowLeaveDraft()) return;
       const result = await performPaid('generation', `${v2}/story-projects/${project.id}/generate`, { json: { language: project.language, style: 'warm', confirm_generation: true } }, g);
-      if (result) { selectedDraft = result.draft_id; draftEditing = null; generationConsent = false; history = []; historyDraft = ''; await refresh(g); notice = 'Draft saved. Please review its wording and facts.'; }
+      if (result) { selectedDraft = result.draft_id; draftEditing = null; generationConsent = false; history = []; historyDraft = ''; await refresh(g, ['drafts']); notice = 'Draft saved. Please review its wording and facts.'; }
     };
     const generate = el('section', { class: 'generation-panel card' }, p('FROM MEMORIES TO MEANING', 'eyebrow'), el('h2', {}, draft ? 'There’s always another chapter.' : 'Your memories, beautifully told.'), p('Turn the memories you have confirmed into a warm autobiography draft. Read it carefully; every story still needs your review.', 'muted'),
+      p('Writing a new draft uses Real AI and its testing allowance. Preparing or downloading a PDF from a saved draft makes no AI request.', 'field-help'),
       check('I want to generate a new story draft with Real AI.', generationConsent, checkboxChange(value => { generationConsent = value; })),
       paidButton('Generate new draft · Real AI', generateAction, !generationConsent));
     let reader = null;
@@ -578,7 +595,7 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
         editing ? el('section', { class: 'book-editor card' }, label('Edit your story', content), el('div', { class: 'save-bar' }, p(draftEditing.dirty ? 'Unsaved changes · saved only when you choose' : 'Your saved wording is shown above.', 'field-help'), button('Save revision', async g => {
           if (!content.value.trim()) throw Error('Your story needs some content.');
           const result = await api.call('PATCH', `${v2}/story-drafts/${draft.draft_id}`, { json: { expected_revision: draftEditing.expectedRevision, content: content.value.trim() } });
-          if (alive(g)) { selectedDraft = result.draft_id; draftEditing = null; history = []; historyDraft = ''; clearDownload(); await refresh(g); notice = 'Your revision is saved. Please review the wording before sharing.'; }
+          if (alive(g)) { selectedDraft = result.draft_id; draftEditing = null; history = []; historyDraft = ''; clearDownload(); await refresh(g, ['drafts']); notice = 'Your revision is saved. Please review the wording before sharing.'; }
         }, !draftEditing.dirty, 'primary'))) :
         el('article', { class: 'book-reader' }, el('div', { class: 'book-page' }, p('A LIFE IN YOUR OWN WORDS', 'book-kicker'), el('h2', { class: 'book-title' }, project.title), p(`AUTOBIOGRAPHY · ${languages[project.language]}`, 'book-subtitle'), ...savedBookParagraphs(draft.content))),
         el('div', { class: 'draft-actions' },
@@ -592,7 +609,7 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
     }
     const saved = panel('saved-exports', 'Previously prepared PDFs', ...empty(exports, 'Your prepared PDFs will appear here.', item => card(el('h3', {}, item.title), p(`Version ${item.draft_version} · revision ${item.draft_revision} · ${item.page_count} pages · ${date(item.created_at)}`, 'muted'),
       button('Prepare saved PDF download', g => preparePdf(`${v2}/story-exports/${item.export_id}/download`, null, g, item.filename), false, 'secondary'))));
-    return [el('section', { class: 'autobiography-heading' }, p('YOUR WORDS. YOUR LEGACY.', 'eyebrow'), !draft && el('h2', {}, 'A book that belongs to you.'), drafts.length ? label('Choose a saved autobiography', choose) : p('Your autobiography begins with the memories you choose to keep.', 'lead')),
+    return [el('section', { class: 'autobiography-heading' }, p('YOUR WORDS. YOUR LEGACY.', 'eyebrow'), !draft && el('h2', {}, 'A book that belongs to you.'), drafts.length ? label('Choose a saved autobiography', choose) : p('No autobiography draft is saved yet. Confirm your memories and generate a draft first; then you can prepare its PDF.', 'lead')),
       reader, draft ? panel('new-generation', 'Create another autobiography version', generate) : generate, saved];
   }
   function render() {
@@ -632,6 +649,13 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
     root.replaceChildren(); root.hidden = false;
   }
   document.addEventListener('visibilitychange', onBackground);
-  root.hidden = document.hidden; render(); run(async g => { await loadCapabilities(g); await refresh(g); });
+  root.hidden = document.hidden; render(); run(async g => {
+    // Settle both independent reads before the final render, including when the
+    // library fails first. A late capability response must not silently change
+    // button state after run() has already rendered the failure.
+    const results = await Promise.allSettled([loadCapabilities(g), refresh(g)]);
+    const failed = results.find(result => result.status === 'rejected');
+    if (failed) throw failed.reason;
+  });
   return { dispose };
 }

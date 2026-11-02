@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { createWorkspace, safePdfName, verifySpeech } from './workspace.js';
+import { createApi } from './api.js';
 
 let JSDOM;
 try {
@@ -590,4 +591,217 @@ test('saved conversations keep inspiration collapsed until explicitly opened, wi
   assert(!view.root.querySelector('details.memory-inspiration').open, 'an explicit close stays closed');
   view.visibility(true); view.visibility(false);
   assert(!view.root.querySelector('details.memory-inspiration').open, 'privacy cleanup restores the collapsed existing-conversation default');
+});
+
+test('startup requests saved stories without waiting for the capability round trip', async t => {
+  const { root, onCleanup } = installDOM(t);
+  const requests = [];
+  let releaseCapabilities;
+  const gate = new Promise(resolve => { releaseCapabilities = resolve; });
+  const api = {
+    hasPending: () => false,
+    async call(_method, path) {
+      requests.push(path);
+      if (path === '/api/v2/capabilities') { await gate; return { contract: 'real-v2', mode: 'real', enabled: true }; }
+      assert.equal(path, '/api/v1/story-projects?limit=100&offset=0');
+      return [{ id: ids.project, title: 'Synthetic parallel startup', language: 'en' }];
+    },
+    async paid() { assert.fail('Startup cannot dispatch paid work.'); },
+  };
+  const workspace = createWorkspace({ root, api, user: {} });
+  onCleanup(() => workspace.dispose());
+  await tick();
+  assert.deepEqual(requests, ['/api/v2/capabilities', '/api/v1/story-projects?limit=100&offset=0'],
+    'both independent reads start in the same network wave');
+  releaseCapabilities(); await tick();
+  assert(root.textContent.includes('Synthetic parallel startup'));
+  assert(!root.querySelector('.workspace-status.is-working'));
+});
+
+test('successful actions reload only changed collections, while an explicit reload remains complete', async t => {
+  const { root, onCleanup } = installDOM(t);
+  const now = '2026-01-01T12:00:00Z';
+  const project = { id: ids.project, title: 'Synthetic efficient workflow', language: 'en', updated_at: now };
+  const session = { id: ids.session, project_id: ids.project, status: 'active', created_at: now };
+  const transcript = { transcript_id: ids.transcript, text: 'Synthetic immutable original.', created_at: now };
+  const originalDraft = { draft_id: ids.draft, content: 'An earlier synthetic draft.', original_content: 'An earlier synthetic draft.', revision: 1, version: 1, updated_at: now,
+    source_memories: [], verification: { sources_current: true, unsupported_claims: [] } };
+  let transcripts = [], messages = [], memories = [], drafts = [originalDraft], exports = [];
+  const exportId = '88888888-8888-4888-8888-888888888888';
+  const pdf = () => ({ bytes: new TextEncoder().encode('%PDF-synthetic-offline'), headers: new Headers({ 'Content-Disposition': 'attachment; filename="memy-synthetic.pdf"' }) });
+  const collectionReads = [], paidKinds = [];
+  const api = {
+    hasPending: () => false,
+    async call(method, path, options) {
+      if (path === '/api/v2/capabilities') return { contract: 'real-v2', mode: 'real', enabled: true };
+      if (path === `/api/v1/story-projects/${ids.project}`) return project;
+      if (method === 'POST' && path.endsWith('/continue')) return { session };
+      const match = /\/(story-projects|drafts|exports|sessions|transcripts|messages|memories)\?limit=100&offset=0$/.exec(path);
+      if (method === 'GET' && match) {
+        collectionReads.push(match[1]);
+        return { 'story-projects': [project], drafts, exports, sessions: [session], transcripts, messages, memories }[match[1]];
+      }
+      if (method === 'PATCH' && path === `/api/v2/memories/${ids.memory}`) {
+        memories = [{ ...memories[0], status: options.json.status, version: 2, clarification_question: null }];
+        return memories[0];
+      }
+      if (method === 'PATCH' && path === `/api/v2/story-drafts/${ids.draft}`) {
+        drafts = [{ ...drafts[0], content: options.json.content, revision: 2 }];
+        return drafts[0];
+      }
+      if (method === 'POST' && path === `/api/v2/story-drafts/${ids.draft}/export`) {
+        exports = [{ export_id: exportId, title: project.title, draft_version: 1, draft_revision: drafts[0].revision, page_count: 1, created_at: now, filename: 'memy-synthetic.pdf' }];
+        return pdf();
+      }
+      if (method === 'GET' && path === `/api/v2/story-exports/${exportId}/download`) return pdf();
+      assert.fail(`Unexpected efficiency-test request: ${method} ${path}`);
+    },
+    async paid(kind) {
+      paidKinds.push(kind);
+      if (kind === 'transcription') { transcripts = [transcript]; return transcript; }
+      if (kind === 'conversation') {
+        messages = [
+          { id: ids.transcript, role: 'user', text: transcript.text, sequence: 1, source_transcript_id: ids.transcript },
+          { id: '66666666-6666-4666-8666-666666666666', role: 'assistant', text: 'Synthetic saved reply.', sequence: 2 },
+        ];
+        memories = [{ id: ids.memory, fact_type: 'event', value: 'Synthetic candidate', evidence: transcript.text, status: 'pending', version: 1,
+          clarification_question: 'Which synthetic year was it?' }];
+        drafts = [{ ...originalDraft, verification: { ...originalDraft.verification, sources_current: false, reason: 'A new clarification needs review.' } }];
+        return { user_message: messages[0], message: messages[1], memories };
+      }
+      assert.equal(kind, 'generation');
+      drafts = [{ draft_id: ids.draft, content: 'Synthetic generated prose.', original_content: 'Synthetic generated prose.', revision: 1, version: 1, updated_at: now,
+        source_memories: [], verification: { sources_current: true, unsupported_claims: [] } }];
+      return drafts[0];
+    },
+  };
+  let recorder;
+  class FakeRecorder {
+    static isTypeSupported() { return true; }
+    constructor(_tracks, options) { this.mimeType = options.mimeType; this.state = 'inactive'; recorder = this; }
+    start() { this.state = 'recording'; }
+    stop() { this.state = 'inactive'; }
+    finish() { this.ondataavailable({ data: new Blob(['synthetic audio']) }); this.onstop(); }
+  }
+  Object.defineProperty(globalThis, 'navigator', { value: { mediaDevices: { async getUserMedia() { return { getTracks: () => [{ stop() {} }] }; } } }, configurable: true });
+  Object.defineProperty(globalThis, 'MediaRecorder', { value: FakeRecorder, configurable: true });
+  const find = name => [...root.querySelectorAll('button')].find(node => (node.getAttribute('aria-label') || node.textContent) === name);
+  const click = async name => { const node = find(name); assert(node && !node.disabled, `Enabled button: ${name}`); node.click(); await tick(); };
+  const readsAfter = async (name, expected) => {
+    const start = collectionReads.length; await click(name);
+    assert.deepEqual(collectionReads.slice(start).sort(), expected.sort(), `${name} does not reload unrelated collections`);
+    assert(!root.querySelector('.workspace-status.is-working'), 'action finishes after its relevant saved reads');
+  };
+  const workspace = createWorkspace({ root, api, user: {} });
+  onCleanup(() => workspace.dispose()); await tick(); await click('Open story');
+  root.querySelector('input[type=checkbox]').click();
+  await click('Start recording'); await click('Stop recording'); recorder.finish();
+  await readsAfter('Save transcript · Real AI', ['transcripts']);
+  assert(root.textContent.includes(transcript.text));
+  assert.deepEqual(paidKinds, ['transcription'], 'saving the transcript never automatically sends the conversation turn');
+  await readsAfter('Send selected transcript · Real AI', ['messages', 'memories', 'drafts']);
+  assert(root.textContent.includes('Synthetic saved reply.'));
+  await click('Your autobiography');
+  assert(root.textContent.includes('Source memories have changed.'), 'a new conversation clarification refreshes existing-draft freshness');
+  assert(root.textContent.includes('A new clarification needs review.'));
+  await click('Review memories');
+  await readsAfter('Confirm', ['memories', 'drafts']);
+  await click('Your autobiography');
+  root.querySelector('.generation-panel input[type=checkbox]').click();
+  await readsAfter('Generate new draft · Real AI', ['drafts']);
+  await click('Edit your story');
+  const editor = root.querySelector('textarea[aria-label="Draft content"]');
+  editor.value = 'My efficient manual revision.'; editor.dispatchEvent(new document.defaultView.Event('input', { bubbles: true }));
+  await readsAfter('Save revision', ['drafts']);
+  assert(root.textContent.includes('My efficient manual revision.'));
+  await readsAfter('Reload saved story', ['drafts', 'exports', 'sessions', 'transcripts', 'messages', 'memories']);
+  await readsAfter('Prepare PDF', ['exports']);
+  assert(root.querySelector('a[download="memy-synthetic.pdf"]'), 'the verified PDF is available after its metadata refresh');
+  await readsAfter('Prepare saved PDF download', []);
+  assert.deepEqual(paidKinds, ['transcription', 'conversation', 'generation'], 'all provider work remains explicit and unrepeated');
+});
+
+test('startup failure waits for late capabilities before rendering the final control state', async t => {
+  const { root, onCleanup } = installDOM(t);
+  const project = { id: ids.project, title: 'Synthetic startup recovery', language: 'en' };
+  const session = { id: ids.session, project_id: project.id, language: 'en', status: 'active' };
+  let releaseCapabilities, libraryReads = 0;
+  const gate = new Promise(resolve => { releaseCapabilities = resolve; });
+  const api = {
+    hasPending: () => false,
+    async paid() { assert.fail('Startup recovery cannot dispatch paid work.'); },
+    async call(method, path) {
+      if (path === '/api/v2/capabilities') { await gate; return { contract: 'real-v2', mode: 'real', enabled: true }; }
+      if (path === '/api/v1/story-projects?limit=100&offset=0') {
+        if (++libraryReads === 1) throw Error('Synthetic library failure');
+        return [project];
+      }
+      if (path === `/api/v1/story-projects/${project.id}`) return project;
+      if (method === 'POST' && path.endsWith('/continue')) return { session };
+      if (path === `/api/v2/story-sessions/${session.id}/transcripts?limit=100&offset=0`) return [{ transcript_id: ids.transcript, text: 'Synthetic saved words.', created_at: '2026-01-01T12:00:00Z' }];
+      if (/\/(drafts|exports|sessions|messages|memories)\?limit=100&offset=0$/.test(path)) return [];
+      assert.fail(`Unexpected startup-recovery request: ${method} ${path}`);
+    },
+  };
+  const find = name => [...root.querySelectorAll('button')].find(node => (node.getAttribute('aria-label') || node.textContent) === name);
+  const click = async name => { const node = find(name); assert(node && !node.disabled, `Enabled button: ${name}`); node.click(); await tick(); };
+  const workspace = createWorkspace({ root, api, user: {} });
+  onCleanup(() => workspace.dispose());
+  await tick();
+  assert(root.querySelector('.workspace-status.is-working'), 'early library failure does not finalize before capabilities settle');
+  assert(!root.querySelector('.notice.error'));
+  releaseCapabilities(); await tick();
+  assert(root.querySelector('.notice.error').textContent.includes('Synthetic library failure'));
+  assert(!root.querySelector('.workspace-status.is-working'));
+  await click('Reload stories'); await click('Open story');
+  assert(find('Send selected transcript · Real AI') && !find('Send selected transcript · Real AI').disabled,
+    'the recovered story uses the completed capability state without another capability request');
+});
+
+test('a server-confirmed unsent generation releases the held UI and explains the draft-to-PDF sequence', async t => {
+  const { root, onCleanup } = installDOM(t);
+  const project = { id: ids.project, title: 'Synthetic PDF recovery', language: 'en' };
+  const session = { id: ids.session, project_id: project.id, language: 'en', status: 'active' };
+  const operationId = '99999999-9999-4999-8999-999999999999';
+  let generationPosts = 0;
+  const reply = (body, status = 200, headers = {}) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } });
+  const api = createApi({ getAccessToken: async () => 'synthetic-token', invalidate() {} }, {
+    makeId: () => ids.draft,
+    request: async (path, options) => {
+      if (path === '/api/v2/capabilities') return reply({ contract: 'real-v2', mode: 'real', enabled: true });
+      if (path === '/api/v1/story-projects?limit=100&offset=0') return reply([project]);
+      if (path === `/api/v1/story-projects/${project.id}`) return reply(project);
+      if (options.method === 'POST' && path.endsWith('/continue')) return reply({ session });
+      if (options.method === 'POST' && path.endsWith('/generate')) {
+        generationPosts++;
+        return reply({ error: { code: 'AI_USAGE_LIMIT' } }, 429, { 'X-Memy-Operation-Id': operationId });
+      }
+      if (path === `/api/v2/operations/by-key/generation/${ids.draft}`) return reply({
+        operation_id: operationId, kind: 'generation', status: 'failed', project_id: project.id, session_id: null,
+        created_at: '2026-11-02T12:00:00Z', updated_at: '2026-11-02T12:00:01Z', error_code: 'AI_USAGE_LIMIT', result: null,
+      });
+      if (/\/(drafts|exports|sessions|transcripts|messages|memories)\?limit=100&offset=0$/.test(path)) return reply([]);
+      assert.fail(`Unexpected draft-recovery request: ${options.method} ${path}`);
+    },
+  });
+  const find = name => [...root.querySelectorAll('button')].find(node => (node.getAttribute('aria-label') || node.textContent) === name);
+  const click = async name => { const node = find(name); assert(node && !node.disabled, `Enabled button: ${name}`); node.click(); await tick(); await tick(); };
+  const workspace = createWorkspace({ root, api, user: {} });
+  onCleanup(() => { workspace.dispose(); api.dispose(); });
+  await tick(); await tick(); await click('Open story'); await click('Your autobiography');
+  assert(root.textContent.includes('No autobiography draft is saved yet.'));
+  assert(root.textContent.includes('Writing a new draft uses Real AI and its testing allowance.'));
+  assert(root.textContent.includes('Preparing or downloading a PDF from a saved draft makes no AI request.'));
+  assert(!find('Prepare PDF'), 'PDF export requires an actual saved draft');
+  root.querySelector('.generation-panel input[type=checkbox]').click();
+  await click('Generate new draft · Real AI');
+  assert(api.hasPending());
+  assert(root.textContent.includes('separate from your OpenAI account balance'));
+  await click('Reload saved action');
+  assert(!api.hasPending());
+  assert(!find('Reload saved action'), 'verified unsent work no longer traps every later action');
+  assert(root.querySelector('.notice.error').textContent.includes('stopped before sending an AI request'));
+  await click('Check AI availability');
+  assert(!find('Generate new draft · Real AI').disabled, 'only a later explicit click may submit a new generation');
+  assert.equal(generationPosts, 1, 'checking failure and availability never retries generation');
 });

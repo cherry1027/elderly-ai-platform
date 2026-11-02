@@ -132,8 +132,13 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   }
   const open = () => { void run(async (signal, check) => {
     const options = { baseUrl: config.baseUrl, getAccessToken: () => getAccessToken(user.id), signal };
-    const caps = await getRealCapabilities(options); check(); setCapabilities(caps);
-    const sessions = await listStorySessions({ ...options, projectId: project.id, expectedLanguage: project.language }); check();
+    // These owned reads are independent. Keep continuation and private content
+    // behind the same cancellation fence, without an extra serial round trip.
+    const [caps, sessions] = await Promise.all([
+      getRealCapabilities(options),
+      listStorySessions({ ...options, projectId: project.id, expectedLanguage: project.language }),
+    ]);
+    check(); setCapabilities(caps);
     const existing = sessions.find(item => item.status === 'active');
     // The same canonical atomic Continue contract is used by the verified mobile flow.
     const id = existing?.id ?? (await continueStoryProject({ ...options, projectId: project.id, expectedLanguage: project.language })).session.id;

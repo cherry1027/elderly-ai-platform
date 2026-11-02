@@ -36,6 +36,11 @@ const props = { language: 'en' as const, user, project, config: { baseUrl: 'http
 async function ready() { await waitFor(() => expect(api.getRealDrafts).toHaveBeenCalled()); }
 async function press(label: string) { await fireEvent.press(screen.getByText(label)); await act(async () => {}); }
 async function emit(value: AppStateStatus) { await act(async () => { AppState.currentState = value; for (const listener of [...listeners]) listener(value); }); }
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(done => { resolve = done; });
+  return { promise, resolve };
+}
 beforeEach(() => {
   AppState.currentState = 'active'; listeners = [];
   jest.spyOn(AppState, 'addEventListener').mockImplementation((_type, listener) => { listeners.push(listener); return { remove: () => { listeners = listeners.filter(item => item !== listener); } }; });
@@ -132,6 +137,42 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     await render(<RealStoryWorkspace {...props} />); await ready();
     expect(storyApi.continueStoryProject).not.toHaveBeenCalled();
     expect(api.getRealTranscripts).toHaveBeenCalledWith(expect.objectContaining({ projectId: ids.project, sessionId: ids.session, language: 'en' }));
+  });
+  it('starts independent capability and session reads together, then waits for both before loading the conversation', async () => {
+    const caps = deferred<Awaited<ReturnType<typeof api.getRealCapabilities>>>();
+    const sessions = deferred<Awaited<ReturnType<typeof storyApi.listStorySessions>>>();
+    jest.mocked(api.getRealCapabilities).mockReturnValueOnce(caps.promise);
+    jest.mocked(storyApi.listStorySessions).mockReturnValueOnce(sessions.promise);
+    await render(<RealStoryWorkspace {...props} />);
+    // Neither promise has settled: a serial startup would not have requested sessions yet.
+    expect(api.getRealCapabilities).toHaveBeenCalledTimes(1);
+    expect(storyApi.listStorySessions).toHaveBeenCalledTimes(1);
+    expect(api.getRealTranscripts).not.toHaveBeenCalled();
+    await act(async () => { sessions.resolve([{ id: ids.session, project_id: ids.project, language: 'en', status: 'active',
+      created_at: project.created_at, updated_at: project.created_at, ended_at: null }]); });
+    expect(api.getRealTranscripts).not.toHaveBeenCalled();
+    await act(async () => { caps.resolve({ contract: 'real-v2', mode: 'real', enabled: true, transcription: true,
+      conversation: true, writing: true, speech: true, reason: 'READY' }); });
+    await ready();
+    expect(storyApi.continueStoryProject).not.toHaveBeenCalled();
+    expect(api.getRealTranscripts).toHaveBeenCalledTimes(1);
+  });
+  it('does not continue a session or restore private content when parallel startup settles after backgrounding', async () => {
+    const caps = deferred<Awaited<ReturnType<typeof api.getRealCapabilities>>>();
+    const sessions = deferred<Awaited<ReturnType<typeof storyApi.listStorySessions>>>();
+    jest.mocked(api.getRealCapabilities).mockReturnValueOnce(caps.promise);
+    jest.mocked(storyApi.listStorySessions).mockReturnValueOnce(sessions.promise);
+    await render(<RealStoryWorkspace {...props} />);
+    expect(storyApi.listStorySessions).toHaveBeenCalledTimes(1);
+    await emit('background');
+    await act(async () => {
+      sessions.resolve([]);
+      caps.resolve({ contract: 'real-v2', mode: 'real', enabled: true, transcription: true,
+        conversation: true, writing: true, speech: true, reason: 'READY' });
+    });
+    expect(storyApi.continueStoryProject).not.toHaveBeenCalled();
+    expect(api.getRealTranscripts).not.toHaveBeenCalled();
+    expect(screen.getByText(t.background)).toBeTruthy();
   });
   it('records locally, requires explicit consent, then processes only the saved original in a deliberate second step', async () => {
     await render(<RealStoryWorkspace {...props} />); await ready(); await press(t.start);

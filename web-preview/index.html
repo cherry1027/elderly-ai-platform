@@ -9,8 +9,16 @@
   <script type="module" src="/app.js"></script>
 </head>
 <body>
-  <header class="masthead"><a class="wordmark" href="/" aria-label="Memy home">memy<span>.</span></a><p>YOUR LIFE. YOUR WORDS.</p><span class="preview-label">Local web · Real AI</span></header>
-  <main id="app"><p class="loading" role="status">Opening your story space…</p></main>
-  <footer class="footer">A gentle space for the stories only you can tell. <span>AI-generated content always needs your review.</span></footer>
+  <a class="skip-link" href="#app">Skip to content</a>
+  <header class="masthead">
+    <div class="brand-lockup"><a class="wordmark" href="/" aria-label="Memy home">memy<span>.</span><i class="brand-leaf" aria-hidden="true"></i></a><p>YOUR LIFE. YOUR WORDS.</p></div>
+    <div class="comfort-controls" role="group" aria-label="Reading size">
+      <button type="button" data-text-choice="standard" aria-label="Standard text size" aria-pressed="true">A<span aria-hidden="true">a</span></button>
+      <button type="button" data-text-choice="larger" aria-label="Larger text size" aria-pressed="false">A<span aria-hidden="true">a</span> <span class="comfort-label">Larger text</span></button>
+    </div>
+    <span class="preview-label">Local preview</span>
+  </header>
+  <main id="app" tabindex="-1"><p class="loading" role="status">Opening your story space…</p></main>
+  <footer class="footer"><span class="footer-promise"><i class="footer-leaf" aria-hidden="true"></i>A gentle space for the stories only you can tell.</span><span>Made for your pace.<br>AI helps shape your story. You decide what to keep.</span></footer>
 </body>
 </html>

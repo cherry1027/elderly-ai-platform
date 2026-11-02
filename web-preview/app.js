@@ -67,27 +67,116 @@ function showLogin(note = '') {
   retire(); root.replaceChildren();
   const page = el('section', null, 'welcome-layout');
   const introduction = el('div', null, 'welcome-copy');
-  introduction.append(el('p', 'A life, in your own words', 'eyebrow'), el('h1', 'Your memories.\nYour autobiography.'),
-    el('p', 'A gentle place to share your story, discover what matters, and create a book that belongs to you.', 'lead'));
-  const path = el('div', 'Record  →  Conversation  →  Memories  →  Your book', 'journey'); introduction.append(path);
+  const heading = el('h1', 'Every life deserves\nto be ');
+  heading.append(el('span', 'remembered.', 'story-emphasis'));
+  const reassurance = el('p', 'At your pace. In your own words.', 'welcome-reassurance');
+  introduction.append(el('p', 'YOUR MEMORIES. YOUR LEGACY.', 'eyebrow'), heading,
+    el('p', 'Tell the stories only you can tell. Memy helps you turn a memory, a conversation, a moment — into your own autobiography.', 'lead'), reassurance);
+  const companion = el('section', null, 'welcome-companion');
+  companion.setAttribute('aria-labelledby', 'inspiration-title');
+  const companionHeading = el('div', null, 'companion-heading');
+  const sprout = el('span', null, 'memy-sprout'); sprout.setAttribute('aria-hidden', 'true');
+  sprout.append(el('span', '', 'sprout-leaf'), el('span', '', 'sprout-leaf'));
+  const companionTitle = el('h2', 'Every story starts with a little spark.'); companionTitle.id = 'inspiration-title';
+  companionHeading.append(sprout, companionTitle);
+  const topics = el('div', null, 'inspiration-topics');
+  topics.setAttribute('role', 'group'); topics.setAttribute('aria-label', 'Choose a memory inspiration');
+  const prompt = el('div', null, 'inspiration-prompt');
+  prompt.setAttribute('aria-live', 'polite'); prompt.setAttribute('aria-atomic', 'true');
+  const question = el('p', '', 'inspiration-question'); question.id = 'inspiration-question';
+  const promptNote = el('p', '', 'inspiration-note');
+  prompt.append(question, promptNote);
+  const inspirations = [
+    { id: 'place', title: 'A special place', questions: [
+      ['Is there a place you love to remember?', 'A kitchen, a garden, a street you knew by heart. Any place can be a beginning.'],
+      ['What could you see from a favourite window?', 'Take a moment. The smallest detail can bring a memory closer.'],
+    ] },
+    { id: 'person', title: 'Someone dear', questions: [
+      ['Who could always make you smile?', 'A friend, a neighbour, someone in your family. You choose who to remember.'],
+      ['What is a little thing someone taught you?', 'A recipe, a saying, a way of seeing the world. Everyday lessons count too.'],
+    ] },
+    { id: 'joy', title: 'Little joys', questions: [
+      ['What small everyday moment still makes you smile?', 'A song on the radio, a favourite meal, a walk. Ordinary moments belong here too.'],
+      ['Is there a song that takes you somewhere?', 'You do not need perfect words. Start with whatever comes to mind.'],
+    ] },
+  ];
+  let inspiration = inspirations[0], questionIndex = 0;
+  const topicButtons = [];
+  const refreshInspiration = () => {
+    [question.textContent, promptNote.textContent] = inspiration.questions[questionIndex];
+    for (const item of topicButtons) item.setAttribute('aria-pressed', String(item.dataset.topic === inspiration.id));
+  };
+  for (const item of inspirations) {
+    const choice = el('button', item.title, 'inspiration-topic'); choice.type = 'button';
+    choice.dataset.topic = item.id; choice.setAttribute('aria-controls', 'inspiration-question');
+    choice.addEventListener('click', () => { inspiration = item; questionIndex = 0; refreshInspiration(); });
+    topicButtons.push(choice); topics.append(choice);
+  }
+  const another = el('button', 'Another question', 'inspiration-next'); another.type = 'button';
+  another.setAttribute('aria-controls', 'inspiration-question');
+  another.addEventListener('click', () => { questionIndex = (questionIndex + 1) % inspiration.questions.length; refreshInspiration(); });
+  const begin = el('button', 'Sign in to tell your story', 'inspiration-action'); begin.type = 'button';
+  begin.addEventListener('click', () => document.getElementById('email')?.focus());
+  const inspirationActions = el('div', null, 'inspiration-actions'); inspirationActions.append(another, begin);
+  refreshInspiration();
+  companion.append(companionHeading, el('p', 'No need to start at the beginning. Choose what feels right today.', 'inspiration-intro'), topics, prompt, inspirationActions);
+  const artwork = el('div', null, 'memory-art'); artwork.setAttribute('aria-hidden', 'true');
+  const book = el('div', null, 'book-object');
+  book.append(el('span', '', 'book-spine'), el('span', 'memy.', 'book-cover-mark'),
+    el('span', 'A life,\nin your\nown words.', 'book-cover-title'), el('span', '', 'book-cover-rule'),
+    el('span', 'YOUR AUTOBIOGRAPHY', 'book-cover-subtitle'));
+  artwork.append(el('span', '', 'book-shadow'), book, el('span', 'A little memory.\nA lasting story.', 'book-caption'));
+  introduction.append(artwork);
   const card = el('section', null, 'card login-card');
-  card.append(el('p', 'WELCOME TO MEMY', 'eyebrow'), el('h2', 'Let’s begin your story.'), el('p', 'Sign in with your existing Memy account.', 'muted'));
-  const form = el('form'); form.autocomplete = 'on';
+  const loginIntro = el('div', null, 'login-intro');
+  loginIntro.append(el('p', 'YOUR STORY STARTS HERE', 'eyebrow'), el('h2', 'Welcome to Memy.'),
+    el('p', 'Use your existing Memy account to return to your stories.', 'muted'));
+  card.append(loginIntro);
+  const form = el('form', null, 'login-form'); form.autocomplete = 'on';
   const emailLabel = el('label', 'Email'); emailLabel.htmlFor = 'email';
   const email = el('input'); Object.assign(email, { id: 'email', type: 'email', required: true, autocomplete: 'username', placeholder: 'you@example.com' });
+  email.inputMode = 'email'; email.autocapitalize = 'none'; email.spellcheck = false;
   const passwordLabel = el('label', 'Password'); passwordLabel.htmlFor = 'password';
   const password = el('input'); Object.assign(password, { id: 'password', type: 'password', required: true, autocomplete: 'current-password' });
-  const submit = el('button', 'Sign in', 'primary'); submit.type = 'submit';
-  const status = el('p', note, 'notice'); status.setAttribute('role', 'status');
-  form.append(emailLabel, email, passwordLabel, password, submit, status);
+  const passwordField = el('div', null, 'password-field');
+  const reveal = el('button', 'Show', 'password-toggle'); reveal.type = 'button';
+  reveal.setAttribute('aria-label', 'Show password'); reveal.setAttribute('aria-controls', 'password'); reveal.setAttribute('aria-pressed', 'false');
+  reveal.addEventListener('click', () => {
+    const showing = password.type === 'password'; password.type = showing ? 'text' : 'password';
+    reveal.textContent = showing ? 'Hide' : 'Show'; reveal.setAttribute('aria-label', showing ? 'Hide password' : 'Show password');
+    reveal.setAttribute('aria-pressed', String(showing));
+  });
+  passwordField.append(password, reveal);
+  const submit = el('button', 'Sign in', 'primary login-submit'); submit.type = 'submit';
+  const status = el('p', note, 'notice login-status'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
+  form.append(emailLabel, email, passwordLabel, passwordField, submit, status);
   form.addEventListener('submit', async event => {
     event.preventDefault(); if (!form.reportValidity()) return;
-    const attempt = version, entered = password.value; password.value = ''; submit.disabled = true; status.textContent = 'Signing in securely…';
+    const attempt = version, entered = password.value; password.value = ''; password.type = 'password';
+    reveal.textContent = 'Show'; reveal.setAttribute('aria-label', 'Show password'); reveal.setAttribute('aria-pressed', 'false');
+    submit.disabled = true; reveal.disabled = true; email.disabled = true; password.disabled = true;
+    form.setAttribute('aria-busy', 'true'); submit.textContent = 'Opening your stories…'; status.textContent = 'Signing in securely…';
     try { const user = await auth.signIn(email.value.trim(), entered); if (attempt === version) showWorkspace(user); }
-    catch (error) { if (attempt === version) { status.textContent = error instanceof AppError ? error.message : 'Sign-in could not be completed. Please try again.'; submit.disabled = false; } }
+    catch (error) { if (attempt === version) {
+      status.textContent = error instanceof AppError ? error.message : 'Sign-in could not be completed. Please try again.';
+      status.classList.add('error'); submit.disabled = false; reveal.disabled = false; email.disabled = false; password.disabled = false;
+      form.setAttribute('aria-busy', 'false'); submit.textContent = 'Sign in';
+    } }
   });
-  card.append(form, el('p', 'Your session stays in this tab’s memory. Closing or reloading the page signs you out.', 'fine-print'));
-  page.append(introduction, card); root.append(page);
+  const sessionNote = el('details', null, 'session-note');
+  sessionNote.append(el('summary', 'About this local session'), el('p', 'Use your existing confirmed Memy account. Your session stays in this tab’s memory. Closing or reloading the page signs you out.', 'fine-print'));
+  card.append(form, sessionNote);
+  const steps = el('ol', null, 'welcome-steps'); steps.setAttribute('aria-label', 'How your story takes shape');
+  for (const [number, title, copy] of [
+    ['01', 'Share a memory', 'Start with a moment, a person, or a place. Record it in your own words.'],
+    ['02', 'Shape your story', 'Explore your memories with Memy, then review what you want to keep.'],
+    ['03', 'Make it your own', 'Read, edit and download your autobiography. Your wording has the final say.'],
+  ]) {
+    const item = el('li', null, 'welcome-step'), content = el('div', null, 'step-copy');
+    const stepNumber = el('span', number, 'step-number'); stepNumber.setAttribute('aria-hidden', 'true');
+    content.append(el('h3', title), el('p', copy)); item.append(stepNumber, content); steps.append(item);
+  }
+  page.append(introduction, card, companion); root.append(page, steps);
 }
 
 function showWorkspace(user) {
@@ -104,4 +193,11 @@ async function start() {
   } catch { root.replaceChildren(el('div', 'Memy could not load its local connection settings. Refresh this page after the backend is ready.', 'card notice')); }
 }
 window.addEventListener('pagehide', () => { retire(); });
+for (const control of document.querySelectorAll('[data-text-choice]')) {
+  control.addEventListener('click', () => {
+    const larger = control.dataset.textChoice === 'larger';
+    document.documentElement.dataset.textSize = larger ? 'larger' : 'standard';
+    for (const item of document.querySelectorAll('[data-text-choice]')) item.setAttribute('aria-pressed', String(item === control));
+  });
+}
 start();

@@ -26,7 +26,7 @@ from app.schemas.story_drafts import StoryDraftPatch, StoryEditResponse, StoryGe
 from app.schemas.errors import ErrorResponse
 from app.services.audio_upload import read_recording
 from app.services.auth import AuthenticatedUser
-from app.services.real_ai_resources import RealAIGateway, validated
+from app.services.real_ai_resources import RealAIGateway, validated, read_together
 from app.services.openai_client import DispatchTrace, ai_dispatch_trace
 
 router = APIRouter(prefix="/api/v2", tags=["Real AI (explicit opt-in)"], responses={
@@ -177,8 +177,10 @@ async def send_message(session_id: UUID, payload: RealMessageCreate, request: Re
     if transcript["session_id"] != str(session_id) or transcript["project_id"] != session["project_id"]:
         raise APIError(404, "RESOURCE_NOT_FOUND", "The requested resource was not found.")
     language_matches(transcript["language"], session)
-    prior = await gateway.project_memories(UUID(session["project_id"]))
-    recent = await gateway.messages(session_id, limit=12, recent=True)
+    prior, recent = await read_together(
+        gateway.project_memories(UUID(session["project_id"])),
+        gateway.messages(session_id, limit=12, recent=True),
+    )
     while recent and sum(len(m["text"]) for m in recent) > 32_000:
         recent.pop(0)
     provider = request.app.state.real_ai.require()
@@ -246,10 +248,7 @@ async def generate(project_id: UUID, payload: StoryGenerationRequest, request: R
 
 @router.get("/story-projects/{project_id}/drafts", response_model=list[RealDraft])
 async def drafts(project_id: UUID, gateway: Gateway, limit: Limit = 50, offset: Offset = 0):
-    await gateway.get_project(project_id)
-    rows = await gateway.rows("real_story_drafts", filters={"project_id": f"eq.{project_id}"},
-                              limit=limit, offset=offset, order="version.desc")
-    return [await gateway.draft(UUID(r["draft_id"])) for r in rows]
+    return await gateway.drafts(project_id, limit, offset)
 
 
 @router.get("/story-drafts/{draft_id}", response_model=RealDraft)

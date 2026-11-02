@@ -59,6 +59,7 @@ class RealAIRuntime:
         self.governor = AISpendingGovernor(settings.live_ai_approval_path, settings.ai_usage_ledger_path)
         self.cache = SpeechCache()
         self.usage_observer = None
+        self._http_clients = ()
         if settings.real_ai_enabled and settings.real_ai_usage_log_path is not None:
             from app.services.ai_usage import UsageObserver
             self.usage_observer = UsageObserver(settings.real_ai_usage_log_path)
@@ -69,11 +70,21 @@ class RealAIRuntime:
                                   timeout_seconds=settings.openai_timeout_seconds, usage_observer=self.usage_observer)
             verifier = OpenAIClient(settings.openai_api_key, settings.openai_verifier_model, self.governor,
                                     timeout_seconds=settings.openai_timeout_seconds, usage_observer=self.usage_observer)
+            self._http_clients = (client, verifier)
             speech = RealtimeSpeechProvider(settings.openai_api_key, self.governor,
                 model=settings.real_ai_speech_model, voice=settings.real_ai_voice,
                 timeout_seconds=settings.openai_timeout_seconds, usage_observer=self.usage_observer)
             self.provider = RealAIProvider(client, transcription_model=settings.real_ai_transcription_model,
                                            verifier_client=verifier, speech=speech)
+
+    @property
+    def needs_http_pool(self):
+        return bool(self._http_clients)
+
+    def bind_http_client(self, client):
+        """Reuse the lifespan's provider-only pool; never share Auth headers."""
+        for adapter in self._http_clients:
+            adapter.http_client = client
 
     @property
     def configured(self):

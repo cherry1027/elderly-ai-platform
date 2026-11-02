@@ -1,4 +1,4 @@
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 import asyncio
 
 import httpx
@@ -65,15 +65,29 @@ def create_app(
             follow_redirects=False,
             trust_env=False,
             transport=transport,
-        ) as client:
+        ) as client, AsyncExitStack() as provider_resources:
             application.state.http_client = client
             application.state.readiness_probe = ReadinessProbe(config, client)
+            bind_provider_client = None
+            if getattr(application.state.real_ai, "needs_http_pool", False):
+                provider_client = await provider_resources.enter_async_context(httpx.AsyncClient(
+                    timeout=config.openai_timeout_seconds,
+                    follow_redirects=False,
+                    trust_env=False,
+                    limits=httpx.Limits(max_connections=8, max_keepalive_connections=4,
+                                       keepalive_expiry=60),
+                ))
+                bind_provider_client = application.state.real_ai.bind_http_client
+            if bind_provider_client is not None:
+                bind_provider_client(provider_client)
             try:
                 yield
             finally:
                 application.state.real_ai.cache.clear()
                 if application.state.pdf_tasks:
                     await asyncio.gather(*tuple(application.state.pdf_tasks), return_exceptions=True)
+                if bind_provider_client is not None:
+                    bind_provider_client(None)
 
     application = FastAPI(
         title="Memy AI Backend", version="0.8.1", lifespan=lifespan

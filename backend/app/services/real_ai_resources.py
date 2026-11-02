@@ -1,6 +1,7 @@
 """Owned user reads and narrowly scoped service-only real-provider completion."""
 
 from datetime import datetime, timezone
+import asyncio
 import json
 from uuid import UUID
 
@@ -25,6 +26,18 @@ def validated(model, row):
         return model.model_validate(row).model_dump(mode="json")
     except (ValueError, TypeError, ValidationError):
         raise unavailable() from None
+
+
+async def read_together(*reads):
+    """Overlap independent owned reads; never leave siblings running on failure."""
+    tasks = [asyncio.create_task(read) for read in reads]
+    try:
+        return await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
 
 
 class RealAIGateway(AudioGateway):
@@ -138,9 +151,11 @@ class RealAIGateway(AudioGateway):
 
     async def memories(self, session_id, limit=100, offset=0):
         await self.get_owned_session(session_id)
-        rows = await self.rows("real_memories", filters={"session_id": f"eq.{session_id}"},
-                               limit=limit, offset=offset, order="created_at.asc,id.asc")
-        questions = await self.rows("real_memory_clarifications", filters={"session_id": f"eq.{session_id}"}, limit=201)
+        rows, questions = await read_together(
+            self.rows("real_memories", filters={"session_id": f"eq.{session_id}"},
+                      limit=limit, offset=offset, order="created_at.asc,id.asc"),
+            self.rows("real_memory_clarifications", filters={"session_id": f"eq.{session_id}"}, limit=201),
+        )
         if len(questions) > 200:
             raise APIError(409, "AI_CONTEXT_LIMIT", "This story requires review before continuing.")
         q = {r["fact_id"]: r["question"] for r in questions if r["status"] == "open"}
@@ -148,11 +163,13 @@ class RealAIGateway(AudioGateway):
 
     async def project_memories(self, project_id):
         await self.get_project(project_id)
-        rows = await self.rows("real_memories", filters={"project_id": f"eq.{project_id}"}, limit=201)
+        rows, questions = await read_together(
+            self.rows("real_memories", filters={"project_id": f"eq.{project_id}"}, limit=201),
+            self.rows("real_memory_clarifications", filters={"project_id": f"eq.{project_id}", "status": "eq.open"}, limit=201),
+        )
         if len(rows) > 200:
             raise APIError(409, "AI_CONTEXT_LIMIT", "Review the story before adding more context.")
         # Open questions are explicit context, never silently treated as confirmed facts.
-        questions = await self.rows("real_memory_clarifications", filters={"project_id": f"eq.{project_id}", "status": "eq.open"}, limit=201)
         if len(questions) > 200:
             raise unavailable()
         q = {r["fact_id"]: r["question"] for r in questions}
@@ -178,6 +195,11 @@ class RealAIGateway(AudioGateway):
 
     async def context(self, project_id):
         await self.get_project(project_id)
+        return await self._context_for_owned_project(project_id)
+
+    async def _context_for_owned_project(self, project_id):
+        # Only callers that just checked this project's ownership may use this.
+        # The context RPC still uses the user's JWT and database RLS.
         row = await self.rpc("get_real_story_context", {"p_project_id": str(project_id)})
         result = validated(StoryGenerationContext, row)
         if result["project_id"] != str(project_id):
@@ -193,6 +215,29 @@ class RealAIGateway(AudioGateway):
             draft["verification"].update(status="stale_sources", sources_current=False,
                                             reason="Reviewed source memories changed; review this saved draft.")
         return validated(RealDraft, draft)
+
+    @staticmethod
+    def _draft_with_context(draft, context):
+        if draft["project_id"] != context["project_id"] or draft["language"] != context["language"]:
+            raise unavailable()
+        current = context["source_memories"] == draft["source_memories"] and not context["blocking_clarifications"]
+        if not current:
+            draft["verification"].update(status="stale_sources", sources_current=False,
+                                            reason="Reviewed source memories changed; review this saved draft.")
+        return validated(RealDraft, draft)
+
+    async def drafts(self, project_id, limit=50, offset=0):
+        """Read one page against one current source snapshot, without N+1 reads."""
+        project = await self.get_project(project_id)
+        rows = await self.rows("real_story_drafts", filters={"project_id": f"eq.{project_id}"},
+                               limit=limit, offset=offset, order="version.desc")
+        drafts = [validated(RealDraft, row) for row in rows]
+        if any(draft["project_id"] != str(project_id) or draft["language"] != project["language"] for draft in drafts):
+            raise unavailable()
+        if not drafts:
+            return []
+        context = await self._context_for_owned_project(project_id)
+        return [self._draft_with_context(draft, context) for draft in drafts]
 
     async def normalize_result(self, kind, row):
         try:

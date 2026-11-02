@@ -9,6 +9,8 @@ import pytest
 from app.core.config import Settings
 from app.core.errors import APIError
 from app.services.real_ai_runtime import RealAIRuntime
+from app.main import create_app
+from fastapi.testclient import TestClient
 
 
 def configured(tmp_path,**changes):
@@ -60,3 +62,20 @@ def test_private_approval_permissions_and_model_allowlist_are_required(tmp_path)
     assert runtime.capabilities()["enabled"] is False
     settings.live_ai_approval_path.chmod(0o644)
     assert runtime.capabilities()["enabled"] is False
+
+
+def test_app_lifespan_owns_a_separate_reusable_provider_pool(tmp_path):
+    settings = configured(tmp_path, real_ai_speech_model="gpt-realtime-2.1-mini",
+                          real_ai_transcription_model="gpt-transcribe")
+    app = create_app(settings)
+    adapters = app.state.real_ai._http_clients
+    assert len(adapters) == 2 and all(c.http_client is None for c in adapters)
+    with TestClient(app):
+        pool = adapters[0].http_client
+        assert pool is adapters[1].http_client and not pool.is_closed
+        assert pool is not app.state.http_client
+        assert 'authorization' not in pool.headers and 'apikey' not in pool.headers
+        assert not pool.follow_redirects
+        assert not settings.ai_usage_ledger_path.exists()
+    assert pool.is_closed
+    assert all(c.http_client is None for c in adapters)

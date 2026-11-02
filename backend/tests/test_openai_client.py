@@ -67,6 +67,59 @@ def test_responses_are_stateless_bounded_reserved_and_never_send_keys_in_payload
     assert len(seen) == 1
 
 
+def test_shared_pool_survives_attempts_with_separate_credentials_and_reservations():
+    seen, first_budget, second_budget = [], Reservations(), Reservations()
+
+    def handler(request):
+        seen.append(request.headers['authorization'])
+        return httpx.Response(200, json=completed())
+
+    async def exercise():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler),
+                                     follow_redirects=False, trust_env=False) as pool:
+            first = OpenAIClient(SecretStr(KEY), 'test-configured-model', first_budget,
+                                 http_client=pool)
+            second = OpenAIClient(SecretStr('other-synthetic-key'), 'test-configured-model',
+                                  second_budget, http_client=pool)
+            schema = {'type': 'object', 'properties': {'answer': {'type': 'string'}},
+                      'required': ['answer'], 'additionalProperties': False}
+            for provider in (first, second, first):
+                assert await provider.structured('conversation', 'Offline test', {}, schema) == {'answer': 'Hej'}
+                assert not pool.is_closed
+                assert 'authorization' not in pool.headers
+            return pool
+
+    pool = asyncio.run(exercise())
+    assert pool.is_closed
+    assert seen == [f'Bearer {KEY}', 'Bearer other-synthetic-key', f'Bearer {KEY}']
+    assert len(first_budget.calls) == 2 and len(second_budget.calls) == 1
+
+
+def test_shared_pool_does_not_retry_failures_or_dispatch_without_budget():
+    seen, budget = [], Reservations()
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(503, json={'error': {'message': 'synthetic'}})
+
+    async def exercise():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler),
+                                     follow_redirects=False, trust_env=False) as pool:
+            provider = OpenAIClient(SecretStr(KEY), 'test-configured-model', budget,
+                                    http_client=pool)
+            with pytest.raises(APIError) as failure:
+                await provider.structured('conversation', 'Offline test', {}, {})
+            assert failure.value.code == 'AI_PROVIDER_UNAVAILABLE'
+            assert len(seen) == len(budget.calls) == 1 and not pool.is_closed
+            budget.error = APIError(503, 'AI_SPENDING_NOT_APPROVED', 'Approval required.')
+            with pytest.raises(APIError) as denied:
+                await provider.structured('conversation', 'Offline test', {}, {})
+            assert denied.value.code == 'AI_SPENDING_NOT_APPROVED'
+            assert len(seen) == len(budget.calls) == 1
+
+    asyncio.run(exercise())
+
+
 def test_unapproved_budget_prevents_even_a_first_transport_attempt():
     def forbidden(_):
         pytest.fail("unapproved request reached transport")

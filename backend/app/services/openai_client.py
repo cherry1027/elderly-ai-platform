@@ -15,6 +15,7 @@ import re
 import stat
 from tempfile import TemporaryDirectory
 from contextvars import ContextVar
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import httpx
@@ -119,7 +120,8 @@ async def provider_failure(response):
 class OpenAIClient:
     def __init__(self, api_key: SecretStr, text_model: str, governor, *,
                  transport: httpx.AsyncBaseTransport | None = None,
-                 timeout_seconds: float = 30, usage_observer=None):
+                 timeout_seconds: float = 30, usage_observer=None,
+                 http_client: httpx.AsyncClient | None = None):
         if not isinstance(api_key, SecretStr) or not api_key.get_secret_value().strip():
             raise APIError(503, "AI_NOT_CONFIGURED", "The AI provider is not configured.")
         if not MODEL_NAME.fullmatch(text_model) or not 0 < timeout_seconds <= 60:
@@ -130,6 +132,20 @@ class OpenAIClient:
         self._transport = transport
         self.timeout_seconds = timeout_seconds
         self.usage_observer = usage_observer
+        # The app lifespan owns this pool. Standalone offline/evaluation clients
+        # retain their short-lived transport when no pool is supplied.
+        self.http_client = http_client
+
+    @asynccontextmanager
+    async def _connection(self):
+        if self.http_client is not None:
+            yield self.http_client
+        else:
+            async with httpx.AsyncClient(
+                transport=self._transport, timeout=self.timeout_seconds,
+                follow_redirects=False, trust_env=False,
+            ) as client:
+                yield client
 
     async def _request(self, operation: str, model: str, endpoint: str, **kwargs) -> dict:
         # No retry loop: uncertain failures/cancellation can still be charged.
@@ -138,10 +154,7 @@ class OpenAIClient:
         mark_ai_dispatched()  # After approval, before any provider network attempt.
         try:
             async with asyncio.timeout(self.timeout_seconds):
-                async with httpx.AsyncClient(
-                    transport=self._transport, timeout=self.timeout_seconds,
-                    follow_redirects=False, trust_env=False,
-                ) as client:
+                async with self._connection() as client:
                     async with client.stream(
                         "POST", "https://api.openai.com/v1/" + endpoint,
                         headers={"Authorization": "Bearer " + self._key.get_secret_value()},

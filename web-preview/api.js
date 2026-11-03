@@ -12,15 +12,58 @@ const NO_DISPATCH = new Map([
   ['SESSION_COMPLETED', 409], ['AI_CONTEXT_LIMIT', 409],
   ['LIVE_AI_DISABLED', 503], ['REAL_AI_NOT_CONFIGURED', 503],
   ['AI_SPENDING_NOT_APPROVED', 503], ['AI_USAGE_UNAVAILABLE', 503],
+  ['TEXT_CHAT_NOT_READY', 503],
 ]);
 
-function resultMatchesAction(result, action) {
+async function textDigest(value) {
+  const bytes = new TextEncoder().encode(value);
+  return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+function validOriginalText(value) {
+  if (typeof value !== 'string' || !value.trim() || value.includes('\0')) return false;
+  const points = [...value];
+  return points.length <= 4000 && points.every(point => point.length !== 1 || point.charCodeAt(0) < 0xd800 || point.charCodeAt(0) > 0xdfff);
+}
+function typedMemoriesMatch(memories, original, scope) {
+  if (!Array.isArray(memories) || memories.length > 8) return false;
+  const seen = new Set();
+  return memories.every(memory => {
+    if (!memory || !UUID.test(memory.id || '') || seen.has(memory.id) ||
+        memory.project_id !== scope.projectId || memory.session_id !== scope.sessionId || memory.source_message_id !== original.id ||
+        memory.status !== 'pending' || memory.version !== 1 || memory.corrected_value !== null ||
+        !['person', 'relationship', 'date', 'location', 'event', 'emotion'].includes(memory.fact_type) ||
+        typeof memory.uncertain !== 'boolean' || !awareTimestamp(memory.created_at) || !awareTimestamp(memory.updated_at) ||
+        typeof memory.value !== 'string' || !memory.value.trim() || [...memory.value].length > 1000 || !original.text.includes(memory.value) ||
+        typeof memory.evidence !== 'string' || !memory.evidence.trim() || [...memory.evidence].length > 1000 || !original.text.includes(memory.evidence)) return false;
+    seen.add(memory.id); return true;
+  });
+}
+
+async function resultMatchesAction(result, action) {
   const scoped = action.kind === 'conversation' ? result?.message : result;
   if (!scoped || typeof scoped !== 'object') return false;
   if (action.scope) {
     if (action.kind !== 'speech' && (scoped.project_id !== action.scope.projectId ||
         (action.scope.sessionId && scoped.session_id !== action.scope.sessionId))) return false;
     if (action.scope.language && scoped.language !== action.scope.language) return false;
+  }
+  if (action.typedInput) {
+    const original = result.user_message, reply = result.message;
+    if (result.mode !== 'real' || !original || !reply || original.role !== 'user' || reply.role !== 'assistant' ||
+        !UUID.test(original.source_text_input_id || '') || original.id !== original.source_text_input_id ||
+        original.source_text_input_id !== reply.source_text_input_id ||
+        original.source_transcript_id !== null || reply.source_transcript_id !== null ||
+        original.project_id !== action.scope?.projectId || original.session_id !== action.scope?.sessionId ||
+        original.language !== action.scope?.language || !UUID.test(reply.id || '') || reply.id === original.id ||
+        !awareTimestamp(original.created_at) || !awareTimestamp(reply.created_at) ||
+        !Number.isSafeInteger(original.sequence) || original.sequence < 1 || reply.sequence !== original.sequence + 1 ||
+        original.provenance?.mode !== 'original' || original.provenance?.provider !== 'user' ||
+        original.provenance?.model !== null || original.provenance?.version !== 1 ||
+        reply.provenance?.mode !== 'real' || reply.provenance?.provider !== 'openai' || reply.provenance?.version !== 1 ||
+        typeof reply.provenance?.model !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/.test(reply.provenance.model) ||
+        !validOriginalText(original.text) || typeof reply.text !== 'string' || !reply.text.trim() ||
+        !typedMemoriesMatch(result.memories, original, action.scope)) return false;
+    return await textDigest(original.text) === action.textDigest;
   }
   return action.kind !== 'speech' || result.assistant_message_id === action.assistantMessageId;
 }
@@ -59,6 +102,7 @@ function messageFor(code, status) {
   if (code === 'AI_USAGE_LIMIT' || code === 'AI_SPENDING_NOT_APPROVED') return 'The local AI testing allowance has closed or reached its limit. This is separate from your OpenAI account balance. Your saved work and PDF export remain available.';
   if (code === 'AI_PROVIDER_QUOTA_EXHAUSTED') return 'The AI provider rejected the request because of its credit or billing limit. This is separate from the local Memy testing allowance. Your saved work is still available.';
   if (code === 'LIVE_AI_DISABLED' || code === 'REAL_AI_NOT_CONFIGURED') return 'Real AI is currently switched off. Your saved work is still available.';
+  if (code === 'TEXT_CHAT_NOT_READY') return 'Typed conversation is waiting for its development database setup. Your message has not been sent to AI. Keep it here and try again after setup is complete.';
   if (code === 'NO_CONFIRMED_MEMORIES') return 'Review and confirm your memories before creating an autobiography.';
   if (code === 'CLARIFICATION_REQUIRED') return 'Resolve the open memory questions before creating your autobiography.';
   if (code === 'SPEECH_EXPIRED') return 'This spoken reply expired. Request another only when you choose to.';
@@ -101,7 +145,10 @@ export function createApi(auth, { request = fetch, timeoutMs = 145000, makeId = 
         const noDispatch = !operationId && NO_DISPATCH.get(code) === response.status;
         const uncertain = Boolean(options.key) && (Boolean(operationId) ||
           (!noDispatch && (response.status >= 500 || response.status === 409)));
-        const error = new AppError(messageFor(code, response.status), code, uncertain);
+        const message = code === 'TEXT_CHAT_NOT_READY' && operationId
+          ? 'Typed conversation setup could not be confirmed. Check your saved action before sending again. Nothing will be retried automatically.'
+          : messageFor(code, response.status);
+        const error = new AppError(message, code, uncertain);
         error.status = response.status;
         if (UUID.test(operationId || '')) error.operationId = operationId;
         if (response.status === 401) auth.invalidate();
@@ -133,14 +180,28 @@ export function createApi(auth, { request = fetch, timeoutMs = 145000, makeId = 
     async paid(kind, path, options = {}) {
       if (!KINDS.has(kind) || pending) throw new AppError('Check the previously saved action before starting another.', 'ACTION_PENDING', true);
       const key = makeId(); if (!UUID.test(key)) throw new AppError('A secure action could not be created.');
-      const action = { kind, key, scope: options.scope, operationId: null,
+      const typedInput = kind === 'conversation' && /^\/api\/v2\/story-sessions\/[0-9a-f-]+\/text-messages$/i.test(path);
+      const action = { kind, key, scope: options.scope ? { ...options.scope } : null, operationId: null, typedInput,
         assistantMessageId: kind === 'speech' ? path.split('/')[4] : null }; pending = action;
       try {
+        if (typedInput) {
+          const original = options.json?.text;
+          if (!validOriginalText(original) ||
+              !UUID.test(action.scope?.projectId || '') || !UUID.test(action.scope?.sessionId || '') ||
+              path.split('/')[4] !== action.scope.sessionId || options.json.language !== action.scope.language || !['en', 'sv'].includes(action.scope.language)) {
+            throw new AppError('Write a message between 1 and 4,000 characters.', 'INVALID_INPUT');
+          }
+          // Only the digest is retained in the pending action, never private words.
+          // Claiming pending before this await also blocks simultaneous clicks.
+          action.textDigest = await textDigest(original);
+          if (pending !== action || disposed) throw new AppError('This view is closed.', 'CANCELLED');
+        }
         const result = await call('POST', path, { ...options, key });
         if (pending !== action || disposed) throw new AppError('This view is closed.', 'CANCELLED', true);
-        if (!resultMatchesAction(result, action)) {
+        if (!await resultMatchesAction(result, action)) {
           throw new AppError('The saved result could not be verified. Check the saved action before continuing.', 'INVALID_RESPONSE', true);
         }
+        if (pending !== action || disposed) throw new AppError('This view is closed.', 'CANCELLED', true);
         pending = null; return result;
       } catch (error) {
         if (error.operationId) action.operationId = error.operationId;
@@ -163,8 +224,12 @@ export function createApi(auth, { request = fetch, timeoutMs = 145000, makeId = 
         throw new AppError('The server confirmed this action stopped before sending an AI request. Nothing was retried. Check AI availability before choosing to try again.', 'ACTION_NOT_PROCESSED', false);
       }
       if (op.status !== 'completed' || !op.result) throw new AppError('This action is still being checked. Refresh again later; it has not been resent.', 'ACTION_PENDING', true);
-      if (!resultMatchesAction(op.result, action)) throw new AppError('The saved result could not be verified.', 'INVALID_RESPONSE', true);
-      if (pending !== action || disposed) throw new AppError('This view is closed.', 'CANCELLED', true);
+      if (action.typedInput && (Object.keys(op).length !== OPERATION_FIELDS.length || OPERATION_FIELDS.some(field => !Object.hasOwn(op, field)) ||
+          !UUID.test(op.operation_id || '') || (action.operationId && op.operation_id !== action.operationId) ||
+          op.result.user_message?.source_text_input_id !== op.operation_id || op.error_code !== null ||
+          !awareTimestamp(op.created_at) || !awareTimestamp(op.updated_at))) throw new AppError('The saved result could not be verified.', 'INVALID_RESPONSE', true);
+      if (!await resultMatchesAction(op.result, action)) throw new AppError('The saved result could not be verified.', 'INVALID_RESPONSE', true);
+      if (pending !== action || disposed || epoch !== version) throw new AppError('This view is closed.', 'CANCELLED', true);
       pending = null; return op.result;
     },
     dispose() { disposed = true; epoch++; controllers.forEach(c => c.abort()); controllers.clear(); },

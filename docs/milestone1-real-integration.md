@@ -66,13 +66,14 @@ For the actual device journey: sign in, open an owned story, choose **Share Memo
 
 ## v2 contract
 
-The OpenAPI snapshot contains all 25 unchanged legacy operations plus 20 v2 operations, including the free prepared-speech recovery read. Every private route validates the Supabase user access token online. `capabilities` is the only public v2 route. Lists are arrays, paginated with `limit`/`offset`. Project language and ownership come from the owned project/session, never a client `user_id`.
+The OpenAPI snapshot contains all 25 unchanged legacy operations plus 21 v2 operations, including typed chat and the free prepared-speech recovery read. Every private route validates the Supabase user access token online. `capabilities` is the only public v2 route. Lists are arrays, paginated with `limit`/`offset`. Project language and ownership come from the owned project/session, never a client `user_id`.
 
 | Method | `/api/v2` path | Purpose |
 |---|---|---|
 | GET | `/capabilities` | Sanitized activation state; no key/budget details |
 | POST / GET | `/story-sessions/{id}/transcribe` / `/transcripts` | Real upload / immutable originals |
 | POST / GET | `/story-sessions/{id}/messages` | Owned context-aware interviewer / saved turns |
+| POST | `/story-sessions/{id}/text-messages` | Exact original typed wording / shared interviewer and memory pipeline |
 | GET | `/story-sessions/{id}/memories` | Pending/reviewed memory candidates |
 | PATCH | `/memories/{id}` | Optimistic confirm/correct/reject |
 | POST | `/story-projects/{id}/generate` | Explicit writing from confirmed resolved sources |
@@ -87,7 +88,7 @@ The OpenAPI snapshot contains all 25 unchanged legacy operations plus 20 v2 oper
 | GET | `/operations/{id}` | Reconcile by server operation ID |
 | GET | `/operations/by-key/{kind}/{action_key}` | Reconcile a completely lost response |
 
-Paid POSTs require one UUID `Idempotency-Key` per explicit user action. Multipart transcription accepts `file`, project `language` and `consent=true`; max 25 MB/90 seconds. A turn accepts `{"source_transcript_id":"UUID","language":"en"}`. Generation accepts `{"language":"en","style":"warm","confirm_generation":true}`. Memory review uses `expected_version`; edits and PDF export use `expected_revision`. Typed AI chat is deliberately absent from this voice-first slice.
+Paid POSTs require one UUID `Idempotency-Key` per explicit user action. Multipart transcription accepts `file`, project `language` and `consent=true`; max 25 MB/90 seconds. A voice turn accepts `{"source_transcript_id":"UUID","language":"en"}`. A typed turn accepts `{"text":"I remember the garden.","language":"en"}`; see [typed chat](typed-chat.md) for persistence, migration and retry details. Generation accepts `{"language":"en","style":"warm","confirm_generation":true}`. Memory review uses `expected_version`; edits and PDF export use `expected_revision`.
 
 Completed actions replay saved results without provider dispatch. In-progress or uncertain actions cannot be reclaimed. A server trace distinguishes proven zero-dispatch failure from a possible charged attempt; only a proven failed action permits a new explicit key for the same transcript. Connection loss never triggers automatic paid retry. Error responses may expose `X-Memy-Operation-Id` for reconciliation; no claim nonce is exposed.
 

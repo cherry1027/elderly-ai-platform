@@ -176,3 +176,54 @@ Local testing-allowance messages are distinguished from provider credit/billing
 rejections; the interface does not infer or display an account credit balance.
 These paths are verified with synthetic offline responses, including the actual
 client-to-workspace failure/recovery flow. No live provider call was used.
+
+## Typed conversation — 3 November 2026
+
+The conversation now opens with a large **Write a memory or answer…** composer,
+**Send**, and a separate **Use voice instead** control. The current
+cream/forest/bronze theme is retained. Opening voice options never opens the
+microphone or sends audio. Typed messages and voice transcripts share the same
+saved conversation, with the person’s original typed wording labelled as their
+own rather than attributed to OpenAI. New composer, message-role, status and
+review controls follow the story’s English or Swedish language.
+
+An explicit send calls
+`POST /api/v2/story-sessions/{session_id}/text-messages` with
+`{"text":"the exact original wording","language":"en"}` (or `sv`). The input
+accepts up to 4,000 Unicode characters, preserves spacing/newlines, and does not
+convert typing into a simulated transcript. The backend saves the immutable
+original and assistant reply together when the turn completes. Typed input uses
+the existing interviewer and suggested-memory pipeline. Suggested facts still
+require the user’s review; listening remains a separate explicit action.
+Typing avoids transcription charges, but the AI text reply is still a paid
+provider action governed by the existing allowance.
+
+The interface shows **Memy is thinking…**, saved, failed and uncertain states.
+Duplicate clicks are blocked before asynchronous hashing or dispatch. Enter
+inserts a newline; Ctrl/Cmd+Enter is an explicit send shortcut, with IME/repeat
+protection. A recoverable failed send keeps the unsent draft in tab memory.
+Backgrounding, changing project/session or signing out clears that unsaved draft;
+it is never saved to local/session storage. Successfully saved history is
+reloaded from the owned backend when the story is reopened.
+
+Pending action metadata retains a SHA-256 digest, never the original message.
+Both initial results and recovered results must match its original wording,
+project/session/language, source pairing, roles, sequence and original-user
+provenance. Real mode, distinct message IDs, canonical assistant model/version, aware message timestamps and original-grounded, ownership-matching pending memories are also verified. Completed recovery must also match the owned operation envelope and
+its original operation ID when known. Recovery is GET-only; no failed or
+uncertain send is automatically retried. Missing database setup reports
+`TEXT_CHAT_NOT_READY` honestly and releases the action only when the backend
+response has no operation-claim header.
+
+Verification: **121 Node checks and 16 proxy checks passed**, plus JavaScript
+syntax checks and `git diff --check`. The new offline checks cover exact original
+submission, a saved reply and reopened history, duplicate clicks, EN/SV controls,
+length/blank/Unicode validation, IME/newlines, ownership/source/provenance
+mismatches, budget failure, uncertain-operation recovery and background/context
+privacy. These use labelled synthetic fixtures only. No live AI call, provider
+enablement or budget/configuration change was made for this web implementation.
+The signed-in browser was also checked with real saved history and an unsent
+typing check. The separately approved development migration and its rollback-only
+verification are recorded in `docs/typed-chat.md`. New live typed-provider and
+actual-device acceptance remain separate. With AI paused, the real preview still
+accepts a private draft but correctly disables Send; it never fabricates a reply.

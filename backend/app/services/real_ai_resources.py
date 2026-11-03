@@ -12,7 +12,7 @@ from app.core.errors import APIError, invalid_token, unavailable
 from app.schemas.conversations import ClarificationResponse
 from app.schemas.real_ai import (
     RealTranscript, RealMessage, RealMemory, RealTurn, RealDraft, RealSpeech,
-    RealOperation, RealExportMetadata, RealSavedExport,
+    RealOperation, RealExportMetadata, RealSavedExport, RealTextMessageCreate,
 )
 from app.schemas.story_drafts import StoryGenerationContext, StoryEditResponse
 from app.services.audio_resources import AudioGateway
@@ -89,7 +89,7 @@ class RealAIGateway(AudioGateway):
             raise unavailable()
         return row
 
-    async def rows(self, table, *, filters, limit=100, offset=0, order="created_at.asc"):
+    async def rows(self, table, *, filters, limit=100, offset=0, order="created_at.asc", keep_operation_id=False):
         rows = await self._request("GET", table, params={
             "select": "*", "owner_id": f"eq.{self.user.id}", **filters,
             "limit": str(limit), "offset": str(offset), "order": order,
@@ -99,10 +99,12 @@ class RealAIGateway(AudioGateway):
         for field, predicate in filters.items():
             if not predicate.startswith("eq.") or any(str(r.get(field)) != predicate[3:] for r in rows):
                 raise unavailable()
-        return [{k: v for k, v in r.items() if k not in {"owner_id", "operation_id"}} for r in rows]
+        private = {"owner_id"} if keep_operation_id else {"owner_id", "operation_id"}
+        return [{k: v for k, v in r.items() if k not in private} for r in rows]
 
     async def one(self, table, id_field, resource_id):
-        rows = await self.rows(table, filters={id_field: f"eq.{resource_id}"}, limit=1)
+        rows = await self.rows(table, filters={id_field: f"eq.{resource_id}"}, limit=1,
+                               keep_operation_id=table == "real_conversation_messages")
         if not rows:
             raise APIError(404, "RESOURCE_NOT_FOUND", "The requested resource was not found.")
         row = rows[0]
@@ -113,6 +115,16 @@ class RealAIGateway(AudioGateway):
         except (KeyError, ValueError, TypeError):
             raise unavailable() from None
         await self.get_project(project_id)
+        if table == "real_conversation_messages":
+            if row.get("source_transcript_id") is None:
+                try:
+                    session_id = UUID(row["session_id"])
+                except (KeyError, TypeError, ValueError):
+                    raise unavailable() from None
+                session = await self.get_owned_session(session_id)
+                return (await self._hydrate_messages([row], session_id, session))[0]
+            # Preserve the published voice shape and its original read count.
+            row = {key: value for key, value in row.items() if key != "operation_id"}
         return row
 
     async def claim(self, project_id, session_id, kind, key, digest):
@@ -187,8 +199,49 @@ class RealAIGateway(AudioGateway):
     async def messages(self, session_id, limit=100, offset=0, recent=False):
         session = await self.get_owned_session(session_id)
         rows = await self.rows("real_conversation_messages", filters={"session_id": f"eq.{session_id}"},
-                               limit=limit, offset=offset, order="sequence.desc" if recent else "sequence.asc")
-        result = [validated(RealMessage, r) for r in rows]
+                               limit=limit, offset=offset, order="sequence.desc" if recent else "sequence.asc",
+                               keep_operation_id=True)
+        return await self._hydrate_messages(rows, session_id, session)
+
+    async def _hydrate_messages(self, rows, session_id, session):
+        # No new column is added to the shared messages table: older backends
+        # must keep reading their existing voice-only sessions. Only typed rows
+        # need one additional, owned batch read of immutable original sources.
+        typed = [row for row in rows if row.get("source_transcript_id") is None]
+        sources = {}
+        if typed:
+            try:
+                operation_ids = list(dict.fromkeys(str(UUID(row["operation_id"])) for row in typed))
+            except (KeyError, ValueError, TypeError):
+                raise unavailable() from None
+            response = await self.rpc("get_real_text_chat_sources", {
+                "p_session_id": str(session_id), "p_operation_ids": operation_ids,
+            })
+            if (not isinstance(response, dict) or set(response) != {"sources"}
+                or not isinstance(response["sources"], list) or len(response["sources"]) != len(operation_ids)):
+                raise unavailable()
+            for source in response["sources"]:
+                if (not isinstance(source, dict)
+                    or set(source) != {"input_id", "operation_id", "project_id", "session_id", "language", "text"}
+                    or any(not isinstance(value, str) for value in source.values())
+                    or source["operation_id"] not in operation_ids or source["operation_id"] in sources
+                    or source["input_id"] != source["operation_id"]
+                    or source["project_id"] != session["project_id"] or source["session_id"] != str(session_id)
+                    or source["language"] != session["language"]):
+                    raise unavailable()
+                validated(RealTextMessageCreate, {"text": source["text"], "language": source["language"]})
+                sources[source["operation_id"]] = source
+        result = []
+        for row in rows:
+            if row.get("source_transcript_id") is None:
+                source = sources.get(row["operation_id"])
+                if source is None:
+                    raise unavailable()
+                if (row.get("source_text_input_id") not in (None, source["input_id"])
+                    or (row.get("role") == "user" and row.get("text") != source["text"])):
+                    raise unavailable()
+                row = {**row, "source_text_input_id": source["input_id"]}
+            result.append(validated(RealMessage, {k: v for k, v in row.items() if k != "operation_id"}))
         if any(r["session_id"] != str(session_id) or r["project_id"] != session["project_id"] or r["language"] != session["language"] for r in result):
             raise unavailable()
         return sorted(result, key=lambda r: r["sequence"])

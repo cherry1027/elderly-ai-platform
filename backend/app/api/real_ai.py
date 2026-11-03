@@ -19,7 +19,7 @@ from app.core.errors import APIError, unavailable
 from app.schemas.conversations import MemoryPatch
 from app.schemas.real_ai import (
     RealTranscript, RealMessage, RealMemory, RealTurn, RealDraft, RealSpeech,
-    RealMessageCreate, RealSpeechRequest, RealOperation, RealExportRequest,
+    RealMessageCreate, RealTextMessageCreate, RealSpeechRequest, RealOperation, RealExportRequest,
     RealExportMetadata, RealSavedExport,
 )
 from app.schemas.story_drafts import StoryDraftPatch, StoryEditResponse, StoryGenerationRequest
@@ -59,10 +59,14 @@ def digest(payload):
                                      separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
 
-def result_scope(kind, result, project_id, session_id):
+def result_scope(kind, result, project_id, session_id, operation_id=None):
     scoped = result["message"] if kind == "conversation" else result
     if kind != "speech" and (scoped["project_id"] != str(project_id)
         or (session_id is not None and scoped.get("session_id") != str(session_id))):
+        raise unavailable()
+    if (kind == "conversation" and result["user_message"].get("source_text_input_id") is not None
+        and operation_id is not None
+        and result["user_message"]["source_text_input_id"] != str(operation_id)):
         raise unavailable()
     return result
 
@@ -77,7 +81,8 @@ async def execute(request, gateway, *, project_id, session_id, kind, key, finger
         claim = await gateway.claim(project_id, session_id, kind, key, fingerprint)
         if not claim["claimed"]:
             if claim["status"] == "completed":
-                return result_scope(kind, await gateway.normalize_result(kind, claim["result"]), project_id, session_id)
+                return result_scope(kind, await gateway.normalize_result(kind, claim["result"]), project_id, session_id,
+                                    claim["operation_id"])
             error = APIError(409, "AI_OPERATION_" + claim["status"].upper(),
                              "This action has already been submitted. Reload its saved result before retrying.")
             error.operation_id = claim["operation_id"]
@@ -90,7 +95,8 @@ async def execute(request, gateway, *, project_id, session_id, kind, key, finger
                 row = await gateway.complete(claim, payload, {
                     "mode": "real", "provider": "openai", "model": model, "version": 1,
                 })
-                return result_scope(kind, await gateway.normalize_result(kind, row), project_id, session_id)
+                return result_scope(kind, await gateway.normalize_result(kind, row), project_id, session_id,
+                                    claim["operation_id"])
         except BaseException as cause:
             code = cause.code if isinstance(cause, APIError) else "REAL_AI_UNCERTAIN"
             try:
@@ -121,7 +127,7 @@ async def operation_result(row, gateway, operation_id=None):
         normalized = await gateway.normalize_result(result["kind"], result["result"])
         result["result"] = (await gateway.draft(UUID(normalized["draft_id"]))
                             if result["kind"] == "generation" else normalized)
-        result_scope(result["kind"], result["result"], result["project_id"], result["session_id"])
+        result_scope(result["kind"], result["result"], result["project_id"], result["session_id"], result["operation_id"])
     return result
 
 
@@ -204,6 +210,52 @@ async def send_message(session_id: UUID, payload: RealMessageCreate, request: Re
 @router.get("/story-sessions/{session_id}/messages", response_model=list[RealMessage])
 async def messages(session_id: UUID, gateway: Gateway, limit: Limit = 50, offset: Offset = 0):
     return await gateway.messages(session_id, limit, offset)
+
+
+@router.post("/story-sessions/{session_id}/text-messages", response_model=RealTurn)
+async def send_text_message(session_id: UUID, payload: RealTextMessageCreate, request: Request,
+                            gateway: Gateway, idempotency_key: Key):
+    """One explicit typed turn; original wording persists with the completed reply."""
+    session = await gateway.get_owned_session(session_id, active=True)
+    language_matches(payload.language, session)
+    # An unapplied migration must fail before a provider claim or reservation.
+    try:
+        scope = await gateway.rpc("check_real_text_chat_scope", {"p_session_id": str(session_id)})
+    except APIError as error:
+        if error.status_code == 503:
+            raise APIError(503, "TEXT_CHAT_NOT_READY", "Text chat setup is not available yet. No AI request was made.") from None
+        raise
+    if (not isinstance(scope, dict) or set(scope) != {"project_id", "session_id", "language", "input_limit"}
+        or scope["project_id"] != session["project_id"] or scope["session_id"] != str(session_id)
+        or scope["language"] != session["language"] or type(scope["input_limit"]) is not int
+        or scope["input_limit"] != 4000):
+        raise APIError(503, "TEXT_CHAT_NOT_READY", "Text chat setup could not be verified. No AI request was made.")
+    prior, recent = await read_together(
+        gateway.project_memories(UUID(session["project_id"])),
+        gateway.messages(session_id, limit=12, recent=True),
+    )
+    while recent and sum(len(message["text"]) for message in recent) > 32_000:
+        recent.pop(0)
+    provider = request.app.state.real_ai.require()
+    if hasattr(provider, "validate_turn_input"):
+        provider.validate_turn_input(payload.text, payload.language, prior, recent_messages=recent)
+
+    async def produce(provider):
+        reply = await provider.respond(payload.text, payload.language, prior, recent_messages=recent)
+        return {"input_text": payload.text, "assistant_text": reply.text,
+                "memories": [asdict(fact) for fact in reply.facts]}
+
+    result = await execute(request, gateway, project_id=UUID(session["project_id"]), session_id=session_id,
+        kind="conversation", key=idempotency_key,
+        fingerprint=digest({"input_type": "typed", "action_key": str(idempotency_key),
+                            **payload.model_dump(mode="json")}),
+        produce=produce, model=request.app.state.settings.openai_text_model)
+    if (result["user_message"]["text"] != payload.text
+        or result["user_message"]["source_transcript_id"] is not None
+        or result["user_message"]["source_text_input_id"] is None
+        or result["message"]["language"] != payload.language):
+        raise unavailable()
+    return result
 
 
 @router.get("/story-sessions/{session_id}/memories", response_model=list[RealMemory])

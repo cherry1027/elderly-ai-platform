@@ -2,6 +2,10 @@ const MAX_AUDIO = 25_000_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SPEECH_FIELDS = ['speech_id', 'assistant_message_id', 'language', 'media_type', 'audio_sha256', 'audio_size', 'expires_at', 'status'];
 const languages = { en: 'English', sv: 'Svenska' };
+const chatCopy = {
+  en: { eyebrow: 'ONE MEMORY AT A TIME', title: 'A conversation worth keeping.', intro: 'Write as you would talk to a friend. Memy will help you find the next little detail.', saved: 'Saved conversation', typed: 'You · typed message', voice: 'You · original transcript', interviewer: 'Memy · AI interviewer', label: 'What would you like to remember?', placeholder: 'Write a memory or answer…', send: 'Send', useVoice: 'Use voice instead', hideVoice: 'Hide voice options', hint: 'Your words stay yours. Memy’s reply uses AI; listening is optional.', idle: 'Not sent · only in this tab', thinking: 'Memy is thinking…', done: 'Your message and Memy’s reply are saved.', failed: 'Not sent. Your words are still here.', uncertain: 'Checking your saved action. Please don’t send again.', tooLong: 'Please keep your message to 4,000 characters.', counter: 'characters', review: 'Review suggested memories', reviewHint: 'You decide what belongs in your story.', emptyTitle: 'Let’s begin with a little memory.', empty: 'A familiar place, someone you remember, or a moment that still makes you smile. Start wherever feels right.', emptyNote: 'A gentle starting suggestion, not an AI reply.', paused: 'AI is paused. You can write here, but sending will wait until testing is available.', original: 'Saved in your own words', updated: 'Conversation saved. Review any suggested memories when you’re ready.' },
+  sv: { eyebrow: 'ETT MINNE I TAGET', title: 'Ett samtal att bevara.', intro: 'Skriv som om du pratade med en vän. Memy hjälper dig att hitta nästa lilla detalj.', saved: 'Sparat samtal', typed: 'Du · skrivet meddelande', voice: 'Du · ursprunglig transkription', interviewer: 'Memy · AI-intervjuare', label: 'Vad vill du minnas?', placeholder: 'Skriv ett minne eller ett svar…', send: 'Skicka', useVoice: 'Använd rösten i stället', hideVoice: 'Dölj röstalternativ', hint: 'Dina ord är dina. Memys svar använder AI; du väljer själv om du vill lyssna.', idle: 'Inte skickat · bara i den här fliken', thinking: 'Memy tänker…', done: 'Ditt meddelande och Memys svar har sparats.', failed: 'Inte skickat. Dina ord finns kvar här.', uncertain: 'Kontrollerar det sparade resultatet. Skicka inte igen ännu.', tooLong: 'Skriv högst 4 000 tecken.', counter: 'tecken', review: 'Granska föreslagna minnen', reviewHint: 'Du bestämmer vad som hör hemma i din berättelse.', emptyTitle: 'Vi börjar med ett litet minne.', empty: 'En välbekant plats, någon du minns eller ett ögonblick som får dig att le. Börja där det känns rätt.', emptyNote: 'Ett förslag som inspiration, inte ett AI-svar.', paused: 'AI är pausad. Du kan skriva här, men vänta med att skicka tills testningen är tillgänglig.', original: 'Sparat med dina egna ord', updated: 'Samtalet har sparats. Granska föreslagna minnen när du vill.' },
+};
 const memoryPrompts = {
   en: [
     { name: 'A familiar place', mark: '⌂', questions: ['Is there a place you remember clearly? What do you notice when you picture it?', 'Can you remember a sound, a scent or a view from a place you once knew?'] },
@@ -32,7 +36,7 @@ function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(props)) {
     if (key === 'class') node.className = value;
-    else if (key.startsWith('aria-')) node.setAttribute(key, value);
+    else if (key.startsWith('aria-') || key === 'role') node.setAttribute(key, value);
     else node[key] = value;
   }
   for (const child of children.flat(Infinity)) {
@@ -63,6 +67,7 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
   let projects = [], project = null, session = null, sessions = [], transcripts = [], messages = [], memories = [], drafts = [], exports = [];
   let selectedTranscript = '', selectedDraft = '', history = [], historyDraft = '';
   let recording = null;
+  let composerText = '', composerState = 'idle', voiceOpen = false, workingLabel = '';
   let homeForm = { title: '', description: '', language: 'en' }, detailForm = null, draftEditing = null;
   let correctionInputs = new Map(), openPanels = new Set();
   let capabilities = null;
@@ -94,6 +99,7 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
   function clearFormMemory() {
     homeForm = { title: '', description: '', language: 'en' }; detailForm = null; draftEditing = null;
     inspirationTopic = null; inspirationQuestion = 0;
+    composerText = ''; composerState = 'idle'; voiceOpen = false;
     correctionInputs.clear(); openPanels.clear();
   }
   function savedBookParagraphs(content) {
@@ -170,11 +176,11 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
     }
     error = cause instanceof Error ? cause.message : 'This action could not be completed. Please reload saved data.';
   }
-  async function run(action) {
+  async function run(action, busyLabel = '') {
     if (busy || disposed) return;
-    busy = true; error = ''; notice = ''; render();
+    busy = true; workingLabel = busyLabel; error = ''; notice = ''; render();
     try { await action(epoch); } catch (cause) { if (!disposed) showError(cause); }
-    finally { busy = false; if (!disposed) render(); }
+    finally { busy = false; workingLabel = ''; if (!disposed) render(); }
   }
   async function loadCapabilities(g = epoch) {
     try {
@@ -494,25 +500,73 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
   }
   function renderConversation() {
     const isRecording = recording && recording.recorder.state !== 'inactive', finalizing = recording && !isRecording, active = session?.status === 'active';
+    const copy = chatCopy[project.language] || chatCopy.en;
+    const characterCount = () => [...composerText].length;
+    const canSend = () => !busy && !pending() && capabilities?.enabled === true && active && !recording && Boolean(composerText.trim()) && characterCount() <= 4000;
+    const sendTyped = () => {
+      if (!canSend() || document.hidden) return;
+      const original = composerText;
+      composerState = 'sending';
+      run(async g => {
+        try {
+          const result = await performPaid('conversation', `${v2}/story-sessions/${session.id}/text-messages`, { json: { text: original, language: project.language } }, g);
+          if (!result || !alive(g)) return;
+          // Clear only the submitted draft, never resurrecting words cleared by
+          // background/context privacy cleanup. Saved history is loaded below.
+          if (composerText === original) { composerText = ''; composerState = 'saved'; }
+          await refresh(g, ['messages', 'memories', 'drafts']);
+          if (alive(g)) notice = copy.updated;
+        } catch (cause) {
+          if (alive(g) && !document.hidden && composerText === original) composerState = pending() ? 'uncertain' : 'failed';
+          throw cause;
+        }
+      }, copy.thinking);
+    };
+    const typedInput = field(el('textarea', { class: 'chat-input', rows: 3, value: composerText, placeholder: copy.placeholder, disabled: busy || !active || pending() || Boolean(recording), 'aria-label': copy.placeholder, 'aria-describedby': 'chat-help chat-count chat-state' }), 'typed-memory', value => {
+      composerText = value; composerState = 'idle';
+      sendControl.disabled = !canSend();
+      count.textContent = `${characterCount().toLocaleString(project.language)} / ${(4000).toLocaleString(project.language)} ${copy.counter}`;
+      count.classList.toggle('is-over-limit', characterCount() > 4000);
+      composerStatus.textContent = characterCount() > 4000 ? copy.tooLong : copy.idle;
+    });
+    // Enter remains a familiar newline. Only an explicit modified shortcut sends;
+    // composition and key repeat never submit an unfinished message.
+    typedInput.onkeydown = event => {
+      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing && !event.repeat && event.keyCode !== 229) {
+        event.preventDefault(); sendTyped();
+      }
+    };
+    const sendControl = el('button', { type: 'button', class: 'primary chat-send', disabled: !canSend(), onclick: sendTyped }, el('span', {}, copy.send), el('span', { 'aria-hidden': 'true' }, '↑'));
+    const count = p(`${characterCount().toLocaleString(project.language)} / ${(4000).toLocaleString(project.language)} ${copy.counter}`, `chat-count ${characterCount() > 4000 ? 'is-over-limit' : ''}`); count.id = 'chat-count';
+    const composerStatus = p(characterCount() > 4000 ? copy.tooLong : composerState === 'sending' ? copy.thinking : composerState === 'saved' ? copy.done : composerState === 'failed' ? copy.failed : composerState === 'uncertain' ? copy.uncertain : composerText ? copy.idle : '', `chat-save-state state-${composerState}`);
+    composerStatus.id = 'chat-state'; composerStatus.setAttribute('role', 'status'); composerStatus.setAttribute('aria-live', 'polite');
+    const voiceToggle = el('button', { type: 'button', class: 'secondary chat-voice-toggle', disabled: busy || Boolean(recording), 'aria-expanded': String(voiceOpen), 'aria-controls': 'voice-options', onclick: () => { voiceOpen = !voiceOpen; render(); } }, el('span', { class: 'chat-mic-symbol', 'aria-hidden': 'true' }, ''), voiceOpen ? copy.hideVoice : copy.useVoice);
+    const help = p(copy.hint, 'chat-help'); help.id = 'chat-help';
+    const composer = el('section', { class: 'chat-composer', 'aria-label': copy.label },
+      label(copy.label, typedInput),
+      el('div', { class: 'chat-composer-bottom' }, count, el('div', { class: 'chat-composer-actions' }, voiceToggle, sendControl)),
+      help, capabilities?.enabled !== true && p(copy.paused, 'chat-paused'), composerStatus);
     const file = input({ type: 'file', accept: '.wav,.mp3,.m4a,.webm,audio/wav,audio/mpeg,audio/mp4,audio/webm', disabled: busy || Boolean(recording) || !active, onchange: event => {
       const selected = event.target.files?.[0]; if (!selected) return;
       if (!/\.(wav|mp3|m4a|webm)$/i.test(selected.name) || !selected.size || selected.size > MAX_AUDIO) { error = 'Choose a WAV, MP3, M4A, or WebM audio file up to 25 MB.'; audioFile = null; audioName = ''; }
       else { const extension = selected.name.split('.').at(-1).toLowerCase(); audioFile = selected.slice(0, selected.size, { wav: 'audio/wav', mp3: 'audio/mpeg', m4a: 'audio/mp4', webm: 'audio/webm' }[extension]); audioName = selected.name; error = ''; notice = 'Audio selected in memory. It has not been uploaded.'; }
       event.target.value = ''; render();
     } });
-    const used = new Set(messages.filter(item => item.role === 'user').map(item => item.source_transcript_id));
+    const used = new Set(messages.filter(item => item.role === 'user' && item.source_transcript_id).map(item => item.source_transcript_id));
     const chosen = transcripts.find(item => item.transcript_id === selectedTranscript);
     const source = el('select', { disabled: busy || !transcripts.length, 'aria-label': 'Saved transcript to send', onchange: event => { selectedTranscript = event.target.value; render(); } },
       ...transcripts.map(item => el('option', { value: item.transcript_id, selected: item.transcript_id === selectedTranscript }, `${date(item.created_at)}${used.has(item.transcript_id) ? ' · sent' : ''} · ${item.text.slice(0, 65)}`)));
     const chat = el('section', { class: 'conversation-card card' },
-      el('div', { class: 'section-heading' }, el('div', {}, p('A LITTLE CONVERSATION', 'eyebrow'), el('h2', {}, 'Your story, in your words.')), badge('AI interviewer')),
-      p('Memy helps you explore your memories. You choose what to share.', 'muted'),
+      el('div', { class: 'section-heading' }, el('div', {}, p(copy.eyebrow, 'eyebrow'), el('h2', {}, copy.title)), badge(project.language === 'sv' ? 'AI-intervjuare' : 'AI interviewer')),
+      p(copy.intro, 'muted'),
       renderInspiration(),
-      el('div', { class: 'thread', 'aria-label': 'Saved conversation' }, messages.length ? messages.map(item => el('article', { class: `bubble ${item.role}` },
-        el('div', { class: 'speaker-heading' }, el('span', { class: `speaker-avatar ${item.role === 'assistant' ? 'memy-avatar' : 'your-avatar'}`, 'aria-hidden': 'true' }, item.role === 'assistant' ? '❧' : '“'), el('strong', { class: 'speaker-name' }, item.role === 'user' ? 'You · original transcript' : 'Memy · AI interviewer')), prose(item.text),
-        el('div', { class: 'message-meta' }, provenance(item)),
+      el('div', { class: 'thread', 'aria-label': copy.saved }, messages.length ? messages.map(item => el('article', { class: `bubble ${item.role}` },
+        el('div', { class: 'speaker-heading' }, el('span', { class: `speaker-avatar ${item.role === 'assistant' ? 'memy-avatar' : 'your-avatar'}`, 'aria-hidden': 'true' }, item.role === 'assistant' ? '❧' : '“'), el('strong', { class: 'speaker-name' }, item.role === 'user' ? item.source_text_input_id && item.source_transcript_id === null ? copy.typed : copy.voice : copy.interviewer)), prose(item.text),
+        el('div', { class: 'message-meta' }, item.role === 'user' && item.source_text_input_id && item.source_transcript_id === null ? p(copy.original, 'original-label') : provenance(item), item.created_at && p(date(item.created_at), 'message-time')),
         item.role === 'assistant' && speechControls(item))) :
-        el('div', { class: 'thread-empty local-guidance' }, el('span', { class: 'empty-symbol', 'aria-hidden': 'true' }, '“'), p('SOMEWHERE TO BEGIN', 'eyebrow'), el('h3', {}, 'A place. A person. A moment.'), p('Think of a memory you would like to keep. There’s no need to start at the beginning.', 'muted'), p('This is a starting suggestion, not a saved AI reply.', 'field-help'))));
+        el('div', { class: 'thread-empty local-guidance' }, el('span', { class: 'empty-symbol', 'aria-hidden': 'true' }, '“'), p('MEMY', 'eyebrow'), el('h3', {}, copy.emptyTitle), p(copy.empty, 'muted'), p(copy.emptyNote, 'field-help'))),
+      composer,
+      memories.some(item => item.status === 'pending') && el('aside', { class: 'chat-memory-invitation' }, el('span', { class: 'memory-invitation-mark', 'aria-hidden': 'true' }, '❧'), el('div', {}, p(copy.reviewHint, 'muted'), button(`${copy.review} · ${memories.filter(item => item.status === 'pending').length}`, () => { tab = 'memories'; }, false, 'text-button'))));
     const recordControl = isRecording ? button(`Stop recording · ${recording.seconds}s`, () => stopRecording(), false, 'record-orb is-recording') :
       button(finalizing ? 'Finishing recording…' : 'Start recording', startRecording, !consent || !active || Boolean(recording), 'record-orb primary');
     if (isRecording) { recordControl.dataset.recordStop = ''; recordControl.setAttribute('aria-label', 'Stop recording'); }
@@ -539,7 +593,8 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
           await performPaid('conversation', `${v2}/story-sessions/${session.id}/messages`, { json: { source_transcript_id: chosen.transcript_id, language: project.language } }, g);
           if (alive(g)) { await refresh(g, ['messages', 'memories', 'drafts']); notice = 'Conversation turn saved. Review the suggested memories.'; }
         }, used.has(chosen.transcript_id) || !active))) : p('Your original words will appear here after you save a transcript.', 'muted'));
-    return [el('div', { class: 'conversation-layout' }, chat, recorder), transcriptReview, nextStep()];
+    const voiceOptions = el('div', { id: 'voice-options', class: 'voice-options', hidden: !voiceOpen }, recorder, transcriptReview);
+    return [el('div', { class: `conversation-layout typed-conversation ${voiceOpen ? 'voice-is-open' : ''}` }, chat, voiceOptions), nextStep()];
   }
   function renderMemories() {
     const confirmed = memories.filter(item => item.status === 'confirmed').length;
@@ -620,11 +675,12 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
     const exit = el('button', { type: 'button', class: 'text-button', onclick: () => { dispose(); onExit?.(); } }, 'Sign out');
     root.replaceChildren(el('div', { class: 'workspace stack' }, ...[
       el('header', { class: 'account-bar' }, p('Your personal story space', 'account-label'), panel('account', 'Your account', p(user.email || 'Signed in', 'muted'), p('Real AI uses the same shared $10 testing allowance. Each processing action requires your click. Reading saved work makes no AI request.', 'field-help'), exit)),
-      (busy || notice) && el('div', { role: 'status', 'aria-live': 'polite', class: `workspace-status ${busy ? 'is-working' : 'is-saved'}` }, busy ? 'Taking care of your story… Please wait.' : notice),
+      (busy || notice) && el('div', { role: 'status', 'aria-live': 'polite', class: `workspace-status ${busy ? 'is-working' : 'is-saved'}` }, busy ? workingLabel || 'Taking care of your story… Please wait.' : notice),
       error && el('div', { role: 'alert', class: 'notice error' }, error),
       capabilities && capabilities.enabled !== true && el('aside', { class: 'service-status' }, el('div', {}, p('AI testing is currently paused.', 'service-status-title'), p('Your saved work remains available. You can read stories, review memories, edit saved drafts and prepare PDFs.', 'muted')), button('Check AI availability', g => loadCapabilities(g), false, 'secondary')),
       pending() && card(el('h2', {}, 'Let’s check your last action.'), p('The connection was interrupted. Check the saved result before trying another AI action; your request will not be sent again.', 'notice'), button('Reload saved action', async g => {
         const result = await api.reconcile(); if (!alive(g)) return;
+        if (result?.user_message?.source_text_input_id && result.user_message.source_transcript_id === null && result.user_message.text === composerText) { composerText = ''; composerState = 'saved'; }
         await refresh(g); if (result?.speech_id) await prepareSpeech(result, g); notice = 'Saved AI action reloaded.';
       }, false, 'primary')),
       ...(project ? [renderProject(), ...(tab === 'conversation' ? renderConversation() : tab === 'memories' ? [renderMemories()] : renderDrafts())] : renderHome()).filter(Boolean),

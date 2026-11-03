@@ -12,10 +12,30 @@ from app.schemas.story_drafts import StorySourceMemory, StoryEditResponse
 from app.schemas.exports import StoryExportMetadata
 
 
+def original_text(value):
+    """Validate an original without trimming, normalizing or rewriting it."""
+    if not 1 <= len(value) <= 4000 or not value.strip() or "\0" in value:
+        raise ValueError("Enter a memory or answer of at most 4000 characters")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError("Use valid Unicode text") from None
+    return value
+
+
 class Provenance(StrictResponse):
     mode: Literal["real"]
     provider: Literal["openai"]
     model: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$")
+    version: Literal[1]
+
+
+class OriginalTextProvenance(StrictResponse):
+    """Typed wording belongs to the user, never to a transcription provider."""
+
+    mode: Literal["original"]
+    provider: Literal["user"]
+    model: None
     version: Literal[1]
 
 
@@ -38,9 +58,24 @@ class RealMessage(StrictResponse):
     language: LanguageCode
     text: str = Field(min_length=1, max_length=32_000)
     sequence: int = Field(ge=1)
-    source_transcript_id: UUID
+    source_transcript_id: UUID | None
+    source_text_input_id: UUID | None = None
     created_at: AwareDatetime
-    provenance: Provenance
+    provenance: Provenance | OriginalTextProvenance
+
+    @model_validator(mode="after")
+    def original_source(self):
+        typed = self.source_text_input_id is not None
+        if typed == (self.source_transcript_id is not None):
+            raise ValueError("A message must have exactly one original source")
+        original_user_text = typed and self.role == "user"
+        if original_user_text != isinstance(self.provenance, OriginalTextProvenance):
+            raise ValueError("Original typed wording must identify its user source")
+        if original_user_text:
+            original_text(self.text)
+        if typed and ((self.role == "user") != (self.id == self.source_text_input_id)):
+            raise ValueError("A typed original must identify its own user message")
+        return self
 
 
 class RealMessageCreate(StrictRequest):
@@ -51,6 +86,16 @@ class RealMessageCreate(StrictRequest):
     @classmethod
     def uuid_text(cls, value):
         return UUID(value) if isinstance(value, str) else value
+
+
+class RealTextMessageCreate(StrictRequest):
+    text: str = Field(min_length=1, max_length=4000)
+    language: LanguageCode
+
+    @field_validator("text")
+    @classmethod
+    def original_text(cls, value):
+        return original_text(value)
 
 
 class RealMemory(MemoryResponse):
@@ -66,10 +111,11 @@ class RealTurn(StrictResponse):
     @model_validator(mode="after")
     def matching_turn(self):
         u, a = self.user_message, self.message
-        if (u.role != "user" or a.role != "assistant" or u.session_id != a.session_id
+        if (u.role != "user" or a.role != "assistant" or u.id == a.id or u.session_id != a.session_id
             or u.project_id != a.project_id or u.language != a.language
             or a.sequence != u.sequence + 1 or u.source_transcript_id != a.source_transcript_id
-            or u.id != u.source_transcript_id
+            or u.source_text_input_id != a.source_text_input_id
+            or u.id != (u.source_text_input_id or u.source_transcript_id)
             or any(m.project_id != u.project_id or m.session_id != u.session_id
                    or m.source_message_id != u.id for m in self.memories)):
             raise ValueError("Incoherent conversation turn")

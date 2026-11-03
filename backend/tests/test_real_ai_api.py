@@ -249,7 +249,7 @@ def test_draft_generation_requires_reviewed_memories_before_any_cost(harness):
     assert gateway.claim_count==provider.calls==0
 
 
-def test_all_nineteen_private_v2_routes_require_authentication():
+def test_all_twenty_private_v2_routes_require_authentication():
     app=create_app(Settings(_env_file=None))
     protected=[]
     for path,item in app.openapi()["paths"].items():
@@ -257,7 +257,7 @@ def test_all_nineteen_private_v2_routes_require_authentication():
             if path.startswith("/api/v2/") and path!="/api/v2/capabilities":
                 assert operation["security"]==[{"SupabaseBearer":[]}]
                 protected.append((method,path))
-    assert len(protected)==19
+    assert len(protected)==20
     with TestClient(app) as client:
         for method,path in protected:
             path=path.replace("{kind}","conversation")

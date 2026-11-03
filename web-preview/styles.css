@@ -641,3 +641,52 @@ body {
   .record-visual.is-recording .record-wave { animation: none; }
   .story-card:hover { transform: none; }
 }
+
+/* Familiar, spacious typed conversation; the microphone is always a choice. */
+.conversation-layout.typed-conversation { grid-template-columns: minmax(0, 1fr); }
+.typed-conversation .conversation-card { min-width: 0; max-width: 100%; }
+.typed-conversation .section-heading h2 { max-width: 670px; }
+.typed-conversation .thread { margin-bottom: 30px; }
+.typed-conversation .bubble { max-width: min(88%, 820px); }
+.typed-conversation .bubble .prose { white-space: pre-wrap; overflow-wrap: anywhere; }
+.message-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 20px; }
+.original-label, .message-time { font-size: .8rem; color: #58634d; margin: 4px 0; }
+.chat-composer { padding: 23px; border: 1px solid #c8cdb8; border-radius: 23px; background: #fbf9f0; box-shadow: 0 8px 24px #24443806; }
+.chat-composer label > span { font-family: Georgia, serif; font-size: 1.35rem; font-weight: 500; }
+.chat-composer .chat-input { min-height: 132px; width: 100%; margin-top: 9px; padding: 17px 19px; resize: vertical; border: 1px solid #aebca3; background: #fffef8; font-size: 1.1rem; font-family: inherit; line-height: 1.65; border-radius: 15px; }
+.chat-composer .chat-input::placeholder { color: #667260; opacity: 1; }
+.chat-composer .chat-input:focus { border-color: var(--forest); box-shadow: 0 0 0 3px #dce4cc; outline: 2px solid var(--forest); outline-offset: 2px; }
+.chat-composer-bottom { display: flex; align-items: center; justify-content: space-between; gap: 15px; flex-wrap: wrap; margin-top: 12px; }
+.chat-count { margin: 0; font-size: .8rem; color: #58634d; font-variant-numeric: tabular-nums; }
+.chat-count.is-over-limit { color: var(--error); font-weight: 700; }
+.chat-composer-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.chat-composer .chat-send { min-width: 128px; min-height: 54px; display: flex; gap: 23px; justify-content: space-between; align-items: center; border-radius: 14px; font-size: 1.05rem; padding: 12px 21px; }
+.chat-send > span:last-child { font-size: 1.5rem; line-height: 1; }
+.chat-voice-toggle { min-height: 54px; display: inline-flex; align-items: center; justify-content: center; gap: 9px; padding: 12px 16px; background: transparent; border-radius: 14px; }
+.chat-mic-symbol { position: relative; display: inline-block; flex: 0 0 17px; width: 17px; height: 24px; background: linear-gradient(currentColor, currentColor) center bottom / 2px 5px no-repeat; }
+.chat-mic-symbol::before { content: ""; position: absolute; width: 9px; height: 15px; left: 4px; top: 0; border: 2px solid currentColor; border-radius: 7px; }
+.chat-mic-symbol::after { content: ""; position: absolute; width: 17px; height: 13px; left: 0; top: 7px; border: 2px solid currentColor; border-top: 0; border-radius: 0 0 12px 12px; }
+.chat-help { font-size: .84rem; line-height: 1.6; color: #58634d; margin: 15px 0 0; }
+.chat-paused { font-size: .85rem; line-height: 1.6; color: #665332; padding: 11px 14px; border-left: 3px solid #b79660; background: #f3eddf; border-radius: 0 8px 8px 0; }
+.chat-save-state { margin: 9px 0 0; color: var(--forest-deep); font-size: .88rem; min-height: 1.4em; }
+.chat-save-state.state-failed, .chat-save-state.state-uncertain { color: #874739; }
+.chat-save-state.state-sending::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 8px; border-radius: 50%; background: #617c50; }
+.chat-memory-invitation { margin-top: 25px; padding: 18px 20px; display: flex; gap: 17px; align-items: center; background: #eaf0df; border: 1px solid #c5cfb6; border-radius: 17px; }
+.chat-memory-invitation p { margin: 0; }
+.chat-memory-invitation .text-button { margin: 4px 0 0; padding: 4px 0; text-align: left; min-height: 40px; font-size: 1rem; }
+.memory-invitation-mark { font-size: 2.3rem; color: #5c744c; }
+.voice-options { min-width: 0; display: grid; gap: 22px; }
+.voice-options[hidden] { display: none !important; }
+.voice-options .record-studio { position: static; }
+@media (min-width: 1100px) { .typed-conversation.voice-is-open { grid-template-columns: minmax(0, 1fr) 340px; } }
+@media (max-width: 600px) {
+  .chat-composer { padding: 17px; border-radius: 18px; }
+  .chat-composer label > span { font-size: 1.23rem; }
+  .chat-composer-bottom { display: block; }
+  .chat-count { margin-bottom: 13px; }
+  .chat-composer-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+  .chat-composer .chat-send { min-width: 102px; gap: 13px; padding-left: 17px; padding-right: 17px; }
+  .chat-voice-toggle { font-size: .92rem; padding-left: 10px; padding-right: 10px; }
+  .typed-conversation .bubble { max-width: 96%; padding: 19px 17px; }
+  .chat-memory-invitation { padding: 15px; gap: 13px; }
+}

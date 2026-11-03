@@ -805,3 +805,150 @@ test('a server-confirmed unsent generation releases the held UI and explains the
   assert(!find('Generate new draft · Real AI').disabled, 'only a later explicit click may submit a new generation');
   assert.equal(generationPosts, 1, 'checking failure and availability never retries generation');
 });
+
+// These chat acceptance checks use only synthetic in-memory server responses.
+async function typedWorkspace(t, { language = 'en', enabled = true, behavior = 'success' } = {}) {
+  const view = installDOM(t), calls = [], when = '2026-11-03T12:00:00Z';
+  const typedId = '66666666-6666-4666-8666-666666666666', replyId = '77777777-7777-4777-8777-777777777777';
+  const project = { id: ids.project, title: 'Synthetic chat acceptance story', language, updated_at: when };
+  const session = { id: ids.session, project_id: ids.project, language, status: 'active', created_at: when };
+  let saved = [], savedMemories = [], release, turn, postCount = 0;
+  const sendPath = `/api/v2/story-sessions/${ids.session}/text-messages`;
+  const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  const api = createApi({ getAccessToken: async () => 'synthetic-test-token', invalidate() {} }, { makeId: () => '88888888-8888-4888-8888-888888888888', request: async (path, options) => {
+    calls.push({ path, method: options.method, body: options.body });
+    if (options.method === 'POST' && path === sendPath) {
+      postCount++; const payload = JSON.parse(options.body);
+      const common = { project_id: ids.project, session_id: ids.session, language, source_transcript_id: null, source_text_input_id: typedId, created_at: when };
+      turn = { mode: 'real', user_message: { ...common, id: typedId, role: 'user', sequence: 1, text: payload.text, provenance: { mode: 'original', provider: 'user', model: null, version: 1 } },
+        message: { ...common, id: replyId, role: 'assistant', sequence: 2, text: language === 'sv' ? 'Syntetiskt testsvar: vad minns du mer?' : 'Synthetic test reply: what else do you remember?', provenance: { mode: 'real', provider: 'openai', model: 'offline-test', version: 1 } }, memories: [] };
+      if (behavior === 'failure') return json({ error: { code: 'AI_USAGE_LIMIT' } }, 429);
+      if (behavior === 'uncertain') { saved = [turn.user_message, turn.message]; throw Error('Synthetic lost reply'); }
+      return new Promise(resolve => { release = () => { saved = [turn.user_message, turn.message]; savedMemories = [{ id: ids.memory, fact_type: 'event', value: 'Synthetic unconfirmed fact', evidence: payload.text, status: 'pending', version: 1 }]; resolve(json(turn, 201)); }; });
+    }
+    if (options.method === 'GET' && path.startsWith('/api/v2/operations/by-key/')) return json({ operation_id: typedId, kind: 'conversation', status: 'completed', project_id: ids.project, session_id: ids.session, created_at: when, updated_at: when, error_code: null, result: turn });
+    if (options.method === 'GET' && path === '/api/v2/capabilities') return json({ contract: 'real-v2', mode: 'real', enabled });
+    if (options.method === 'GET' && path === '/api/v1/story-projects?limit=100&offset=0') return json([project]);
+    if (options.method === 'GET' && path === `/api/v1/story-projects/${ids.project}`) return json(project);
+    if (options.method === 'POST' && path.endsWith('/continue')) return json({ session });
+    if (options.method === 'GET' && path.endsWith('/sessions?limit=100&offset=0')) return json([session]);
+    if (options.method === 'GET' && path.endsWith('/messages?limit=100&offset=0')) return json(saved);
+    if (options.method === 'GET' && path.endsWith('/memories?limit=100&offset=0')) return json(savedMemories);
+    if (options.method === 'GET' && /\/(drafts|exports|transcripts)\?limit=100&offset=0$/.test(path)) return json([]);
+    assert.fail(`Unexpected offline chat request ${options.method} ${path}`);
+  } });
+  const workspace = createWorkspace({ root: view.root, api, user: { email: 'synthetic@example.invalid' } });
+  view.onCleanup(() => { workspace.dispose(); api.dispose(); });
+  const find = name => [...view.root.querySelectorAll('button')].find(node => (node.getAttribute('aria-label') || node.textContent) === name);
+  const click = async name => { const button = find(name); assert(button, `Button exists: ${name}`); assert(!button.disabled, `Button enabled: ${name}`); button.click(); await tick(); };
+  const write = value => { const field = view.root.querySelector('.chat-input'); assert(field); field.value = value; field.dispatchEvent(new document.defaultView.Event('input', { bubbles: true })); return field; };
+  const ready = async () => { for (let count = 0; count < 100 && !release && behavior === 'success'; count++) await tick(); assert(behavior !== 'success' || release, 'synthetic POST is waiting'); };
+  await tick(); await tick(); await click('Open story');
+  return { ...view, api, calls, find, click, write, ready, release: () => release(), posts: () => postCount, workspace, sendPath };
+}
+
+test('typed chat sends exact words once, saves a real-contract reply and reopens shared history', async t => {
+  const view = await typedWorkspace(t);
+  assert(view.root.querySelector('#voice-options').hidden, 'voice is opt-in');
+  assert.equal(view.posts(), 0);
+  const original = '  Synthetic childhood memory.\nA little detail.  ';
+  view.write(original);
+  const send = view.root.querySelector('.chat-send'); assert(!send.disabled);
+  send.click(); send.click();
+  assert.match(view.root.querySelector('.workspace-status').textContent, /Memy is thinking/);
+  await view.ready(); assert.equal(view.posts(), 1);
+  view.release(); await tick(); await tick();
+  assert.equal(view.root.querySelector('.chat-input').value, '');
+  const user = view.root.querySelector('.bubble.user');
+  assert.equal(user.querySelector('.prose').textContent, original);
+  assert.equal(user.querySelector('.speaker-name').textContent, 'You · typed message');
+  assert.equal(user.querySelector('.provenance-details'), null, 'the person’s original typed words are not labelled OpenAI');
+  assert.match(view.root.querySelector('.bubble.assistant .provenance-details').textContent, /openai.*offline-test/);
+  assert.match(view.root.querySelector('.chat-save-state').textContent, /are saved/);
+  assert(view.find('Review suggested memories · 1'));
+  assert(!view.calls.some(call => /transcribe|speech/.test(call.path)), 'typing never records, transcribes or speaks automatically');
+  const paid = view.calls.filter(call => call.path === view.sendPath);
+  assert.deepEqual(JSON.parse(paid[0].body), { text: original, language: 'en' });
+  await view.click('← All stories'); await view.click('Open story');
+  assert.equal(view.root.querySelector('.bubble.user .prose').textContent, original);
+  assert(view.root.querySelector('.bubble.assistant'));
+  assert.equal(view.posts(), 1);
+  await view.click('Review suggested memories · 1');
+  assert(view.root.querySelector('.memory-card.memory-pending'), 'reviewing does not automatically confirm facts');
+});
+
+test('composer handles Swedish, whitespace, length, newlines and IME without accidental submission', async t => {
+  const view = await typedWorkspace(t, { language: 'sv' });
+  assert.equal(view.root.querySelector('.chat-input').placeholder, 'Skriv ett minne eller ett svar…');
+  assert(view.root.querySelector('.chat-send').textContent.includes('Skicka'));
+  assert.match(view.root.querySelector('.chat-voice-toggle').textContent, /Använd rösten/);
+  view.write(' \n '); assert(view.root.querySelector('.chat-send').disabled);
+  view.write('a'.repeat(4001)); assert(view.root.querySelector('.chat-send').disabled);
+  assert.match(view.root.querySelector('#chat-state').textContent, /4 000/);
+  const field = view.write('När jag var liten i Örebro.');
+  field.dispatchEvent(new document.defaultView.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  field.dispatchEvent(new document.defaultView.KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, isComposing: true, bubbles: true }));
+  field.dispatchEvent(new document.defaultView.KeyboardEvent('keydown', { key: 'Enter', metaKey: true, repeat: true, bubbles: true }));
+  await tick(); assert.equal(view.posts(), 0);
+  field.dispatchEvent(new document.defaultView.KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }));
+  await view.ready(); assert.match(view.root.querySelector('.workspace-status').textContent, /Memy tänker/);
+  view.release(); await tick(); await tick();
+  assert.match(view.root.querySelector('.bubble.user').textContent, /Du · skrivet meddelande/);
+  assert.match(view.root.querySelector('#chat-state').textContent, /har sparats/);
+});
+
+test('a closed allowance preserves unsent words without retry and privacy cleanup clears them', async t => {
+  const view = await typedWorkspace(t, { behavior: 'failure' });
+  const original = 'Synthetic private words not saved after budget failure';
+  view.write(original); view.root.querySelector('.chat-send').click();
+  for (let count = 0; count < 8; count++) await tick();
+  assert.equal(view.posts(), 1); assert.equal(view.api.hasPending(), false);
+  assert.equal(view.root.querySelector('.chat-input').value, original);
+  assert.match(view.root.querySelector('#chat-state').textContent, /Not sent/);
+  assert.match(view.root.querySelector('[role=alert]').textContent, /local AI testing allowance/);
+  assert(view.root.querySelector('.chat-send').disabled);
+  view.visibility(true); view.visibility(false);
+  assert.equal(view.root.querySelector('.chat-input').value, '');
+  assert(!view.root.textContent.includes(original));
+  view.write('Another unsent private draft');
+  await view.click('← All stories'); await view.click('Open story');
+  assert.equal(view.root.querySelector('.chat-input').value, '', 'project context clears unsent drafts');
+  view.write('Cleared when signing out'); await view.click('Sign out');
+  assert.equal(view.root.textContent, '');
+});
+
+test('uncertain typed result is recovered by GET only and clears the submitted composer', async t => {
+  const view = await typedWorkspace(t, { behavior: 'uncertain' });
+  view.write('Synthetic uncertain original'); view.root.querySelector('.chat-send').click();
+  for (let count = 0; count < 8; count++) await tick();
+  assert(view.api.hasPending()); assert(view.root.querySelector('.chat-input').disabled);
+  assert.match(view.root.querySelector('#chat-state').textContent, /Checking your saved action/);
+  await view.click('Reload saved action'); await tick();
+  assert.equal(view.api.hasPending(), false); assert.equal(view.root.querySelector('.chat-input').value, '');
+  assert(view.root.querySelector('.bubble.user')); assert.equal(view.posts(), 1);
+  assert.equal(view.calls.filter(call => call.path.startsWith('/api/v2/operations/')).length, 1);
+});
+
+test('background during typed submission cannot revive the private composer, and voice toggle makes no request', async t => {
+  const view = await typedWorkspace(t);
+  const before = view.calls.length;
+  await view.click('Use voice instead');
+  assert.equal(view.root.querySelector('#voice-options').hidden, false);
+  assert.equal(view.calls.length, before, 'showing voice options cannot open a microphone or submit an action');
+  await view.click('Hide voice options');
+  view.write('Synthetic unsent words before background'); view.root.querySelector('.chat-send').click();
+  await view.ready(); view.visibility(true); view.visibility(false);
+  assert.equal(view.root.querySelector('.chat-input').value, '');
+  view.release(); await tick(); await tick();
+  assert.equal(view.root.querySelector('.chat-input').value, '');
+  assert(view.root.querySelector('.bubble.user'), 'the completed owned turn is still available as saved history');
+});
+
+test('paused AI still allows a private typed draft but never dispatches Send', async t => {
+  const view = await typedWorkspace(t, { enabled: false });
+  assert(!view.root.querySelector('.chat-input').disabled);
+  view.write('A synthetic draft waiting for availability');
+  assert(view.root.querySelector('.chat-send').disabled);
+  assert.match(view.root.querySelector('.chat-paused').textContent, /AI is paused/);
+  assert.equal(view.posts(), 0);
+});

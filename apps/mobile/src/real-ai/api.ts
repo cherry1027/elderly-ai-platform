@@ -1,6 +1,6 @@
 import { File } from 'expo-file-system';
 import { fetch as nativeFetch } from 'expo/fetch';
-import { CryptoDigestAlgorithm, digest } from 'expo-crypto';
+import { CryptoDigestAlgorithm, digest, digestStringAsync } from 'expo-crypto';
 import { apiBackoff, BackoffWaitError, parseRetryAdvice } from '../api/backoff';
 import type { AudioRecording } from '../api/audio-transcripts';
 import { validateRecording } from '../api/audio-transcripts';
@@ -11,6 +11,7 @@ import { normalizeMobileApiBaseUrl, StoryProjectsError, validDate, validateStory
   type ListStoryProjectsOptions } from '../api/story-projects';
 
 export interface Provenance { mode: 'real'; provider: 'openai'; model: string; version: 1 }
+export interface OriginalTextProvenance { mode: 'original'; provider: 'user'; model: null; version: 1 }
 export interface RealCapabilities {
   contract: 'real-v2'; mode: 'real'; enabled: boolean; transcription: boolean;
   conversation: boolean; writing: boolean; speech: boolean; reason: string;
@@ -21,9 +22,11 @@ export interface RealTranscript {
 }
 export interface RealMessage {
   id: string; project_id: string; session_id: string; role: 'user' | 'assistant'; language: 'en' | 'sv';
-  text: string; sequence: number; source_transcript_id: string | null; created_at: string; provenance: Provenance;
+  text: string; sequence: number; source_transcript_id: string | null; source_text_input_id?: string | null;
+  created_at: string; provenance: Provenance | OriginalTextProvenance;
 }
 export interface RealMemory extends MemoryFact { clarification_question: string | null }
+export interface RealTurn { user_message: RealMessage; message: RealMessage; memories: RealMemory[]; mode: 'real' }
 export interface RealVerification {
   status: 'needs_review' | 'stale_sources'; unsupported_claims: string[];
   method: 'model_review_v1' | 'manual_unverified'; checked_revision: number | null;
@@ -86,13 +89,25 @@ export function decodeTranscript(value: unknown, scope: RealScope): RealTranscri
   return { ...v, provenance: provenance(v.provenance) } as unknown as RealTranscript;
 }
 export function decodeMessage(value: unknown, scope: RealScope): RealMessage {
-  const v = row(value, ['id', 'project_id', 'session_id', 'role', 'language', 'text', 'sequence', 'source_transcript_id', 'created_at', 'provenance']);
+  const typedField = !!value && typeof value === 'object' && Object.hasOwn(value, 'source_text_input_id');
+  const v = row(value, ['id', 'project_id', 'session_id', 'role', 'language', 'text', 'sequence', 'source_transcript_id',
+    ...(typedField ? ['source_text_input_id'] : []), 'created_at', 'provenance']);
   owned(v, scope);
+  const typedId = typedField ? v.source_text_input_id : null;
+  const typed = uuid(typedId);
   if (!uuid(v.id) || !['user', 'assistant'].includes(v.role as string) || v.language !== scope.language ||
-    !text(v.text, 32_000) || !positive(v.sequence) || !uuid(v.source_transcript_id) ||
-    (v.role === 'user' && v.id !== v.source_transcript_id) ||
+    !text(v.text, 32_000) || !positive(v.sequence) ||
+    (typed ? v.source_transcript_id !== null : typedId !== null || !uuid(v.source_transcript_id)) ||
+    (v.role === 'user' && v.id !== (typed ? typedId : v.source_transcript_id)) ||
     !validDate(v.created_at)) invalid();
-  return { ...v, provenance: provenance(v.provenance) } as unknown as RealMessage;
+  let source: Provenance | OriginalTextProvenance;
+  if (typed && v.role === 'user') {
+    if (!text(v.text, 4000)) invalid();
+    const original = row(v.provenance, ['mode', 'provider', 'model', 'version']);
+    if (original.mode !== 'original' || original.provider !== 'user' || original.model !== null || original.version !== 1) invalid();
+    source = original as unknown as OriginalTextProvenance;
+  } else source = provenance(v.provenance);
+  return { ...v, source_text_input_id: typedId, provenance: source } as unknown as RealMessage;
 }
 export function decodeMemory(value: unknown, scope: RealScope): RealMemory {
   const v = row(value, ['id', 'project_id', 'session_id', 'source_message_id', 'fact_type', 'value', 'evidence',
@@ -143,7 +158,8 @@ function list<T>(value: unknown, decode: (value: unknown) => T, identity: (item:
 }
 const SAFE_CODES = new Set(['LIVE_AI_DISABLED', 'RATE_LIMITED', 'API_BUSY', 'OPERATION_IN_PROGRESS', 'OPERATION_UNCERTAIN',
   'IDEMPOTENCY_CONFLICT', 'CONVERSATION_CHANGED', 'STORY_CONTEXT_CHANGED', 'NO_CONFIRMED_MEMORIES', 'CLARIFICATION_REQUIRED',
-  'SPEECH_EXPIRED', 'SUPABASE_UNAVAILABLE', 'REAL_AI_NOT_CONFIGURED', 'REAL_AI_UNCERTAIN', 'REAL_AI_IN_PROGRESS']);
+  'SPEECH_EXPIRED', 'SUPABASE_UNAVAILABLE', 'REAL_AI_NOT_CONFIGURED', 'REAL_AI_UNCERTAIN', 'REAL_AI_IN_PROGRESS',
+  'TEXT_CHAT_NOT_READY', 'AI_SPENDING_NOT_APPROVED']);
 for (const code of ['AI_OPERATION_IN_PROGRESS', 'AI_OPERATION_UNCERTAIN', 'AI_OPERATION_FAILED', 'AI_RATE_LIMIT', 'AI_USAGE_LIMIT',
   'AI_BUSY', 'AUDIO_BUSY', 'REAL_AI_CONFLICT', 'AI_NOT_APPROVED', 'AI_CONTROLS_UNAVAILABLE', 'AI_INPUT_LIMIT']) SAFE_CODES.add(code);
 /** Separate v2 transport: fixed relative paths only, owner-fenced tokens, no redirect or automatic retry. */
@@ -195,7 +211,8 @@ async function execute<T>(options: ListStoryProjectsOptions, path: string, metho
         : response.status === 408 || response.status === 504 ? 'timeout' : 'unavailable';
       throw new RealAiError(kind, response.status, method !== 'GET' && (!!operationId ||
         ['AI_OPERATION_IN_PROGRESS', 'AI_OPERATION_UNCERTAIN', 'AI_OPERATION_FAILED'].includes(code ?? '') ||
-        (response.status >= 500 && code !== 'LIVE_AI_DISABLED' && !retry)), code, retry, operationId);
+        (response.status >= 500 && !(response.status === 503 &&
+          ['LIVE_AI_DISABLED', 'REAL_AI_NOT_CONFIGURED', 'AI_SPENDING_NOT_APPROVED', 'TEXT_CHAT_NOT_READY'].includes(code ?? '')) && !retry)), code, retry, operationId);
     }
     let value: unknown, privateBytes: Uint8Array | undefined;
     try {
@@ -257,8 +274,41 @@ export function sendRealMessage(scope: RealScope, input: { source_transcript_id:
       assistant.id === user.id || assistant.source_transcript_id !== user.source_transcript_id ||
       memories.some(item => item.status !== 'pending' || item.source_message_id !== user.id) ||
       user.source_transcript_id !== input.source_transcript_id) invalid();
+    if (user.source_text_input_id !== null || assistant.source_text_input_id !== null) invalid();
     return { user_message: user, message: assistant, memories, mode: 'real' as const };
   }, JSON.stringify({ ...input, language: scope.language }), key);
+}
+/** Native SHA-256 of exact UTF-8 wording; only its digest belongs in pending metadata. */
+export async function hashRealText(original: string): Promise<string> {
+  if (!text(original, 4000)) throw new RealAiError('validation');
+  try {
+    const result = await digestStringAsync(CryptoDigestAlgorithm.SHA256, original);
+    if (!/^[0-9a-f]{64}$/.test(result)) throw new RealAiError('configuration');
+    return result;
+  } catch { throw new RealAiError('configuration'); }
+}
+export function decodeRealTextTurn(value: unknown, scope: RealScope, original?: string, operationId?: string): RealTurn {
+  const v = row(value, ['user_message', 'message', 'memories', 'mode']);
+  if (v.mode !== 'real') invalid();
+  const user = decodeMessage(v.user_message, scope), assistant = decodeMessage(v.message, scope);
+  const memories = list(v.memories, item => decodeMemory(item, scope), item => item.id);
+  if (user.role !== 'user' || assistant.role !== 'assistant' || assistant.id === user.id ||
+    (original !== undefined && user.text !== original) ||
+    !uuid(user.source_text_input_id) || user.source_transcript_id !== null ||
+    (operationId !== undefined && user.source_text_input_id !== operationId) ||
+    assistant.source_transcript_id !== null || assistant.source_text_input_id !== user.source_text_input_id ||
+    assistant.sequence !== user.sequence + 1 || memories.length > 8 ||
+    memories.some(item => item.status !== 'pending' || item.source_message_id !== user.id ||
+      !user.text.includes(item.value) || !user.text.includes(item.evidence) ||
+      (item.year !== null && !item.evidence.includes(String(item.year))))) invalid();
+  return { user_message: user, message: assistant, memories, mode: 'real' };
+}
+export function sendRealTextMessage(scope: RealScope, original: string, key: string) {
+  if (!text(original, 4000)) throw new RealAiError('validation');
+  validateStoryProjectId(key);
+  return execute(scope, scopePath(scope, 'text-messages'), 'POST',
+    value => decodeRealTextTurn(value, scope, original),
+    JSON.stringify({ text: original, language: scope.language }), key);
 }
 export function getRealMemories(scope: RealScope, offset = 0) {
   return execute(scope, scopePath(scope, `memories?${page(offset)}`), 'GET', value => list(value, v => decodeMemory(v, scope), v => v.id));
@@ -337,27 +387,35 @@ export function downloadRealExport(scope: RealScope, metadata: RealExport) {
 export interface RealOperation {
   operation_id: string; kind: 'transcription' | 'conversation' | 'generation' | 'speech'; status: 'in_progress' | 'completed' | 'failed' | 'uncertain';
   project_id: string; session_id: string | null; created_at: string; updated_at: string;
-  error_code: string | null; result: SpeechMetadata | null;
+  error_code: string | null; result: SpeechMetadata | null; typedTurn?: RealTurn;
 }
-function decodeOperation(value: unknown, scope: RealScope, id?: string, kind?: RealOperation['kind']): RealOperation {
+function decodeOperation(value: unknown, scope: RealScope, id?: string, kind?: RealOperation['kind'], expectedTyped = false): RealOperation {
   const v = row(value, ['operation_id', 'kind', 'status', 'project_id', 'session_id', 'created_at', 'updated_at', 'error_code', 'result']);
   if (!uuid(v.operation_id) || (id && v.operation_id !== id) || v.project_id !== scope.projectId ||
-    !(v.session_id === null || v.session_id === scope.sessionId) ||
+    (v.kind === 'generation' ? v.session_id !== null : v.session_id !== scope.sessionId) ||
     !['transcription', 'conversation', 'generation', 'speech'].includes(v.kind as string) || (kind && v.kind !== kind) ||
     !['in_progress', 'completed', 'failed', 'uncertain'].includes(v.status as string) ||
     !validDate(v.created_at) || !validDate(v.updated_at) || !(v.error_code === null || text(v.error_code, 100)) ||
     !(v.result === null || (typeof v.result === 'object' && !Array.isArray(v.result)))) invalid();
   // Only the fixed speech metadata is reusable after a lost POST response. All
   // transcript/turn/draft contents are reloaded through their owned strict decoders.
+  let typedTurn: RealTurn | undefined;
+  if (expectedTyped) {
+    if (v.kind !== 'conversation' ||
+      (v.status === 'completed' ? v.error_code !== null || v.result === null :
+        v.result !== null || (v.status === 'in_progress' ? v.error_code !== null :
+          typeof v.error_code !== 'string' || !/^[A-Z0-9_]{1,80}$/.test(v.error_code)))) invalid();
+    if (v.status === 'completed') typedTurn = decodeRealTextTurn(v.result, scope, undefined, v.operation_id as string);
+  }
   const result = v.kind === 'speech' && v.status === 'completed' ? decodeSpeech(v.result, scope, undefined, false) : null;
-  return { ...v, result } as unknown as RealOperation;
+  return { ...v, result, ...(typedTurn ? { typedTurn } : {}) } as unknown as RealOperation;
 }
-export function getRealOperation(scope: RealScope, id: string) {
-  return execute(scope, `operations/${validateStoryProjectId(id)}`, 'GET', value => decodeOperation(value, scope, id));
+export function getRealOperation(scope: RealScope, id: string, expectedTyped = false) {
+  return execute(scope, `operations/${validateStoryProjectId(id)}`, 'GET', value => decodeOperation(value, scope, id, undefined, expectedTyped));
 }
-export function findRealOperation(scope: RealScope, kind: RealOperation['kind'], actionKey: string) {
+export function findRealOperation(scope: RealScope, kind: RealOperation['kind'], actionKey: string, expectedTyped = false) {
   if (!['transcription', 'conversation', 'generation', 'speech'].includes(kind)) throw new RealAiError('validation');
-  return execute(scope, `operations/by-key/${kind}/${validateStoryProjectId(actionKey)}`, 'GET', value => decodeOperation(value, scope, undefined, kind));
+  return execute(scope, `operations/by-key/${kind}/${validateStoryProjectId(actionKey)}`, 'GET', value => decodeOperation(value, scope, undefined, kind, expectedTyped));
 }
 function decodeSpeech(value: unknown, scope: RealScope, assistantId?: string, requireFresh = true): SpeechMetadata {
   const v = row(value, ['speech_id', 'assistant_message_id', 'language', 'media_type', 'audio_sha256', 'audio_size', 'expires_at', 'status']);

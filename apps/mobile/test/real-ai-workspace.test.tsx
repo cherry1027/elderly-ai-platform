@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { AppState, type AppStateStatus } from 'react-native';
 import * as api from '../src/real-ai/api';
@@ -8,8 +9,8 @@ import { realCopy } from '../src/real-ai/copy';
 import { realDraft, realIds as ids, realMemory, realMessage, realTranscript } from './real-ai-fixtures';
 import { mediaPrivacy } from '../src/real-ai/media-privacy';
 jest.mock('../src/real-ai/api', () => ({ ...jest.requireActual('../src/real-ai/api'),
-  getRealCapabilities: jest.fn(), getRealTranscripts: jest.fn(), getRealMessages: jest.fn(), getRealMemories: jest.fn(),
-  getRealDrafts: jest.fn(), transcribeRealRecording: jest.fn(), sendRealMessage: jest.fn(), reviewRealMemory: jest.fn(),
+  hashRealText: jest.fn(), getRealCapabilities: jest.fn(), getRealTranscripts: jest.fn(), getRealMessages: jest.fn(), getRealMemories: jest.fn(),
+  getRealDrafts: jest.fn(), transcribeRealRecording: jest.fn(), sendRealMessage: jest.fn(), sendRealTextMessage: jest.fn(), reviewRealMemory: jest.fn(),
   generateRealDraft: jest.fn(), editRealDraft: jest.fn(), getRealDraftHistory: jest.fn(), exportRealDraft: jest.fn(),
   createRealSpeech: jest.fn(), getRealSpeechAudio: jest.fn(), getRealOperation: jest.fn(),
   findRealOperation: jest.fn(), getRealExports: jest.fn(), downloadRealExport: jest.fn(),
@@ -39,6 +40,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 beforeEach(() => {
+  jest.mocked(api.hashRealText).mockImplementation(async original => createHash('sha256').update(original, 'utf8').digest('hex'));
   AppState.currentState = 'active'; listeners = [];
   jest.spyOn(AppState, 'addEventListener').mockImplementation((_type, listener) => { listeners.push(listener); return { remove: () => { listeners = listeners.filter(item => item !== listener); } }; });
   jest.mocked(api.getRealCapabilities).mockResolvedValue({ contract: 'real-v2', mode: 'real', enabled: true, transcription: true, conversation: true, writing: true, speech: true, reason: 'READY' });
@@ -48,6 +50,12 @@ beforeEach(() => {
   jest.mocked(createNativeRecorder).mockReturnValue(recorder); jest.mocked(createRecordingId).mockReturnValue(ids.key);
   jest.mocked(api.transcribeRealRecording).mockResolvedValue(realTranscript());
   jest.mocked(api.sendRealMessage).mockResolvedValue({ user_message: realMessage(), message: realMessage('assistant'), memories: [realMemory()], mode: 'real' });
+  jest.mocked(api.sendRealTextMessage).mockImplementation(async (scope, original) => ({
+    user_message: realMessage('user', { id: ids.key, source_transcript_id: null, source_text_input_id: ids.key,
+      text: original, language: scope.language, provenance: { mode: 'original', provider: 'user', model: null, version: 1 } }),
+    message: realMessage('assistant', { source_transcript_id: null, source_text_input_id: ids.key, language: scope.language }),
+    memories: [], mode: 'real',
+  }));
   jest.mocked(api.reviewRealMemory).mockResolvedValue(realMemory({ status: 'confirmed', version: 2 }));
   jest.mocked(api.generateRealDraft).mockResolvedValue(realDraft());
   jest.mocked(api.getRealDraftHistory).mockResolvedValue([]);
@@ -226,5 +234,157 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     await render(<RealStoryWorkspace {...props} language="sv" project={{ ...project, language: 'sv' }} />); await ready();
     expect(screen.getByText('Syntetisk svensk kontraktsfråga?')).toBeTruthy(); expect(screen.getByText(realCopy.sv.pending)).toBeTruthy();
     expect(api.getRealMessages).toHaveBeenCalledWith(expect.objectContaining({ language: 'sv' }));
+  });
+});
+
+
+describe('native typed composer — synthetic UI only, no live provider or phone certification', () => {
+  it('starts with a large empty composer and never starts recording implicitly', async () => {
+    await render(<RealStoryWorkspace {...props} />); await ready();
+    expect(screen.getByLabelText(t.input)).toBeTruthy();
+    await press(t.send);
+    expect(api.sendRealTextMessage).not.toHaveBeenCalled();
+    expect(createNativeRecorder).not.toHaveBeenCalled();
+  });
+  it('sends exact words once, shows thinking, saves the shared thread and leaves listening optional', async () => {
+    const original = '  I remember my garden.\n';
+    const result = deferred<Awaited<ReturnType<typeof api.sendRealTextMessage>>>();
+    jest.mocked(api.sendRealTextMessage).mockReturnValueOnce(result.promise);
+    await render(<RealStoryWorkspace {...props} />); await ready();
+    await fireEvent.changeText(screen.getByLabelText(t.input), original);
+    await press(t.send); await press(t.send);
+    expect(api.sendRealTextMessage).toHaveBeenCalledTimes(1);
+    expect(api.sendRealTextMessage).toHaveBeenCalledWith(expect.objectContaining({ language: 'en', sessionId: ids.session }), original, ids.key);
+    expect(screen.getByText(t.thinking)).toBeTruthy();
+    await act(async () => result.resolve({
+      user_message: realMessage('user', { id: ids.key, text: original, source_transcript_id: null, source_text_input_id: ids.key,
+        provenance: { mode: 'original', provider: 'user', model: null, version: 1 } }),
+      message: realMessage('assistant', { source_transcript_id: null, source_text_input_id: ids.key }), memories: [], mode: 'real',
+    }));
+    expect(screen.getByText(original)).toBeTruthy();
+    expect(screen.getByText(t.originalTyped)).toBeTruthy();
+    expect(screen.getByLabelText(t.input).props.value).toBe('');
+    expect(api.createRealSpeech).not.toHaveBeenCalled(); expect(api.transcribeRealRecording).not.toHaveBeenCalled();
+  });
+  it('preserves unsent words after a proven missing-migration failure without automatic retry', async () => {
+    jest.mocked(api.sendRealTextMessage).mockRejectedValueOnce(new api.RealAiError('unavailable', 503, false, 'TEXT_CHAT_NOT_READY'));
+    await render(<RealStoryWorkspace {...props} />); await ready();
+    await fireEvent.changeText(screen.getByLabelText(t.input), 'My unsent memory'); await press(t.send);
+    expect(screen.getByLabelText(t.input).props.value).toBe('My unsent memory');
+    expect(screen.getByText(t.textNotReady)).toBeTruthy(); expect(api.sendRealTextMessage).toHaveBeenCalledTimes(1);
+  });
+  it('clears unsent wording on backgrounding and never restores it from saved history', async () => {
+    await render(<RealStoryWorkspace {...props} />); await ready();
+    await fireEvent.changeText(screen.getByLabelText(t.input), 'Private unsent words'); await emit('background');
+    await emit('active'); await press(t.resume); await ready();
+    expect(screen.getByLabelText(t.input).props.value).toBe(''); expect(api.sendRealTextMessage).not.toHaveBeenCalled();
+  });
+  it('uses the story language for typed requests even when interface language differs', async () => {
+    await render(<RealStoryWorkspace {...props} project={{ ...project, language: 'sv' }} />); await ready();
+    await fireEvent.changeText(screen.getByLabelText(t.input), 'Jag minns Malmö.'); await press(t.send);
+    expect(api.sendRealTextMessage).toHaveBeenCalledWith(expect.objectContaining({ language: 'sv' }), 'Jag minns Malmö.', ids.key);
+  });
+});
+
+
+function typedRecoveryTurn(original: string, changes: Partial<api.RealMessage> = {}): api.RealTurn {
+  return { mode: 'real',
+    user_message: realMessage('user', { id: ids.key, text: original, source_transcript_id: null,
+      source_text_input_id: ids.key, provenance: { mode: 'original', provider: 'user', model: null, version: 1 }, ...changes }),
+    message: realMessage('assistant', { source_transcript_id: null, source_text_input_id: ids.key }), memories: [] };
+}
+function typedRecoveryState(turn: api.RealTurn): api.RealOperation {
+  return { operation_id: ids.key, kind: 'conversation', status: 'completed', project_id: ids.project, session_id: ids.session,
+    created_at: project.created_at, updated_at: project.created_at, error_code: null, result: null, typedTurn: turn };
+}
+describe('native typed retry/privacy fences — synthetic UI only', () => {
+  it('does not claim a migration error is unsent when a server operation exists', async () => {
+    jest.mocked(api.sendRealTextMessage).mockRejectedValueOnce(new api.RealAiError('unavailable', 503, true, 'TEXT_CHAT_NOT_READY', undefined, ids.key));
+    await render(<RealStoryWorkspace {...props} />); await ready();
+    await fireEvent.changeText(screen.getByLabelText(t.input), 'My held original'); await press(t.send);
+    await waitFor(() => expect(screen.getByText(t.uncertain)).toBeTruthy());
+    expect(screen.queryByText(t.textNotReady)).toBeNull();
+    expect(screen.getByLabelText(t.input).props.value).toBe('My held original');
+    expect(api.sendRealTextMessage).toHaveBeenCalledTimes(1);
+  });
+  it('recovers the exact submitted text via GET only and appends the verified newest pair beyond the first page', async () => {
+    const original = '  A typed memory beyond the first page.\n';
+    jest.mocked(api.sendRealTextMessage).mockRejectedValueOnce(new api.RealAiError('network', undefined, true));
+    await render(<RealStoryWorkspace {...props} />); await ready();
+    await fireEvent.changeText(screen.getByLabelText(t.input), original); await press(t.send);
+    await waitFor(() => expect(screen.getByText(t.uncertain)).toBeTruthy());
+    const turn = typedRecoveryTurn(original);
+    jest.mocked(api.findRealOperation).mockResolvedValueOnce(typedRecoveryState(turn));
+    // The reload deliberately does not include this newly completed turn.
+    jest.mocked(api.getRealMessages).mockResolvedValueOnce([]);
+    await press(t.check);
+    await waitFor(() => expect(screen.getByLabelText(t.input).props.value).toBe(''));
+    expect(screen.getByText(original)).toBeTruthy(); expect(screen.getByText(turn.message.text)).toBeTruthy();
+    expect(api.findRealOperation).toHaveBeenCalledWith(expect.anything(), 'conversation', ids.key, true);
+    expect(api.hashRealText).toHaveBeenCalledTimes(2); expect(api.sendRealTextMessage).toHaveBeenCalledTimes(1);
+  });
+  it('does not restore stale pending memory review state from an old operation snapshot', async () => {
+    const original = 'I lived in Malmö.';
+    jest.mocked(api.sendRealTextMessage).mockRejectedValueOnce(new api.RealAiError('network', undefined, true));
+    await render(<RealStoryWorkspace {...props} />); await ready();
+    await fireEvent.changeText(screen.getByLabelText(t.input), original); await press(t.send);
+    const turn = typedRecoveryTurn(original);
+    turn.memories = [realMemory({ source_message_id: ids.key, value: 'Malmö', evidence: 'Malmö', uncertain: false })];
+    jest.mocked(api.findRealOperation).mockResolvedValueOnce(typedRecoveryState(turn));
+    jest.mocked(api.getRealMemories).mockResolvedValueOnce([]);
+    await press(t.check);
+    await waitFor(() => expect(screen.getByLabelText(t.input).props.value).toBe(''));
+    expect(screen.queryByText(t.reviewSuggested)).toBeNull();
+    expect(api.sendRealTextMessage).toHaveBeenCalledTimes(1);
+  });
+  it('keeps the draft and pending action when recovery returns altered original words', async () => {
+    const original = 'Keep my exact unsent words.';
+    jest.mocked(api.sendRealTextMessage).mockRejectedValueOnce(new api.RealAiError('network', undefined, true, undefined, undefined, ids.key));
+    await render(<RealStoryWorkspace {...props} />); await ready();
+    await fireEvent.changeText(screen.getByLabelText(t.input), original); await press(t.send);
+    jest.mocked(api.getRealOperation).mockResolvedValueOnce(typedRecoveryState(typedRecoveryTurn('Altered saved words.')));
+    await press(t.check);
+    await waitFor(() => expect(screen.getByText(t.invalid)).toBeTruthy());
+    expect(screen.getByLabelText(t.input).props.value).toBe(original);
+    expect(screen.getByLabelText(t.input).props.editable).toBe(false);
+    expect(api.sendRealTextMessage).toHaveBeenCalledTimes(1);
+  });
+  it('does not clear original words for an incomplete typed recovery payload', async () => {
+    const original = 'A held typed message.';
+    jest.mocked(api.sendRealTextMessage).mockRejectedValueOnce(new api.RealAiError('network', undefined, true, undefined, undefined, ids.key));
+    await render(<RealStoryWorkspace {...props} />); await ready();
+    await fireEvent.changeText(screen.getByLabelText(t.input), original); await press(t.send);
+    const state = typedRecoveryState(typedRecoveryTurn(original)); delete state.typedTurn;
+    jest.mocked(api.getRealOperation).mockResolvedValueOnce(state); await press(t.check);
+    await waitFor(() => expect(screen.getByText(t.invalid)).toBeTruthy());
+    expect(screen.getByLabelText(t.input).props.value).toBe(original); expect(api.sendRealTextMessage).toHaveBeenCalledTimes(1);
+  });
+  it('labels a verified failed typed action unsent and retains wording for a later explicit choice', async () => {
+    const original = 'My words after a proven failure.';
+    jest.mocked(api.sendRealTextMessage).mockRejectedValueOnce(new api.RealAiError('network', undefined, true));
+    await render(<RealStoryWorkspace {...props} />); await ready();
+    await fireEvent.changeText(screen.getByLabelText(t.input), original); await press(t.send);
+    jest.mocked(api.findRealOperation).mockResolvedValueOnce({ ...typedRecoveryState(typedRecoveryTurn(original)),
+      status: 'failed', error_code: 'AI_RATE_LIMIT', typedTurn: undefined });
+    await press(t.check);
+    await waitFor(() => expect(screen.getByText(t.textNotSent)).toBeTruthy());
+    expect(screen.getByLabelText(t.input).props.value).toBe(original); expect(api.sendRealTextMessage).toHaveBeenCalledTimes(1);
+  });
+  it('backgrounding during native SHA prevents dispatch and never revives the draft', async () => {
+    const hash = deferred<string>(); jest.mocked(api.hashRealText).mockReturnValueOnce(hash.promise);
+    await render(<RealStoryWorkspace {...props} />); await ready();
+    await fireEvent.changeText(screen.getByLabelText(t.input), 'Cleared while hashing.'); await press(t.send);
+    expect(api.sendRealTextMessage).not.toHaveBeenCalled(); await emit('background'); await emit('active');
+    await act(async () => hash.resolve('a'.repeat(64)));
+    await press(t.resume); await ready();
+    expect(screen.getByLabelText(t.input).props.value).toBe(''); expect(api.sendRealTextMessage).not.toHaveBeenCalled();
+  });
+  it('actor changes while hashing cannot post or restore the old actor draft', async () => {
+    const hash = deferred<string>(); jest.mocked(api.hashRealText).mockReturnValueOnce(hash.promise);
+    const view = await render(<RealStoryWorkspace {...props} />); await ready();
+    await fireEvent.changeText(screen.getByLabelText(t.input), 'Old actor private text'); await press(t.send);
+    await view.rerender(<RealStoryWorkspace {...props} user={{ ...user, id: '80000000-0000-4000-8000-000000000002' }} />);
+    await act(async () => hash.resolve('a'.repeat(64))); await ready();
+    expect(screen.getByLabelText(t.input).props.value).toBe(''); expect(api.sendRealTextMessage).not.toHaveBeenCalled();
   });
 });

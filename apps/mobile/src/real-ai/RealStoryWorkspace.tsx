@@ -15,8 +15,8 @@ import { useGuardedLeave } from '../navigation/useGuardedLeave';
 import { colors, headingFont } from '../theme';
 import { createRealSpeech, downloadRealExport, editRealDraft, exportRealDraft, findRealOperation, generateRealDraft, getRealCapabilities, getRealDraftHistory, getRealExports,
   getRealDraft, getRealDrafts, getRealMemories, getRealMessages, getRealOperation, getRealSpeechAudio, getRealTranscripts,
-  RealAiError, reviewRealMemory, sendRealMessage, transcribeRealRecording,
-  type RealCapabilities, type RealDraft, type RealExport, type RealMemory, type RealMessage, type RealScope, type RealTranscript,
+  RealAiError, decodeRealTextTurn, hashRealText, reviewRealMemory, sendRealMessage, sendRealTextMessage, transcribeRealRecording,
+  type RealCapabilities, type RealDraft, type RealExport, type RealMemory, type RealMessage, type RealScope, type RealTranscript, type RealTurn,
   type SpeechMetadata } from './api';
 import type { RealAiConfig } from './config';
 import { realCopy } from './copy';
@@ -28,7 +28,7 @@ interface Props {
   getAccessToken(expectedUserId: string): Promise<string | null>; onBack(): void; onSignOut(): void;
   initialTab?: 'chat' | 'memories' | 'book'; initialDraftId?: string;
 }
-type Pending = { key: string; operationId?: string; assistantId?: string; kind: 'transcription' | 'conversation' | 'generation' | 'speech' };
+type Pending = { key: string; operationId?: string; assistantId?: string; inputType?: 'typed'; textDigest?: string; kind: 'transcription' | 'conversation' | 'generation' | 'speech' };
 type Resource = 'transcripts' | 'messages' | 'memories' | 'drafts' | 'history' | 'exports';
 type Pages = Record<Resource, number | null>;
 const emptyPages = (): Pages => ({ transcripts: null, messages: null, memories: null, drafts: null, history: null, exports: null });
@@ -62,6 +62,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const [suspended, setSuspended] = useState(false), [playing, setPlaying] = useState(false);
   const [renewSpeech, setRenewSpeech] = useState(new Set<string>());
   const [pages, setPages] = useState<Pages>(emptyPages), [usageBlocked, setUsageBlocked] = useState(false);
+  const [textDraft, setTextDraft] = useState(''), [textSending, setTextSending] = useState(false);
   const mediaBlocked = useSyncExternalStore(mediaPrivacy.subscribe, mediaPrivacy.isBlocked, () => true);
   const mounted = useRef(false), active = useRef(false), epoch = useRef(0), locked = useRef(false);
   const controller = useRef<AbortController | null>(null), recorder = useRef<RecordingDriver | null>(null);
@@ -85,6 +86,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     setTranscripts([]); setMessages([]); setMemories([]); setDrafts([]); setHistory(null); setExports(null);
     setEditor(null); setCorrections({}); setLocalRecording(null); setRecording(false); setDuration(0);
     setConsent(false); setGenerationConsent(false); setPlaying(false);
+    setTextDraft(''); setTextSending(false);
     setPages(emptyPages());
   };
   const scope = (signal: AbortSignal, id = sessionId): RealScope => {
@@ -92,7 +94,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     return { baseUrl: config.baseUrl, projectId: project.id, sessionId: id, language: project.language,
       getAccessToken: () => getAccessToken(user.id), signal };
   };
-  const failureMessage = (error: unknown) => error instanceof StoryProjectsError
+  const failureMessage = (error: unknown) => error instanceof RealAiError && error.code === 'TEXT_CHAT_NOT_READY' && !error.mayHaveWritten ? t.textNotReady : error instanceof StoryProjectsError
     ? error instanceof RealAiError && error.code === 'AI_USAGE_LIMIT' ? t.usageLimit : error.mayHaveWritten ? t.uncertain : error.kind === 'authentication' ? t.auth
       : error.kind === 'invalid-response' ? t.invalid : t.unavailable : t.audioFailure;
   async function run(action: (signal: AbortSignal, check: () => void) => Promise<void>, operation?: Pending) {
@@ -107,7 +109,8 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         setNotice(failureMessage(error));
         if (error instanceof RealAiError && error.code === 'AI_USAGE_LIMIT') setUsageBlocked(true);
         if (error instanceof StoryProjectsError && error.mayHaveWritten) {
-          if (operation) { const saved = { ...operation, operationId: error instanceof RealAiError ? error.operationId : undefined };
+          if (operation) { const current = pending.current?.key === operation.key ? pending.current : operation;
+            const saved = { ...current, operationId: error instanceof RealAiError ? error.operationId ?? current.operationId : current.operationId };
             setUnresolved(saved); pending.current = saved; }
           else setAmbiguousEdit(true);
         } else if (operation) { pending.current = null; setUnresolved(null); }
@@ -153,7 +156,10 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         epoch.current++; controller.current?.abort(); locked.current = false; cleanupAudio(); clearPrivate();
         setBusy(false); setSuspended(true); setNotice('');
         // Retain only an operation ID for same-owner reconciliation, never audio or story wording.
-        if (pending.current) setUnresolved(pending.current);
+        if (pending.current?.inputType === 'typed' && !pending.current.textDigest) {
+          // Hashing had not completed: no typed POST can have been dispatched.
+          pending.current = null; setUnresolved(null);
+        } else if (pending.current) setUnresolved(pending.current);
       }
     });
     // Read the latest generation counter intentionally: this is a cancellation fence, not a mounted native element.
@@ -167,12 +173,24 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const checkSaved = () => {
     if (!sessionId) { open(); return; }
     void run(async (signal, check) => {
+      let completedTyped: RealTurn | null = null, typedFailed = false;
       if (pending.current) {
-        const state = pending.current.operationId ? await getRealOperation(scope(signal), pending.current.operationId)
-          : await findRealOperation(scope(signal), pending.current.kind, pending.current.key); check();
-        if (state.kind !== pending.current?.kind) throw new RealAiError('invalid-response');
+        const action = pending.current, expectedTyped = action.inputType === 'typed';
+        const state = action.operationId
+          ? expectedTyped ? await getRealOperation(scope(signal), action.operationId, true) : await getRealOperation(scope(signal), action.operationId)
+          : expectedTyped ? await findRealOperation(scope(signal), action.kind, action.key, true) : await findRealOperation(scope(signal), action.kind, action.key); check();
+        if (pending.current?.key !== action.key || state.kind !== action.kind) throw new RealAiError('invalid-response');
         if (pending.current) pending.current.operationId = state.operation_id;
         if (state.status === 'in_progress' || state.status === 'uncertain') { setNotice(t.operationPending); return; }
+        typedFailed = expectedTyped && state.status === 'failed';
+        if (expectedTyped && state.status === 'completed') {
+          if (!state.typedTurn || !action.textDigest) throw new RealAiError('invalid-response');
+          const turn = decodeRealTextTurn(state.typedTurn, scope(signal), undefined, state.operation_id);
+          const originalDigest = await hashRealText(turn.user_message.text); check();
+          if (pending.current?.key !== action.key || pending.current.textDigest !== action.textDigest ||
+            originalDigest !== action.textDigest) throw new RealAiError('invalid-response');
+          completedTyped = turn;
+        }
         if (state.status === 'completed' && state.kind === 'speech') {
           if (!state.result || state.result.assistant_message_id !== pending.current?.assistantId) throw new RealAiError('invalid-response');
           speech.current.set(state.result.assistant_message_id, state.result);
@@ -183,7 +201,14 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         }
       }
       await refresh(signal, check, sessionId); check(); pending.current = null; setUnresolved(null);
-      setAmbiguousEdit(false); setEditor(null); setNotice(t.saved);
+      if (completedTyped) {
+        // The newest verified turn may lie beyond the first 100 saved messages.
+        const turn = completedTyped;
+        setMessages(previous => appendUnique(previous, [turn.user_message, turn.message], item => item.id).sort((a, b) => a.sequence - b.sequence));
+        // Review status is mutable; only the freshly fetched memory page is authoritative.
+        setTextDraft('');
+      }
+      setAmbiguousEdit(false); setEditor(null); setNotice(typedFailed ? t.textNotSent : t.saved);
     });
   };
   const discardAudio = () => {
@@ -239,6 +264,22 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       setMessages(previous => [...previous, result.user_message, result.message].sort((a, b) => a.sequence - b.sequence));
       setMemories(previous => [...previous, ...result.memories]);
     }, { key, kind: 'conversation' });
+  };
+  const sendText = () => {
+    if (locked.current || !active.current || !capabilities?.conversation || unresolved || ambiguousEdit || recording || localRecording || usageBlocked || !textDraft.trim() || [...textDraft].length > 4000) return;
+    const original = textDraft, key = createRecordingId();
+    setTextSending(true);
+    void run(async (signal, check) => {
+      try {
+        const textDigest = await hashRealText(original); check();
+        if (pending.current?.key !== key) throw new RealAiError('cancelled');
+        pending.current = { ...pending.current, textDigest };
+        const result = await sendRealTextMessage(scope(signal), original, key); check();
+        setMessages(previous => appendUnique(previous, [result.user_message, result.message], item => item.id).sort((a, b) => a.sequence - b.sequence));
+        setMemories(previous => appendUnique(previous, result.memories, item => item.id));
+        setTextDraft(''); setNotice(t.saved);
+      } finally { if (active.current && mounted.current && !signal.aborted) setTextSending(false); }
+    }, { key, kind: 'conversation', inputType: 'typed' });
   };
   const speak = (message: RealMessage) => {
     if (!capabilities?.speech || unresolved || recording || localRecording || ambiguousEdit || usageBlocked || mediaPrivacy.isBlocked()) return;
@@ -340,10 +381,10 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       check(); setPages(previous => ({ ...previous, [resource]: count === 100 ? offset + 100 : null }));
     });
   };
-  const dirty = !!localRecording || recording || (editor !== null && editor !== draft?.content) || Object.values(corrections).some(Boolean);
+  const dirty = !!textDraft || !!localRecording || recording || (editor !== null && editor !== draft?.content) || Object.values(corrections).some(Boolean);
   const leave = useGuardedLeave({ language, dirty, uncertain: !!unresolved || ambiguousEdit || busy,
     onDiscard: () => { epoch.current++; controller.current?.abort(); cleanupAudio();
-      locked.current = false; setBusy(false); setEditor(null); setCorrections({}); setLocalRecording(null);
+      locked.current = false; setBusy(false); setEditor(null); setCorrections({}); setLocalRecording(null); setTextDraft(''); setTextSending(false);
       setRecording(false); setConsent(false); setPlaying(false); },
     onCheckSavedResult: checkSaved, checkDisabled: busy || !sessionId });
   const navigate = (next: typeof tab) => { if (tab !== next) leave.requestLeave(() => {
@@ -380,10 +421,23 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
           {!messages.length && note(t.noMessages)}
           {messages.map(message => <View key={message.id} style={[styles.bubble, message.role === 'user' ? styles.userBubble : styles.assistantBubble]}>
             <Text allowFontScaling style={styles.speaker}>{message.role === 'user' ? t.you : t.assistant}</Text>
-            {message.role === 'user' && note(t.original)}
+            {message.role === 'user' && note(message.source_text_input_id ? t.originalTyped : t.original)}
             <Text allowFontScaling selectable accessibilityLanguage={accessibilityLanguages[project.language]} style={styles.body}>{message.text}</Text>
             {message.role === 'assistant' && <>{note(t.voice)}<ActionButton {...actionDefaults} label={renewSpeech.has(message.id) ? t.renewSpeech : t.speak} onPress={() => speak(message)} disabled={blocked || usageBlocked || !capabilities?.speech} /></>}
           </View>)}
+        </View>
+        {textSending && <Text allowFontScaling accessibilityLiveRegion="polite" style={styles.note}>{t.thinking}</Text>}
+        <View style={styles.composer}>
+          <Text allowFontScaling style={styles.speaker}>{t.writeTitle}</Text>
+          {note(t.writeHint)}
+          <TextInput accessibilityLabel={t.input} placeholder={t.input} value={textDraft}
+            multiline maxLength={8000} editable={!blocked} style={[styles.input, styles.chatInput]}
+            onChangeText={value => { if (!locked.current && active.current) setTextDraft(value); }} />
+          {note(t.textConsent)}
+          <ActionButton {...actionDefaults} label={t.send} onPress={sendText}
+            disabled={blocked || usageBlocked || !sessionId || !capabilities?.conversation || !textDraft.trim() || [...textDraft].length > 4000} primary />
+          {memories.some(item => item.status === 'pending') && <ActionButton {...actionDefaults} label={t.reviewSuggested}
+            onPress={() => navigate('memories')} />}
         </View>
         {transcripts.filter(source => !messages.some(message => message.source_transcript_id === source.transcript_id)).map(source => <View key={source.transcript_id} style={styles.card}>
           <Text allowFontScaling style={styles.speaker}>{t.original}</Text>
@@ -478,6 +532,7 @@ const styles = StyleSheet.create({
   checkbox: { minHeight: 56, paddingVertical: 8 }, sourceLabel: { fontSize: 16, color: colors.muted },
   quote: { fontSize: 18, lineHeight: 29, color: colors.muted, borderLeftWidth: 2, borderColor: colors.border, paddingLeft: 12 },
   input: { color: colors.ink, fontSize: 21, lineHeight: 33, minHeight: 80, textAlignVertical: 'top', padding: 14, borderRadius: 16, borderWidth: 1, borderColor: colors.forest, backgroundColor: colors.cream },
+  chatInput: { minHeight: 128 },
   editor: { minHeight: 320 }, bookTitle: { color: colors.ink, fontFamily: headingFont, fontSize: 32, lineHeight: 42 },
   bookProse: { color: colors.ink, fontFamily: headingFont, fontSize: 22, lineHeight: 36 }, source: { gap: 12, paddingTop: 16, borderTopWidth: 1, borderColor: colors.border },
 });

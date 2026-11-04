@@ -83,7 +83,7 @@ def create_app(
             try:
                 yield
             finally:
-                application.state.real_ai.cache.clear()
+                application.state.real_ai.cache.close()
                 if application.state.pdf_tasks:
                     await asyncio.gather(*tuple(application.state.pdf_tasks), return_exceptions=True)
                 if bind_provider_client is not None:
@@ -124,7 +124,7 @@ def create_app(
         allow_headers=["Authorization", "Content-Type", "Accept-Language", "Idempotency-Key"],
         expose_headers=["Retry-After", "Content-Disposition", "Content-Length", "X-Memy-Export-Id",
                         "X-Memy-Draft-Version", "X-Memy-Draft-Revision", "X-Memy-Page-Count",
-                        "X-Memy-Operation-Id", "X-Memy-Speech-Id", "X-Memy-Audio-Sha256"],
+                        "X-Memy-Operation-Id", "X-Memy-Speech-Id", "X-Memy-Audio-Sha256", "X-Memy-Recovery"],
     )
     application.include_router(health_router)
     application.include_router(readiness_router)

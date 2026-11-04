@@ -8,3 +8,4 @@ python-multipart==0.0.32
 av==15.1.0
 reportlab==5.0.1
 websockets==17.2
+cryptography==48.0.0

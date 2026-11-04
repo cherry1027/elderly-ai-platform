@@ -112,3 +112,26 @@ authorize another revision. Coordinate a reviewed launcher update before paid
 testing against newer backend code, retaining the complete current WSL ledger,
 fixed approval identity/expiry and existing ceiling. Do not blindly reapply the
 already-applied development migration.
+
+
+## Text-only provider policy — 4 November 2026
+
+`REAL_AI_TEXT_ONLY=true` restricts an otherwise explicitly authorized real-v2
+server to typed conversations. Capabilities keep their existing eight fields:
+conversation may be available while transcription, writing and speech remain
+false. Direct transcription, voice-message processing, generation and speech
+POSTs are also rejected before an operation claim or provider reservation.
+Saved reads, memory review, manual editing and PDF export remain available.
+
+This flag never creates a spending approval, changes model names or resets the
+cumulative ledger. Default configuration keeps all paid AI off. A separate
+fixed approval is still needed; each typed turn currently reserves two provider
+attempts (memory extraction and interviewer reply). Reservations are conservative
+safety accounting, not measured OpenAI charges. Replaying a completed operation
+uses its saved result without additional calls.
+
+The local 4 November window was separately authorized for US$0.50 with a
+US$10.50 cumulative ceiling, while retaining the full unreconciled US$0.75
+Tarun WSL hold. It is single-host, loopback-only and has a fixed expiry. Never
+reuse this documentation as authorization for a later window. No private
+approval, ledger, usage log or server credential belongs in a client or Git.

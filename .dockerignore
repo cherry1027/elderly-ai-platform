@@ -1,0 +1,16 @@
+# Deny by default: in particular, never send .env/.private/Git/user files.
+**
+!backend/
+!backend/requirements.txt
+!backend/app/
+!backend/app/**
+!backend/scripts/
+!backend/scripts/**
+!deployment/
+!deployment/start_staging.py
+!Dockerfile
+backend/**/__pycache__/
+backend/**/*.pyc
+backend/**/.env*
+backend/**/.private/
+backend/**/node_modules/

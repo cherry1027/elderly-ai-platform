@@ -1,0 +1,78 @@
+# Prepared only. No deployment or billing resource has been created.
+# Use an explicitly reviewed source revision; never deploy unreviewed main.
+services:
+  - type: web
+    name: memy-backend-staging
+    runtime: docker
+    region: frankfurt
+    plan: starter
+    branch: codex/real-milestone1-ai-backend
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeployTrigger: 'off'
+    numInstances: 1
+    healthCheckPath: /health
+    maxShutdownDelaySeconds: 120
+    disk:
+      name: memy-staging-state
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: STAGING_ORIGIN
+        sync: false
+      - key: STAGING_TLS_MODE
+        value: render-edge
+      - key: CORS_ORIGINS
+        value: '[]'
+      - key: STAGING_STATE_DIR
+        value: /var/data/memy
+      - key: STAGING_BOOTSTRAP_AI_OFF
+        value: 'true'
+      - key: STAGING_ENABLE_REAL_AI
+        value: 'false'
+      - key: STAGING_BACKUP_INTERVAL_SECONDS
+        value: '3600'
+      - key: STAGING_BACKUP_KEEP
+        value: '24'
+      - key: REAL_AI_ENABLED
+        value: 'false'
+      - key: REAL_AI_TEXT_ONLY
+        value: 'false'
+      - key: CONVERSATION_MODE
+        value: disabled
+      - key: STORY_GENERATION_MODE
+        value: disabled
+      - key: AI_PROVIDER_MODE
+        value: disabled
+      - key: SUPABASE_URL
+        value: https://edbkuunyeyxnyenmmqud.supabase.co
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_TEXT_MODEL
+        value: gpt-6.1-terra
+      - key: OPENAI_VERIFIER_MODEL
+        value: gpt-6.1-terra
+      - key: REAL_AI_TRANSCRIPTION_MODEL
+        value: gpt-transcribe
+      - key: REAL_AI_SPEECH_MODEL
+        value: gpt-realtime-2.1-mini
+      - key: REAL_AI_VOICE
+        value: marin
+      - key: LIVE_AI_APPROVAL_PATH
+        value: /var/data/memy/approval.json
+      - key: AI_BUDGET_POLICY_PATH
+        value: /var/data/memy/budget-policy.json
+      - key: AI_USAGE_LEDGER_PATH
+        value: /var/data/memy/ledger.sqlite3
+      - key: REAL_AI_USAGE_LOG_PATH
+        value: /var/data/memy/usage.jsonl
+      - key: REAL_AI_SPEECH_STORAGE_PATH
+        value: /var/data/memy/speech.sqlite3
+      - key: REAL_AI_SPEECH_ENCRYPTION_KEY
+        sync: false
+      - key: REAL_AI_SPEECH_RETENTION_SECONDS
+        value: '300'

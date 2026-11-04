@@ -49,15 +49,29 @@ class Settings(BaseSettings):
     openai_transcription_model: Literal["gpt-4o-mini-transcribe", "gpt-4o-transcribe"] = "gpt-4o-mini-transcribe"
     live_ai_approval_path: Path | None = None
     ai_usage_ledger_path: Path = BACKEND_DIR / ".private" / "ai-usage.sqlite3"
+    # Optional audited cumulative accounting policy. No policy grants spending.
+    ai_budget_policy_path: Path | None = None
     openai_timeout_seconds: float = Field(default=30, gt=0, le=60)
     # v2 is a separate, explicit real-provider contract. Defaults make no paid calls.
     real_ai_enabled: bool = False
+    # A reversible server policy: only explicitly typed conversation may spend.
+    # The normal live gate, private approval and cumulative ledger still apply.
+    real_ai_text_only: bool = False
+    real_ai_transcription_enabled: bool = True
+    real_ai_conversation_enabled: bool = True
+    real_ai_writing_enabled: bool = True
+    real_ai_speech_enabled: bool = True
     supabase_secret_key: SecretStr | None = Field(default=None, validation_alias=AliasChoices(
         "SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_ROLE_KEY"))
     real_ai_transcription_model: str = ""
     real_ai_speech_model: str = ""
     real_ai_voice: str = "marin"
     real_ai_usage_log_path: Path | None = None
+    # Durable speech is opt-in. Keep the encryption key on the server only.
+    real_ai_speech_storage_path: Path | None = None
+    real_ai_speech_encryption_key: SecretStr | None = None
+    real_ai_speech_retention_seconds: int = Field(default=300, ge=300, le=3600)
+    real_ai_speech_max_bytes: int = Field(default=32_000_000, ge=44, le=256_000_000)
 
     @classmethod
     def settings_customise_sources(

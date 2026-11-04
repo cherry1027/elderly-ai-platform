@@ -147,9 +147,17 @@ class OpenAIClient:
             ) as client:
                 yield client
 
-    async def _request(self, operation: str, model: str, endpoint: str, **kwargs) -> dict:
+    async def _request(self, operation: str, model: str, endpoint: str, *, audio_seconds=None, **kwargs) -> dict:
         # No retry loop: uncertain failures/cancellation can still be charged.
-        reservation_id = self.governor.reserve(operation, model)
+        body = kwargs.get("json")
+        if audio_seconds is not None and operation == "transcription" and hasattr(self.governor, "reserve_transcription"):
+            reservation_id = self.governor.reserve_transcription(model, audio_seconds)
+        elif isinstance(body, dict) and hasattr(self.governor, "reserve_request"):
+            reservation_id = self.governor.reserve_request(operation, model,
+                input_bytes=len(json.dumps(body, ensure_ascii=False, allow_nan=False).encode("utf-8")),
+                max_output_tokens=body.get("max_output_tokens"))
+        else:
+            reservation_id = self.governor.reserve(operation, model)
         reported_usage, service_tier, outcome = None, None, "failed"
         mark_ai_dispatched()  # After approval, before any provider network attempt.
         try:
@@ -190,6 +198,9 @@ class OpenAIClient:
             if self.usage_observer is not None:
                 self.usage_observer.record(operation, model, reported_usage,
                     reservation_id=reservation_id, status=outcome, service_tier=service_tier)
+            if hasattr(self.governor, "settle"):
+                self.governor.settle(reservation_id, operation, model, reported_usage,
+                    status=outcome, service_tier=service_tier)
 
     async def structured(self, operation: str, instructions: str, payload: dict,
                          schema: dict, max_output_tokens: int = 2048) -> dict:
@@ -251,13 +262,13 @@ class OpenAIClient:
                             if total > MAX_AUDIO_BYTES:
                                 raise ValueError
                             target.write(chunk)
-                await probe_duration(snapshot, suffix)
+                duration_seconds = await probe_duration(snapshot, suffix)
                 fields = {"model": model, "response_format": "json"}
                 fields.update({"languages[]": language} if model == "gpt-transcribe" else {"language": language})
                 mime = {".wav": "audio/wav", ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".webm": "audio/webm"}[suffix]
                 with snapshot.open("rb") as stream:
                     response = await self._request("transcription", model, "audio/transcriptions",
-                        data=fields, files={"file": ("recording" + suffix, stream, mime)})
+                        audio_seconds=duration_seconds, data=fields, files={"file": ("recording" + suffix, stream, mime)})
             except (OSError, ValueError):
                 raise APIError(422, "INVALID_RECORDING", "A valid local recording is required.") from None
         text = response.get("text")

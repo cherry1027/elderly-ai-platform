@@ -148,8 +148,10 @@ def _structured_body_fits(model, operation, instructions, payload, schema, outpu
     # Match the shared HTTP client's stateless structured request envelope.
     # This is a pure byte-count check: no reservation, transport or credentials.
     body = structured_body(model, operation, instructions, payload, schema, output_tokens)
-    if len(json.dumps(body, ensure_ascii=False, allow_nan=False).encode("utf-8")) > MAX_JSON_BYTES:
+    size = len(json.dumps(body, ensure_ascii=False, allow_nan=False).encode("utf-8"))
+    if size > MAX_JSON_BYTES:
         raise ValueError
+    return size
 
 
 class _RealStoryClient:
@@ -158,8 +160,9 @@ class _RealStoryClient:
     def __init__(self, client):
         self._client = client
 
-    async def structured(self, operation, instructions, payload, schema, max_output_tokens):
-        instructions += (
+    @staticmethod
+    def _instructions(instructions):
+        return instructions + (
             " When corrected_value is not null, it is the authoritative user-confirmed "
             "value; the original value, evidence and year are historical provenance and "
             "must not contradict that correction. A quoted sentence is only a neutral "
@@ -167,8 +170,14 @@ class _RealStoryClient:
             "relationship or date. Never infer a biographical relationship from an "
             "isolated name, place or number. Human review is still required."
         )
+
+    def request_size(self, operation, instructions, payload, schema, max_output_tokens):
+        return _structured_body_fits(self._client.text_model, operation,
+            self._instructions(instructions), payload, schema, max_output_tokens)
+
+    async def structured(self, operation, instructions, payload, schema, max_output_tokens):
         return await self._client.structured(
-            operation, instructions, payload, schema, max_output_tokens=max_output_tokens,
+            operation, self._instructions(instructions), payload, schema, max_output_tokens=max_output_tokens,
         )
 
 
@@ -259,6 +268,19 @@ class RealAIProvider:
             text, language, prior_facts, recent_messages,
         )
 
+        governor = getattr(self._client, "governor", None)
+        if governor is not None and getattr(governor, "budget_policy_path", None) is not None:
+            # Reserve room for both bounded stages before paying for extraction.
+            # Eight worst-case questions bound the not-yet-known first result.
+            first_size = _structured_body_fits(self.text_model, "memory_extraction", _EXTRACTION_INSTRUCTIONS,
+                {"language": language, "source_text": text, "confirmed_context": confirmed,
+                 "pending_context": pending}, EXTRACTION_SCHEMA, 2_400)
+            second_size = _structured_body_fits(self.text_model, "conversation", _INTERVIEW_INSTRUCTIONS,
+                {"language": language, "source_text": text, "recent_messages": history,
+                 "confirmed_context": confirmed, "unresolved_questions": ["\x01" * 1_000] * 8}, REPLY_SCHEMA, 500)
+            governor.check_request_group([(self.text_model, first_size, 2_400),
+                                           (self.text_model, second_size, 500)])
+
         try:
             raw = await self._client.structured(
                 operation="memory_extraction",
@@ -335,6 +357,13 @@ class RealAIProvider:
                 sources.append(snapshot)
         except (ValueError, TypeError, UnicodeError, ValidationError):
             raise APIError(503, "STORY_CONTEXT_INVALID", "The confirmed story context is invalid.") from None
+        governor = getattr(self._client, "governor", None)
+        if governor is not None and getattr(governor, "budget_policy_path", None) is not None:
+            # The writer and independent verifier each have a 128k-byte input
+            # envelope and bounded output. The workflow lock prevents another
+            # action consuming the verifier's room between these two stages.
+            governor.check_request_group([(self.text_model, MAX_JSON_BYTES, 4_096),
+                                           (self.verifier_model, MAX_JSON_BYTES, 4_096)])
         return await self._writer.write(language, style, sources)
 
     async def synthesize(self, text: str, language: str) -> SpeechAudio:
@@ -591,7 +620,7 @@ class RealtimeSpeechProvider:
         except (ValueError, TypeError, UnicodeError):
             raise _input_error() from None
         # A failed/uncertain attempt keeps its reservation; never auto-retry.
-        reservation_id = self._governor.reserve("speech_synthesis", self.model)
+        reservation_id = None
         reported_usage, service_tier, outcome = None, None, "failed"
         try:
             connector = self._connector
@@ -624,6 +653,13 @@ class RealtimeSpeechProvider:
                     }]}],
                 },
             }
+            reserve_request = getattr(self._governor, "reserve_request", None)
+            if reserve_request is None:
+                reservation_id = self._governor.reserve("speech_synthesis", self.model)
+            else:
+                reservation_id = reserve_request("speech_synthesis", self.model,
+                    input_bytes=len(json.dumps(request, ensure_ascii=False, allow_nan=False).encode("utf-8")),
+                    max_output_tokens=1_536)
             state = _SpeechAssembly(text, self.voice)
             async with asyncio.timeout(self.timeout_seconds):
                 # No proxy inheritance, redirect loop, reconnect iterator or retries.
@@ -672,9 +708,13 @@ class RealtimeSpeechProvider:
         except Exception:
             raise APIError(503, "AI_PROVIDER_UNAVAILABLE", "The AI provider is temporarily unavailable.") from None
         finally:
-            if self.usage_observer is not None:
+            if reservation_id is not None and self.usage_observer is not None:
                 self.usage_observer.record("speech_synthesis", self.model, reported_usage,
                     reservation_id=reservation_id, status=outcome, service_tier=service_tier)
+            settle = getattr(self._governor, "settle", None)
+            if reservation_id is not None and settle is not None:
+                settle(reservation_id, "speech_synthesis", self.model, reported_usage,
+                       status=outcome, service_tier=service_tier)
 
 
 __all__ = ["RealAIProvider", "RealtimeSpeechProvider", "SpeechAudio"]

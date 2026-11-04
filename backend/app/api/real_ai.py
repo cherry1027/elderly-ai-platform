@@ -1,6 +1,7 @@
 """Explicitly authorized real-AI path. Reading never invokes a paid provider."""
 
 import asyncio
+from contextlib import nullcontext
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -28,6 +29,7 @@ from app.services.audio_upload import read_recording
 from app.services.auth import AuthenticatedUser
 from app.services.real_ai_resources import RealAIGateway, validated, read_together
 from app.services.openai_client import DispatchTrace, ai_dispatch_trace
+from app.services.ai_controls import ai_budget_subject
 
 router = APIRouter(prefix="/api/v2", tags=["Real AI (explicit opt-in)"], responses={
     code: {"content":{"application/json":{"schema":{"$ref":"#/components/schemas/ErrorResponse"}}}}
@@ -71,9 +73,36 @@ def result_scope(kind, result, project_id, session_id, operation_id=None):
     return result
 
 
-async def execute(request, gateway, *, project_id, session_id, kind, key, fingerprint, produce, model):
-    runtime = request.app.state.real_ai
-    provider = runtime.require()
+def check_operation_policy(request, *, kind, typed=False):
+    """Server-side policy, including direct requests that ignore capabilities."""
+    settings = request.app.state.settings
+    feature = {"transcription": "transcription", "conversation": "conversation", "generation": "writing", "speech": "speech"}[kind]
+    if (not getattr(settings, f"real_ai_{feature}_enabled", True)
+        or (settings.real_ai_text_only and not (kind == "conversation" and typed))):
+        raise APIError(503, "LIVE_AI_DISABLED", "This AI action is paused. No paid request was made.")
+
+
+def require_provider(request, *, kind, typed=False):
+    check_operation_policy(request, kind=kind, typed=typed)
+    return request.app.state.real_ai.require()
+
+
+async def execute(request, gateway, *, project_id, session_id, kind, key, fingerprint, produce, model,
+                  typed=False):
+    # Bind only the validated Supabase identity, never a caller-supplied user_id.
+    subject = ai_budget_subject.set(str(gateway.user.id))
+    try:
+        governor = getattr(request.app.state.real_ai, "governor", None)
+        with governor.workflow() if governor is not None else nullcontext():
+            return await _execute(request, gateway, project_id=project_id, session_id=session_id,
+                kind=kind, key=key, fingerprint=fingerprint, produce=produce, model=model, typed=typed)
+    finally:
+        ai_budget_subject.reset(subject)
+
+
+async def _execute(request, gateway, *, project_id, session_id, kind, key, fingerprint, produce, model,
+                   typed=False):
+    provider = require_provider(request, kind=kind, typed=typed)
     slots = request.app.state.real_ai_slots
     if slots.locked():
         raise APIError(429, "AI_BUSY", "AI processing is busy. Try again shortly.")
@@ -90,6 +119,12 @@ async def execute(request, gateway, *, project_id, session_id, kind, key, finger
         trace = DispatchTrace()
         token = ai_dispatch_trace.set(trace)
         try:
+            governor = getattr(request.app.state.real_ai, "governor", None)
+            if governor is not None:
+                # Completed idempotent results above remain free to recover.
+                # A new turn/writer needs two stages; avoid a known call-count
+                # failure after paying for only the first stage.
+                governor.check_budget(required_calls=2 if kind in {"conversation", "generation"} else 1)
             async with asyncio.timeout(120):
                 payload = await produce(provider)
                 row = await gateway.complete(claim, payload, {
@@ -150,7 +185,7 @@ async def operation(operation_id: UUID, gateway: Gateway):
 @router.post("/story-sessions/{session_id}/transcribe", response_model=RealTranscript, openapi_extra=UPLOAD_SCHEMA)
 async def transcribe(session_id: UUID, request: Request, gateway: Gateway, idempotency_key: Key):
     session = await gateway.get_owned_session(session_id, active=True)
-    request.app.state.real_ai.require()  # Fail before capturing/uploading any audio.
+    require_provider(request, kind="transcription")  # Fail before capturing/uploading any audio.
     slots = request.app.state.audio_slots
     if slots.locked():
         raise APIError(429, "AUDIO_BUSY", "Audio processing is busy. Try again shortly.")
@@ -179,6 +214,7 @@ async def transcripts(session_id: UUID, gateway: Gateway, limit: Limit = 50, off
 async def send_message(session_id: UUID, payload: RealMessageCreate, request: Request, gateway: Gateway, idempotency_key: Key):
     session = await gateway.get_owned_session(session_id, active=True)
     language_matches(payload.language, session)
+    check_operation_policy(request, kind="conversation")
     transcript = validated(RealTranscript, await gateway.one("real_transcripts", "transcript_id", payload.source_transcript_id))
     if transcript["session_id"] != str(session_id) or transcript["project_id"] != session["project_id"]:
         raise APIError(404, "RESOURCE_NOT_FOUND", "The requested resource was not found.")
@@ -189,7 +225,7 @@ async def send_message(session_id: UUID, payload: RealMessageCreate, request: Re
     )
     while recent and sum(len(m["text"]) for m in recent) > 32_000:
         recent.pop(0)
-    provider = request.app.state.real_ai.require()
+    provider = require_provider(request, kind="conversation")
     if hasattr(provider, "validate_turn_input"):
         provider.validate_turn_input(transcript["text"], payload.language, prior, recent_messages=recent)
 
@@ -236,7 +272,7 @@ async def send_text_message(session_id: UUID, payload: RealTextMessageCreate, re
     )
     while recent and sum(len(message["text"]) for message in recent) > 32_000:
         recent.pop(0)
-    provider = request.app.state.real_ai.require()
+    provider = require_provider(request, kind="conversation", typed=True)
     if hasattr(provider, "validate_turn_input"):
         provider.validate_turn_input(payload.text, payload.language, prior, recent_messages=recent)
 
@@ -249,7 +285,7 @@ async def send_text_message(session_id: UUID, payload: RealTextMessageCreate, re
         kind="conversation", key=idempotency_key,
         fingerprint=digest({"input_type": "typed", "action_key": str(idempotency_key),
                             **payload.model_dump(mode="json")}),
-        produce=produce, model=request.app.state.settings.openai_text_model)
+        produce=produce, model=request.app.state.settings.openai_text_model, typed=True)
     if (result["user_message"]["text"] != payload.text
         or result["user_message"]["source_transcript_id"] is not None
         or result["user_message"]["source_text_input_id"] is None
@@ -281,6 +317,7 @@ async def review_memory(memory_id: UUID, payload: MemoryPatch, gateway: Gateway)
 async def generate(project_id: UUID, payload: StoryGenerationRequest, request: Request, gateway: Gateway, idempotency_key: Key):
     project = await gateway.get_project(project_id)
     language_matches(payload.language, project)
+    check_operation_policy(request, kind="generation")
     context = await gateway.context(project_id)
     if not context["source_memories"]:
         raise APIError(409, "NO_CONFIRMED_MEMORIES", "Review and confirm memories before writing your story.")
@@ -357,6 +394,7 @@ async def speak(message_id: UUID, payload: RealSpeechRequest, request: Request, 
     if message["role"] != "assistant":
         raise APIError(422, "ASSISTANT_MESSAGE_REQUIRED", "Choose an interviewer reply.")
     language_matches(payload.language, message)
+    check_operation_policy(request, kind="speech")
     audio = None
 
     async def produce(provider):
@@ -364,7 +402,7 @@ async def speak(message_id: UUID, payload: RealSpeechRequest, request: Request, 
         audio = await provider.synthesize(message["text"], message["language"])
         return {"assistant_message_id": str(message_id), "media_type": audio.media_type,
             "audio_sha256": audio.sha256, "audio_size": len(audio.data),
-            "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=300)).isoformat()}
+            "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=request.app.state.real_ai.cache.ttl)).isoformat()}
 
     result = await execute(request, gateway, project_id=UUID(message["project_id"]),
         session_id=UUID(message["session_id"]), kind="speech", key=idempotency_key,
@@ -374,7 +412,8 @@ async def speak(message_id: UUID, payload: RealSpeechRequest, request: Request, 
     if result["assistant_message_id"] != str(message_id) or result["language"] != payload.language:
         raise unavailable()
     if audio is not None:
-        cache.put(gateway.user.id, UUID(result["speech_id"]), audio.data, result["audio_sha256"])
+        cache.put(gateway.user.id, UUID(result["speech_id"]), audio.data, result["audio_sha256"],
+                  expires_at=datetime.fromisoformat(result["expires_at"]).timestamp())
     if datetime.fromisoformat(result["expires_at"]) <= datetime.now(timezone.utc):
         raise APIError(410, "SPEECH_EXPIRED", "Spoken reply expired. Request a new reply explicitly.")
     cache.get(gateway.user.id, UUID(result["speech_id"]), result["audio_sha256"])

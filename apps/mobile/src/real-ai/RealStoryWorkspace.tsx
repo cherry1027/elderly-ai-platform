@@ -16,7 +16,7 @@ import { accessibilityLanguages, type Language } from '../i18n';
 import { useGuardedLeave } from '../navigation/useGuardedLeave';
 import { colors, headingFont, layout } from '../theme';
 import { createRealSpeech, downloadRealExport, editRealDraft, exportRealDraft, findRealOperation, generateRealDraft, getRealCapabilities, getRealDraftHistory, getRealExports,
-  getRealDraft, getRealDrafts, getRealMemories, getRealMessages, getRealOperation, getRealSpeechAudio, getRealTranscripts,
+  getRealDraft, getRealDrafts, getRealMemories, getRealMessages, getRealOperation, getRealSpeechAudio, getPreparedRealSpeech, getRealTranscripts,
   RealAiError, decodeRealTextTurn, hashRealText, reviewRealMemory, sendRealMessage, sendRealTextMessage, transcribeRealRecording,
   type RealCapabilities, type RealDraft, type RealExport, type RealMemory, type RealMessage, type RealScope, type RealTranscript, type RealTurn,
   type SpeechMetadata } from './api';
@@ -523,7 +523,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     }, { key, kind: 'conversation', inputType: 'typed' });
   };
   const speak = (message: RealMessage) => {
-    if (!capabilities?.speech || unresolved || recording || localRecording || ambiguousEdit || usageBlocked || serviceBlocked || mediaPrivacy.isBlocked()) return;
+    if (unresolved || recording || localRecording || ambiguousEdit || mediaPrivacy.isBlocked()) return;
     const renewing = renewSpeech.has(message.id);
     const cached = renewing ? undefined : speech.current.get(message.id), key = createRecordingId();
     void run(async (signal, check) => {
@@ -531,7 +531,21 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       const current = scope(signal);
       // Replays use the same owned cached synthesis. Expiry never triggers an automatic paid synthesis.
       if (cached && Date.parse(cached.expires_at) <= Date.now()) { setRenewSpeech(previous => new Set(previous).add(message.id)); setNotice(t.voiceExpired); return; }
-      const metadata = cached ?? await createRealSpeech(current, message.id, key); check();
+      let metadata = cached;
+      if (!metadata && !renewing) {
+        try { metadata = await getPreparedRealSpeech(current, message.id); check(); }
+        catch (error) {
+          check();
+          if (error instanceof RealAiError && error.status === 410) {
+            setRenewSpeech(previous => new Set(previous).add(message.id)); setNotice(t.voiceExpired); return;
+          }
+          if (!(error instanceof RealAiError && error.status === 404)) throw error;
+        }
+      }
+      if (!metadata) {
+        if (!capabilities?.speech || usageBlocked || serviceBlocked) { setNotice(t.serviceUnavailable); return; }
+        metadata = await createRealSpeech(current, message.id, key); check();
+      }
       speech.current.set(message.id, metadata);
       setRenewSpeech(previous => { const next = new Set(previous); next.delete(message.id); return next; });
       let bytes: Uint8Array;
@@ -643,9 +657,16 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       locked.current = false; setBusy(false); editingDraft.current = null; correctionBases.current.clear(); setEditor(null); setCorrections({}); setLocalRecording(null); setTextDraft(''); setTextSending(false);
       setRecording(false); voiceConsent.current = null; consentIntent.current = null; setConsentOpen(false); setVoiceReplySending(false); setSafeReplyId(null); setPlaying(false); },
     onCheckSavedResult: checkSaved, checkDisabled: busy || !sessionId });
-  const navigate = (next: typeof tab, finishing = false) => { if (tab !== next) leave.requestLeave(() => {
-    stopVoice(); editingDraft.current = null; correctionBases.current.clear(); setEditor(null); setCorrections({}); setFinished(finishing); setTab(next);
-  }); };
+  const navigate = (next: typeof tab, finishing = false) => {
+    if (tab === next) return;
+    const move = () => { stopVoice(); editingDraft.current = null; correctionBases.current.clear();
+      setEditor(null); setCorrections({}); setFinished(finishing); setTab(next); };
+    // Section changes retain the same owned runtime and unsent composer text.
+    // Recordings, edits and uncertain requests still use the existing leave guard.
+    if (!finishing && !localRecording && !recording && (editor === null || editor === draft?.content) &&
+      !Object.values(corrections).some(Boolean) && !unresolved && !ambiguousEdit && !busy && !continuationBusy) move();
+    else leave.requestLeave(move);
+  };
   const { requestLeave } = leave;
   useEffect(() => {
     const listener = BackHandler.addEventListener('hardwareBackPress', () => { requestLeave(() => latest.current.onBack()); return true; });
@@ -739,7 +760,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
             {message.role === 'user' && message.source_transcript_id && note(t.voiceMessage)}
             <Text allowFontScaling selectable accessibilityLanguage={accessibilityLanguages[project.language]} style={styles.body}>{message.text}</Text>
             {message.role === 'assistant' && <ActionButton {...actionDefaults} label={renewSpeech.has(message.id) ? t.renewSpeech : t.speak}
-              onPress={() => speak(message)} disabled={blocked || usageBlocked || serviceBlocked || !capabilities?.speech} />}
+              onPress={() => speak(message)} disabled={blocked || (renewSpeech.has(message.id) && (usageBlocked || serviceBlocked || !capabilities?.speech))} />}
           </View>)}
           {transcripts.filter(source => !messages.some(message => message.source_transcript_id === source.transcript_id)).map(source => <View key={source.transcript_id} style={[styles.bubble, styles.userBubble]}>
             <Text allowFontScaling style={styles.speaker}>{t.you}</Text>{note(t.voiceMessage)}

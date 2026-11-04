@@ -16,7 +16,7 @@ export function validateMobileAuthConfig(value: MobileAuthConfig): MobileAuthCon
 
 export function readMobileAuthConfig(): MobileAuthConfig {
   const value: unknown = Constants.expoConfig?.extra?.memyDevelopmentAuth;
-  if (!__DEV__ || !['ios', 'android'].includes(Platform.OS) || !value || typeof value !== 'object') {
+  if ((!__DEV__ && !Constants.expoConfig?.extra?.memyStagingApiOrigin) || !['ios', 'android'].includes(Platform.OS) || !value || typeof value !== 'object') {
     throw new AuthError('configuration');
   }
   const record = value as Record<string, unknown>;

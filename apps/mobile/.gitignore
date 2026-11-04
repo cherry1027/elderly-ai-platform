@@ -10,3 +10,5 @@ development.api.local.json
 real-ai.api.local.json
 *.log
 expo-env.d.ts
+
+staging.client.local.json

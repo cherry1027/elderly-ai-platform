@@ -1,0 +1,69 @@
+Memy native frontend completion: staging checklist (5 November 2026)
+
+Mobile baseline: feat/mobile-final-simplicity / 4961d3e64bd504bdb15d4897db34618ae4d08204
+Backend contract: ac95e8c54a91a6c50e04b688958e23b17ef8013a
+Browser remains a separate web-preview checkout; no mobile browser adapter exists.
+
+1. Charan must supply one approved canonical HTTPS API origin. None was supplied
+   during this pass. Keep current development files unchanged. Create the ignored
+   apps/mobile/staging.client.local.json with exactly apiOrigin, supabaseUrl and
+   publishableKey. Use the approved origin (no path, port, credentials or query),
+   the existing pinned Supabase project URL, and its public sb_publishable_ key.
+   No provider key, service-role key or other fields are accepted.
+2. From apps/mobile run: node scripts/run.cjs start-staging --port 8092
+   This is an opt-in staging mode; missing/invalid staging config fails closed.
+   Development still uses its approved private-LAN origin. Verification exports
+   deliberately ignore local configuration. A later signed staging build must
+   evaluate app.config.cjs with MEMY_MOBILE_AUTH_MODE=staging and this reviewed
+   public config; existing offline bundle checks are not a staged release build.
+3. Provision at most five confirmed testers in the existing Supabase project.
+   Use securely supplied passwords; no public signup was enabled by this pass.
+   Native Auth retains the existing SecureStore/session verification mechanism.
+   Live credentials, Supabase admin settings and remote redirects were not tested.
+4. Existing mobile registration confirmation uses memy-foundation://auth/confirm.
+   This is not a password-reset callback. No reset request/callback/password-change
+   route is implemented. Provisioned-password login is the supported pilot route.
+   Reset-link onboarding would require a separately reviewed implementation and
+   its exact redirect allowlist entry; do not point reset mail at confirmation.
+5. Native API calls do not use browser CORS. The separate browser's local origin
+   is http://127.0.0.1:8767 with a same-origin proxy. Hosted browser origin is still
+   undecided. Configure only its chosen exact origin if deployment needs CORS.
+   Do not enable wildcard CORS or invent unimplemented Auth callback redirects.
+6. Complete WSL ledger reconciliation, staging deployment, account provisioning,
+   Apple/TestFlight signing and approved real-provider allowance separately.
+   Verify English/Swedish physical-device flows, actual microphone interruption,
+   live sign-in and account switching before pilot acceptance.
+
+Session/draft policy: unsent typed text survives safe Talk/Memories/My Story tab
+changes within the same owned mounted workspace. Finish for now, leaving, dirty
+edits, recording and uncertain operations retain existing guards. Background,
+sign-out and account replacement retain privacy clearing. No private draft text
+was written to insecure storage. Saved work reloads through existing owned reads.
+
+Speech: Listen checks owned prepared metadata when no valid local metadata exists.
+Reusable audio uses free authenticated reads even with synthesis unavailable.
+Only a confirmed absence allows the explicit Listen action to request generation;
+expiry requires the existing explicit renewal. Unknown failures do not synthesize.
+
+Performance expectations remain: first My Stories 1 GET; warm return 0 GETs;
+Story to Talk 1 owned project check plus 4 workspace reads. Tabs do not reload
+collections simply to preserve draft text. No paid AI or backend/schema/prompt
+changes were made. No deployment, staging, commit or push is authorized here.
+
+
+Exact files changed by this completion pass, relative to this native worktree:
+apps/mobile/.gitignore
+apps/mobile/app.config.cjs
+apps/mobile/scripts/run.cjs
+apps/mobile/scripts/staging-config.cjs
+apps/mobile/src/api/config.ts
+apps/mobile/src/api/story-projects.ts
+apps/mobile/src/auth/config.ts
+apps/mobile/src/real-ai/config.ts
+apps/mobile/src/real-ai/api.ts
+apps/mobile/src/real-ai/RealStoryWorkspace.tsx
+apps/mobile/test/real-ai-api.test.ts
+apps/mobile/test/real-ai-workspace.test.tsx
+apps/mobile/test/staging-config.test.ts
+apps/mobile/test/story-preview-config.test.tsx
+apps/mobile/docs/frontend-staging-checklist.txt

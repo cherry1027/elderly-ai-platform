@@ -1,3 +1,4 @@
+import Constants from 'expo-constants';
 import { apiBackoff, BackoffScopeError, BackoffWaitError, parseRetryAdvice, type RetryAdvice } from './backoff';
 
 export interface StoryProject {
@@ -114,6 +115,9 @@ export function validateStoryProjectId(value: unknown): string {
 /** Explicit development LAN origins only; never DNS, loopback, public or alternate IP spellings. */
 export function normalizeMobileApiBaseUrl(value: unknown): string {
   if (typeof value !== 'string' || value.length > 256) throw new StoryProjectsError('configuration');
+  const approved = Constants.expoConfig?.extra?.memyStagingApiOrigin;
+  if (typeof approved === 'string' && value === approved && /^https:\/\/[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(approved) &&
+    approved.slice(8).includes('.') && new URL(approved).origin === approved) return approved;
   const match = /^(https?):\/\/(\d{1,3}(?:\.\d{1,3}){3})(?::([1-9]\d{0,4}))?(\/(?:api\/v1\/?)?)?$/.exec(value);
   if (!match || /\s/.test(value)) throw new StoryProjectsError('configuration');
   const segments = match[2].split('.');

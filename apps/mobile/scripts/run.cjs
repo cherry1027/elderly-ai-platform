@@ -4,6 +4,7 @@ const { spawnSync } = require('node:child_process');
 const appRoot = path.resolve(__dirname, '..');
 const actions = {
   start: ['expo/bin/cli', ['start', '--go', '--lan']],
+  'start-staging': ['expo/bin/cli', ['start', '--go', '--lan']],
   'start-real': ['expo/bin/cli', ['start', '--go', '--lan']],
   android: ['expo/bin/cli', ['start', '--go', '--lan', '--android']],
   'preview-stories': ['expo/bin/cli', ['start', '--go', '--lan']],
@@ -21,7 +22,7 @@ if (!action) {
   console.error('Choose a supported mobile command.');
   process.exit(1);
 }
-const interactive = ['start', 'start-real', 'android', 'preview-stories'].includes(actionName);
+const interactive = ['start', 'start-real', 'start-staging', 'android', 'preview-stories'].includes(actionName);
 let forwarded = process.argv.slice(3);
 let toolArguments = action[1];
 if (interactive) {
@@ -69,6 +70,7 @@ if (interactive) {
   if (actionName === 'preview-stories') childEnv.MEMY_MOBILE_STORY_PREVIEW = '1';
   else childEnv.MEMY_MOBILE_AUTH_MODE = 'development';
   if (actionName === 'start-real') childEnv.MEMY_MOBILE_REAL_AI = '1';
+  if (actionName === 'start-staging') childEnv.MEMY_MOBILE_AUTH_MODE = 'staging';
 } else {
   childEnv.EXPO_OFFLINE = '1';
 }

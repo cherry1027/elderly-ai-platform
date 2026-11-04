@@ -175,6 +175,7 @@ const configSource = fs.readFileSync(path.join(appRoot, 'app.config.cjs'), 'utf8
 const authSource = fs.readFileSync(path.join(appRoot, 'scripts/auth-config.cjs'), 'utf8');
 const apiSource = fs.readFileSync(path.join(appRoot, 'scripts/api-config.cjs'), 'utf8');
 const realAiSource = fs.readFileSync(path.join(appRoot, 'scripts/real-ai-config.cjs'), 'utf8');
+const stagingSource = fs.readFileSync(path.join(appRoot, 'scripts/staging-config.cjs'), 'utf8');
 const launcherSource = fs.readFileSync(path.join(appRoot, 'scripts/run.cjs'), 'utf8');
 const identity = { name: 'Synthetic app', slug: 'synthetic-memy', scheme: 'memy-foundation' };
 
@@ -190,6 +191,7 @@ function evaluateAppConfig(environment: Record<string, string>, read: jest.Mock 
   }
   const modules = { 'node:fs': { readFileSync: read }, 'node:path': path };
   const configure = load(configSource, {
+    './scripts/staging-config.cjs': load(stagingSource, { ...modules, './auth-config.cjs': load(authSource, modules) }),
     './scripts/auth-config.cjs': load(authSource, modules),
     './scripts/api-config.cjs': load(apiSource, modules),
     './scripts/real-ai-config.cjs': load(realAiSource, { ...modules, './api-config.cjs': load(apiSource, modules) }),

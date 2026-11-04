@@ -12,7 +12,7 @@ export function validateMobileApiConfig(value: unknown): MobileApiConfig {
 
 /** No default address, credentials, environment fallback or live settings during checks. */
 export function readMobileApiConfig(): MobileApiConfig | null {
-  if (!__DEV__ || !['ios', 'android'].includes(Platform.OS)) return null;
+  if ((!__DEV__ && !Constants.expoConfig?.extra?.memyStagingApiOrigin) || !['ios', 'android'].includes(Platform.OS)) return null;
   const value: unknown = Constants.expoConfig?.extra?.memyDevelopmentApi;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;

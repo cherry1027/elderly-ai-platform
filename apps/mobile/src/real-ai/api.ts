@@ -443,6 +443,11 @@ function decodeSpeech(value: unknown, scope: RealScope, assistantId?: string, re
       !validDate(v.expires_at) || (requireFresh && Date.parse(v.expires_at) <= Date.now()) || v.status !== 'ready') invalid();
   return v as unknown as SpeechMetadata;
 }
+/** Owned metadata lookup is free and does not claim a synthesis operation. */
+export function getPreparedRealSpeech(scope: RealScope, assistantId: string) {
+  return execute(scope, `conversation-messages/${validateStoryProjectId(assistantId)}/speech`, 'GET',
+    value => decodeSpeech(value, scope, assistantId));
+}
 export function createRealSpeech(scope: RealScope, assistantId: string, key: string) {
   return execute(scope, `conversation-messages/${validateStoryProjectId(assistantId)}/speech`, 'POST',
     value => decodeSpeech(value, scope, assistantId), JSON.stringify({ language: scope.language }), key);

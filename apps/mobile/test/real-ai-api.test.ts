@@ -3,7 +3,7 @@ import { digest } from 'expo-crypto';
 import { listSessionTranscripts, SIMULATED_TRANSCRIPT_NOTICE } from '../src/api/audio-transcripts';
 import { createRealSpeech, decodeCapabilities, decodeDraft, decodeMemory, decodeMessage, decodeTranscript, editRealDraft,
   exportRealDraft, findRealOperation, generateRealDraft, getRealCapabilities, getRealDrafts, getRealMemories, getRealMessages, getRealOperation,
-  getRealSpeechAudio, getRealTranscripts, reviewRealMemory, sendRealMessage, transcribeRealRecording } from '../src/real-ai/api';
+  getRealSpeechAudio, getPreparedRealSpeech, getRealTranscripts, reviewRealMemory, sendRealMessage, transcribeRealRecording } from '../src/real-ai/api';
 import { realDate, realDraft, realIds as ids, realMemory, realMessage, realScope, realTranscript } from './real-ai-fixtures';
 jest.mock('expo-crypto', () => ({ CryptoDigestAlgorithm: { SHA256: 'SHA-256' }, digest: jest.fn() }));
 
@@ -210,4 +210,14 @@ describe('stable backend recovery metadata', () => {
     const f = fixture(); f.request.mockResolvedValue(response({ error: { code: 'PRIVATE_PROVIDER_SECRET', message: 'DO NOT DISPLAY' } }, 503, { 'X-Memy-Recovery': header }));
     await expect(sendRealMessage(f.scope, { source_transcript_id: ids.transcript }, ids.key)).rejects.toMatchObject({ code: undefined, recovery: undefined, mayHaveWritten: true, retry: undefined });
   });
+});
+
+it('reads owned prepared speech metadata with no paid request or key', async () => {
+  const metadata = { speech_id: ids.draft, assistant_message_id: ids.assistant, language: 'en', media_type: 'audio/wav',
+    audio_sha256: 'a'.repeat(64), audio_size: 44, expires_at: '2099-01-01T00:00:00Z', status: 'ready' };
+  const f = fixture(metadata);
+  await expect(getPreparedRealSpeech(f.scope, ids.assistant)).resolves.toEqual(metadata);
+  expect(f.request).toHaveBeenCalledTimes(1);
+  expect(f.request.mock.calls[0][1]?.method).toBe('GET');
+  expect(f.request.mock.calls[0][1]?.headers).not.toHaveProperty('Idempotency-Key');
 });

@@ -16,7 +16,7 @@ jest.mock('../src/real-ai/api', () => ({ ...jest.requireActual('../src/real-ai/a
   hashRealText: jest.fn(), getRealCapabilities: jest.fn(), getRealTranscripts: jest.fn(), getRealMessages: jest.fn(), getRealMemories: jest.fn(),
   getRealDrafts: jest.fn(), transcribeRealRecording: jest.fn(), sendRealMessage: jest.fn(), sendRealTextMessage: jest.fn(), reviewRealMemory: jest.fn(),
   generateRealDraft: jest.fn(), editRealDraft: jest.fn(), getRealDraftHistory: jest.fn(), exportRealDraft: jest.fn(),
-  createRealSpeech: jest.fn(), getRealSpeechAudio: jest.fn(), getRealOperation: jest.fn(),
+  getPreparedRealSpeech: jest.fn(), createRealSpeech: jest.fn(), getRealSpeechAudio: jest.fn(), getRealOperation: jest.fn(),
   findRealOperation: jest.fn(), getRealExports: jest.fn(), downloadRealExport: jest.fn(),
 }));
 jest.mock('../src/api/story-projects', () => ({ ...jest.requireActual('../src/api/story-projects'), listStorySessions: jest.fn(), continueStoryProject: jest.fn() }));
@@ -81,6 +81,7 @@ beforeEach(() => {
   }));
   jest.mocked(api.reviewRealMemory).mockResolvedValue(realMemory({ status: 'confirmed', version: 2 }));
   jest.mocked(api.generateRealDraft).mockResolvedValue(realDraft());
+  jest.mocked(api.getPreparedRealSpeech).mockRejectedValue(new api.RealAiError('not-found', 404));
   jest.mocked(api.getRealDraftHistory).mockResolvedValue([]);
   jest.mocked(api.exportRealDraft).mockResolvedValue(new TextEncoder().encode('%PDF-1.4\nsynthetic bytes\n%%EOF'));
   mockPdfStore.save.mockResolvedValue({ id: ids.key }); mockPdfStore.share.mockResolvedValue(undefined); mockPdfStore.discard.mockResolvedValue(undefined);
@@ -732,4 +733,27 @@ it.each(['AI_USAGE_LIMIT', 'AI_GLOBAL_BUDGET_EXHAUSTED'])('shows allowance wordi
   await render(<RealStoryWorkspace {...props} />);
   await waitFor(() => expect(screen.getAllByText(t.usageLimit).length).toBeGreaterThan(0));
   expect(screen.queryByText(t.unavailable)).toBeNull(); expect(screen.queryByRole('button', { name: t.retry })).toBeNull();
+});
+
+it('keeps an unsent typed draft across safe section changes and clears it on background', async () => {
+  await render(<RealStoryWorkspace {...props} />); await ready();
+  await fireEvent.changeText(screen.getByLabelText(t.input), 'Private unsent words');
+  await press(t.memories); await press(t.chat);
+  expect(screen.getByLabelText(t.input).props.value).toBe('Private unsent words');
+  expect(api.sendRealTextMessage).not.toHaveBeenCalled();
+  await emit('background'); await emit('active'); await press(t.resume); await ready();
+  expect(screen.getByLabelText(t.input).props.value).toBe('');
+});
+it('reads prepared speech after reopening without another paid synthesis even when speech is paused', async () => {
+  jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant')]);
+  jest.mocked(api.getRealCapabilities).mockResolvedValue({ contract: 'real-v2', mode: 'real', enabled: true,
+    transcription: true, conversation: true, writing: true, speech: false, reason: 'READY' });
+  const metadata = { speech_id: ids.draft, assistant_message_id: ids.assistant, language: 'en' as const,
+    media_type: 'audio/wav' as const, audio_sha256: 'a'.repeat(64), audio_size: 44,
+    expires_at: new Date(Date.now() + 60000).toISOString(), status: 'ready' as const };
+  jest.mocked(api.getPreparedRealSpeech).mockResolvedValue(metadata);
+  jest.mocked(api.getRealSpeechAudio).mockResolvedValue(new Uint8Array(44));
+  await render(<RealStoryWorkspace {...props} />); await ready(); await press(t.speak);
+  expect(api.getPreparedRealSpeech).toHaveBeenCalledTimes(1);
+  expect(api.createRealSpeech).not.toHaveBeenCalled(); expect(mockPlayback.play).toHaveBeenCalledTimes(1);
 });

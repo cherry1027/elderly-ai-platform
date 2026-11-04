@@ -44,9 +44,10 @@ export interface SpeechMetadata {
 }
 export type RealExport = Omit<StoryExport, 'renderer_version'> & { renderer_version: 'memy_real_pdf_v1' };
 export interface RealScope extends ListStoryProjectsOptions { projectId: string; sessionId: string; language: 'en' | 'sv' }
+export type RealRecovery = 'contact-operator' | 'sign-in' | 'wait' | 'check-saved';
 export class RealAiError extends StoryProjectsError {
   constructor(kind: ConstructorParameters<typeof StoryProjectsError>[0], status?: number, uncertain = false,
-    readonly code?: string, retry?: ConstructorParameters<typeof StoryProjectsError>[3], readonly operationId?: string) {
+    readonly code?: string, retry?: ConstructorParameters<typeof StoryProjectsError>[3], readonly operationId?: string, readonly recovery?: RealRecovery) {
     super(kind, status, uncertain, retry); this.name = 'RealAiError';
   }
 }
@@ -162,6 +163,22 @@ const SAFE_CODES = new Set(['LIVE_AI_DISABLED', 'RATE_LIMITED', 'API_BUSY', 'OPE
   'TEXT_CHAT_NOT_READY', 'AI_SPENDING_NOT_APPROVED']);
 for (const code of ['AI_OPERATION_IN_PROGRESS', 'AI_OPERATION_UNCERTAIN', 'AI_OPERATION_FAILED', 'AI_RATE_LIMIT', 'AI_USAGE_LIMIT',
   'AI_BUSY', 'AUDIO_BUSY', 'REAL_AI_CONFLICT', 'AI_NOT_APPROVED', 'AI_CONTROLS_UNAVAILABLE', 'AI_INPUT_LIMIT']) SAFE_CODES.add(code);
+const RECOVERY_CODES: Record<RealRecovery, readonly string[]> = {
+  'contact-operator': ['AI_USAGE_LIMIT', 'AI_GLOBAL_BUDGET_EXHAUSTED', 'AI_USER_BUDGET_EXHAUSTED',
+    'AI_SPENDING_NOT_APPROVED', 'AI_USAGE_UNAVAILABLE', 'LIVE_AI_DISABLED', 'AI_PROVIDER_QUOTA_EXHAUSTED',
+    'AI_PROVIDER_AUTHENTICATION_FAILED', 'AI_PROVIDER_ACCESS_DENIED', 'REAL_AI_NOT_CONFIGURED'],
+  'sign-in': ['INVALID_ACCESS_TOKEN', 'MISSING_ACCESS_TOKEN', 'AI_USER_LIMIT_UNAVAILABLE'],
+  wait: ['AI_RATE_LIMIT', 'RATE_LIMITED', 'AI_BUSY', 'AUDIO_BUSY', 'API_BUSY'],
+  'check-saved': ['AI_PROVIDER_RATE_LIMIT', 'AI_PROVIDER_TIMEOUT', 'AI_PROVIDER_UNAVAILABLE', 'REAL_AI_UNCERTAIN'],
+};
+for (const codes of Object.values(RECOVERY_CODES)) for (const code of codes) SAFE_CODES.add(code);
+function recoveryFor(code: string | undefined, header: string | null): RealRecovery | undefined {
+  // Stable code semantics take precedence over contradictory advice. Unknown
+  // codes/headers never become actionable text or authorize a paid retry.
+  const known = (Object.keys(RECOVERY_CODES) as RealRecovery[]).find(kind => RECOVERY_CODES[kind].includes(code ?? ''));
+  if (known) return known;
+  return code && ['contact-operator', 'sign-in', 'check-saved'].includes(header ?? '') ? header as RealRecovery : undefined;
+}
 /** Separate v2 transport: fixed relative paths only, owner-fenced tokens, no redirect or automatic retry. */
 async function execute<T>(options: ListStoryProjectsOptions, path: string, method: 'GET' | 'POST' | 'PATCH',
   decode: (value: unknown) => T, body?: string | FormData, key?: string, binary?: 'pdf' | 'wav'): Promise<T> {
@@ -202,17 +219,19 @@ async function execute<T>(options: ListStoryProjectsOptions, path: string, metho
       try { const error = await response.json(); const raw = error?.error?.code;
         if (SAFE_CODES.has(raw)) code = raw;
       } catch { /* Never expose an upstream body. */ }
-      check(); const admissionCode = response.status === 429 && ['AI_RATE_LIMIT', 'AI_USAGE_LIMIT', 'AI_BUSY', 'AUDIO_BUSY'].includes(code ?? '')
-        ? 'RATE_LIMITED' : code;
-      const retry = parseRetryAdvice(response.status, admissionCode, response.headers.get('retry-after'));
+      check();
+      const recovery = recoveryFor(code, response.headers.get('x-memy-recovery'));
+      const admissionCode = code === 'API_BUSY' ? 'API_BUSY' : 'RATE_LIMITED';
+      const retry = recovery === 'wait' ? parseRetryAdvice(admissionCode === 'API_BUSY' ? 503 : 429,
+        admissionCode, response.headers.get('retry-after')) : undefined;
       if (retry) lease.record(origin, retry);
-      const kind = response.status === 401 ? 'authentication' : response.status === 403 ? 'forbidden' : response.status === 404 || response.status === 410 ? 'not-found'
+      const kind = recovery === 'sign-in' || response.status === 401 ? 'authentication' : response.status === 403 ? 'forbidden' : response.status === 404 || response.status === 410 ? 'not-found'
         : response.status === 409 ? 'conflict' : response.status === 422 || response.status === 400 || response.status === 413 || response.status === 415 ? 'validation'
         : response.status === 408 || response.status === 504 ? 'timeout' : 'unavailable';
-      throw new RealAiError(kind, response.status, method !== 'GET' && (!!operationId ||
+      throw new RealAiError(kind, response.status, method !== 'GET' && (!!operationId || recovery === 'check-saved' ||
         ['AI_OPERATION_IN_PROGRESS', 'AI_OPERATION_UNCERTAIN', 'AI_OPERATION_FAILED'].includes(code ?? '') ||
-        (response.status >= 500 && !(response.status === 503 &&
-          ['LIVE_AI_DISABLED', 'REAL_AI_NOT_CONFIGURED', 'AI_SPENDING_NOT_APPROVED', 'TEXT_CHAT_NOT_READY'].includes(code ?? '')) && !retry)), code, retry, operationId);
+        (response.status >= 500 && recovery !== 'contact-operator' && recovery !== 'sign-in' && !(response.status === 503 &&
+          ['LIVE_AI_DISABLED', 'REAL_AI_NOT_CONFIGURED', 'AI_SPENDING_NOT_APPROVED', 'TEXT_CHAT_NOT_READY'].includes(code ?? '')) && !retry)), code, retry, operationId, recovery);
     }
     let value: unknown, privateBytes: Uint8Array | undefined;
     try {

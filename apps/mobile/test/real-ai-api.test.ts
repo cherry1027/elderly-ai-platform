@@ -114,7 +114,7 @@ describe('real-v2 strict contracts with synthetic HTTP, no paid or hosted reques
       created_at: realDate, updated_at: realDate, error_code: null, result: { ...metadata, language: 'sv' } }));
     await expect(getRealOperation(f.scope, ids.memory)).rejects.toMatchObject({ kind: 'invalid-response' });
   });
-  it.each(['AI_RATE_LIMIT', 'AI_USAGE_LIMIT', 'AI_BUSY', 'AUDIO_BUSY'])('preserves %s and honors its shared admission cooldown without retrying', async code => {
+  it.each(['AI_RATE_LIMIT', 'AI_BUSY', 'AUDIO_BUSY'])('preserves %s and honors its shared admission cooldown without retrying', async code => {
     apiBackoff.activate('synthetic-owner'); const f = fixture();
     f.request.mockResolvedValueOnce(response({ error: { code } }, 429, { 'Retry-After': '120' }));
     await expect(generateRealDraft(f.scope, ids.key)).rejects.toMatchObject({ code, retry: { code: 'RATE_LIMITED', retryAfterSeconds: 120 }, mayHaveWritten: false });
@@ -179,5 +179,35 @@ describe('real-v2 strict contracts with synthetic HTTP, no paid or hosted reques
     expect(() => transcribeRealRecording(f.scope, clip, false, ids.key)).toThrow();
     expect(() => transcribeRealRecording(f.scope, { ...clip, uri: 'https://unowned.example/clip.m4a' }, true, ids.key)).toThrow();
     expect(f.request).not.toHaveBeenCalled();
+  });
+});
+
+describe('stable backend recovery metadata', () => {
+  it.each(['AI_USAGE_LIMIT', 'AI_GLOBAL_BUDGET_EXHAUSTED', 'AI_USER_BUDGET_EXHAUSTED', 'AI_SPENDING_NOT_APPROVED',
+    'AI_USAGE_UNAVAILABLE', 'LIVE_AI_DISABLED', 'AI_PROVIDER_QUOTA_EXHAUSTED', 'AI_PROVIDER_AUTHENTICATION_FAILED',
+    'AI_PROVIDER_ACCESS_DENIED', 'REAL_AI_NOT_CONFIGURED'])('keeps %s out of backoff', async code => {
+    const f = fixture(); f.request.mockImplementation(async () => response({ error: { code, message: 'DO NOT DISPLAY' } }, 429,
+      { 'X-Memy-Recovery': 'contact-operator', 'Retry-After': '60' }));
+    await expect(sendRealMessage(f.scope, { source_transcript_id: ids.transcript }, ids.key)).rejects.toMatchObject({ code, recovery: 'contact-operator', mayHaveWritten: false, retry: undefined });
+    await expect(getRealMessages(f.scope)).rejects.toMatchObject({ code }); expect(f.request).toHaveBeenCalledTimes(2);
+  });
+  it.each(['INVALID_ACCESS_TOKEN', 'MISSING_ACCESS_TOKEN', 'AI_USER_LIMIT_UNAVAILABLE'])('routes %s to authentication', async code => {
+    const f = fixture(); f.request.mockResolvedValue(response({ error: { code } }, 503, { 'X-Memy-Recovery': 'sign-in' }));
+    await expect(getRealMessages(f.scope)).rejects.toMatchObject({ kind: 'authentication', recovery: 'sign-in', code });
+  });
+  it.each(['AI_BUSY', 'AUDIO_BUSY', 'API_BUSY', 'AI_RATE_LIMIT', 'RATE_LIMITED'])('bounds %s wait advice', async code => {
+    const f = fixture(); f.request.mockResolvedValue(response({ error: { code } }, 503, { 'X-Memy-Recovery': 'wait', 'Retry-After': '99999999' }));
+    await expect(sendRealMessage(f.scope, { source_transcript_id: ids.transcript }, ids.key)).rejects.toMatchObject({ code, recovery: 'wait', mayHaveWritten: false, retry: { retryAfterSeconds: 86400 } });
+    expect(f.request).toHaveBeenCalledTimes(1);
+  });
+  it.each(['AI_PROVIDER_RATE_LIMIT', 'AI_PROVIDER_TIMEOUT', 'AI_PROVIDER_UNAVAILABLE', 'REAL_AI_UNCERTAIN'])('preserves %s reconciliation identity without retries', async code => {
+    const f = fixture(); f.request.mockResolvedValue(response({ error: { code } }, 503,
+      { 'X-Memy-Recovery': 'check-saved', 'X-Memy-Operation-Id': ids.key, 'Retry-After': '60' }));
+    await expect(sendRealMessage(f.scope, { source_transcript_id: ids.transcript }, ids.key)).rejects.toMatchObject({ code, recovery: 'check-saved', operationId: ids.key, mayHaveWritten: true, retry: undefined });
+    expect(f.request).toHaveBeenCalledTimes(1);
+  });
+  it.each(['unknown', 'WAIT', 'wait,sign-in', ''])('ignores malformed recovery %s and unknown code', async header => {
+    const f = fixture(); f.request.mockResolvedValue(response({ error: { code: 'PRIVATE_PROVIDER_SECRET', message: 'DO NOT DISPLAY' } }, 503, { 'X-Memy-Recovery': header }));
+    await expect(sendRealMessage(f.scope, { source_transcript_id: ids.transcript }, ids.key)).rejects.toMatchObject({ code: undefined, recovery: undefined, mayHaveWritten: true, retry: undefined });
   });
 });

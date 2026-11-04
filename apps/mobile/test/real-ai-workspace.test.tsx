@@ -689,3 +689,47 @@ it('REVIEW: reloads saved PDF metadata after creating a new export in the same v
   expect(api.getRealMessages).not.toHaveBeenCalled();
   expect(api.getRealTranscripts).not.toHaveBeenCalled();
 });
+
+describe('localized backend recovery presentation', () => {
+  it.each(['en', 'sv'] as const)('distinguishes allowance, service and wait errors in %s', async language => {
+    const copy = realCopy[language];
+    jest.mocked(api.getRealCapabilities).mockRejectedValueOnce(new api.RealAiError('unavailable', 429, false, 'AI_USER_BUDGET_EXHAUSTED', undefined, undefined, 'contact-operator'));
+    const view = await render(<RealStoryWorkspace {...props} language={language} />);
+    await waitFor(() => expect(screen.getAllByText(copy.usageLimit).length).toBeGreaterThan(0));
+    expect(screen.queryByText(copy.unavailable)).toBeNull();
+    await view.unmount();
+    jest.mocked(api.getRealCapabilities).mockRejectedValueOnce(new api.RealAiError('unavailable', 503, false, 'AI_SPENDING_NOT_APPROVED', undefined, undefined, 'contact-operator'));
+    const service = await render(<RealStoryWorkspace {...props} language={language} />);
+    await waitFor(() => expect(screen.getAllByText(copy.serviceUnavailable).length).toBeGreaterThan(0));
+    expect(screen.queryByText(copy.unavailable)).toBeNull(); await service.unmount();
+    jest.mocked(api.getRealCapabilities).mockRejectedValueOnce(new api.RealAiError('unavailable', 503, false, 'AI_BUSY', undefined, undefined, 'wait'));
+    await render(<RealStoryWorkspace {...props} language={language} />);
+    await waitFor(() => expect(screen.getByText(copy.serviceBusy)).toBeOnTheScreen());
+  });
+  it('uses existing authentication failure recovery for sign-in advice', async () => {
+    const onAuthenticationFailure = jest.fn();
+    jest.mocked(api.getRealCapabilities).mockRejectedValueOnce(new api.RealAiError('authentication', 503, false, 'AI_USER_LIMIT_UNAVAILABLE', undefined, undefined, 'sign-in'));
+    await render(<RealStoryWorkspace {...props} onAuthenticationFailure={onAuthenticationFailure} />);
+    await waitFor(() => expect(onAuthenticationFailure).toHaveBeenCalledTimes(1));
+    expect(api.sendRealMessage).not.toHaveBeenCalled();
+  });
+});
+
+it.each(['AI_PROVIDER_TIMEOUT', 'AI_PROVIDER_UNAVAILABLE'])('keeps %s on the existing check-saved path', async code => {
+  jest.mocked(api.sendRealTextMessage).mockRejectedValueOnce(new api.RealAiError('unavailable', 503, true, code, undefined, ids.key, 'check-saved'));
+  await render(<RealStoryWorkspace {...props} />); await ready();
+  await fireEvent.changeText(screen.getByLabelText(t.input), 'Synthetic recovery words'); await press(t.send);
+  await waitFor(() => expect(screen.getByRole('button', { name: t.check })).toBeOnTheScreen());
+  expect(api.sendRealTextMessage).toHaveBeenCalledTimes(1);
+  jest.mocked(api.getRealOperation).mockResolvedValue({ operation_id: ids.key, project_id: ids.project, session_id: ids.session,
+    kind: 'conversation', status: 'uncertain', created_at: project.created_at, updated_at: project.updated_at, error_code: code, result: null });
+  await press(t.check);
+  expect(api.getRealOperation).toHaveBeenCalledWith(expect.anything(), ids.key, true);
+  expect(api.sendRealTextMessage).toHaveBeenCalledTimes(1);
+});
+it.each(['AI_USAGE_LIMIT', 'AI_GLOBAL_BUDGET_EXHAUSTED'])('shows allowance wording for %s without connection advice', async code => {
+  jest.mocked(api.getRealCapabilities).mockRejectedValueOnce(new api.RealAiError('unavailable', 429, false, code, undefined, undefined, 'contact-operator'));
+  await render(<RealStoryWorkspace {...props} />);
+  await waitFor(() => expect(screen.getAllByText(t.usageLimit).length).toBeGreaterThan(0));
+  expect(screen.queryByText(t.unavailable)).toBeNull(); expect(screen.queryByRole('button', { name: t.retry })).toBeNull();
+});

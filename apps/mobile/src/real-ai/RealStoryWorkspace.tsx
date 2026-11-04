@@ -122,6 +122,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const [suspended, setSuspended] = useState(false), [playing, setPlaying] = useState(false);
   const [renewSpeech, setRenewSpeech] = useState(new Set<string>());
   const [pages, setPages] = useState<Pages>(emptyPages), [usageBlocked, setUsageBlocked] = useState(false);
+  const [serviceBlocked, setServiceBlocked] = useState(false);
   const [textDraft, setTextDraft] = useState(''), [textSending, setTextSending] = useState(false);
   const mediaBlocked = useSyncExternalStore(mediaPrivacy.subscribe, mediaPrivacy.isBlocked, () => true);
   const mounted = useRef(false), active = useRef(false), epoch = useRef(0), locked = useRef(false);
@@ -171,7 +172,13 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     return { baseUrl: config.baseUrl, projectId: project.id, sessionId: id, language: project.language,
       getAccessToken: () => getAccessToken(user.id), signal };
   };
-  const failureMessage = (error: unknown) => error instanceof RealAiError && error.code === 'TEXT_CHAT_NOT_READY' && !error.mayHaveWritten ? t.textNotReady : error instanceof StoryProjectsError
+  const allowanceError = (error: unknown) => error instanceof RealAiError && ['AI_USAGE_LIMIT', 'AI_GLOBAL_BUDGET_EXHAUSTED', 'AI_USER_BUDGET_EXHAUSTED'].includes(error.code ?? '');
+  const failureMessage = (error: unknown) => error instanceof RealAiError && error.kind === 'authentication' ? t.auth
+    : error instanceof RealAiError && error.mayHaveWritten ? t.uncertain
+    : allowanceError(error) ? t.usageLimit
+    : error instanceof RealAiError && error.recovery === 'contact-operator' ? t.serviceUnavailable
+    : error instanceof RealAiError && (error.recovery === 'wait' || error.retry) ? t.serviceBusy
+    : error instanceof RealAiError && error.code === 'TEXT_CHAT_NOT_READY' && !error.mayHaveWritten ? t.textNotReady : error instanceof StoryProjectsError
     ? error instanceof RealAiError && error.code === 'AI_USAGE_LIMIT' ? t.usageLimit : error.mayHaveWritten ? t.uncertain : error.kind === 'authentication' ? t.auth
       : error.kind === 'invalid-response' ? t.invalid : t.unavailable : t.audioFailure;
   async function run(action: (signal: AbortSignal, check: () => void) => Promise<void>, operation?: Pending) {
@@ -186,7 +193,13 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     catch (error) {
       if (mounted.current && active.current && epoch.current === stamp) {
         setNotice(failureMessage(error));
-        if (error instanceof RealAiError && error.code === 'AI_USAGE_LIMIT') setUsageBlocked(true);
+        if (allowanceError(error)) setUsageBlocked(true);
+        if (error instanceof RealAiError && error.recovery === 'contact-operator' && error.code !== 'LIVE_AI_DISABLED' && !allowanceError(error)) setServiceBlocked(true);
+        if (error instanceof RealAiError && error.code === 'LIVE_AI_DISABLED') {
+          const kind = pending.current?.kind ?? operation?.kind;
+          const capability = kind === 'generation' ? 'writing' : kind;
+          if (capability) setCapabilities(previous => previous ? { ...previous, [capability]: false } : previous);
+        }
         if (error instanceof StoryProjectsError && error.mayHaveWritten) {
           if (operation) { const current = pending.current ?? operation;
             const saved = { ...current, operationId: error instanceof RealAiError ? error.operationId ?? current.operationId : current.operationId };
@@ -195,7 +208,8 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         } else if (operation) {
           const failed = pending.current ?? operation;
           if (failed.voiceTranscriptId && !(error instanceof StoryProjectsError && error.kind === 'authentication')) {
-            setSafeReplyId(failed.voiceTranscriptId); setNotice(t.replyNotReady);
+            setSafeReplyId(failed.voiceTranscriptId);
+            if (!(error instanceof RealAiError && error.recovery)) setNotice(t.replyNotReady);
           }
           pending.current = null; setUnresolved(null);
         }
@@ -219,7 +233,8 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     for (const resource of ['transcripts', 'messages', 'memories', 'drafts'] as const) updateRead(resource, { loaded: true, loading: false, error: '' });
   }
   function readFailure(error: unknown) {
-    if (error instanceof RealAiError && error.code === 'AI_USAGE_LIMIT') setUsageBlocked(true);
+    if (allowanceError(error)) setUsageBlocked(true);
+        if (error instanceof RealAiError && error.recovery === 'contact-operator' && error.code !== 'LIVE_AI_DISABLED' && !allowanceError(error)) setServiceBlocked(true);
     if (error instanceof StoryProjectsError && error.kind === 'authentication') {
       authenticationBlocked.current = true; setAuthenticationFailed(true); epoch.current++; controller.current?.abort(); locked.current = false;
       cleanupAudio(); clearPrivate(); setBusy(false); setNotice(t.auth); latest.current.onAuthenticationFailure?.();
@@ -402,7 +417,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       await recorder.current!.discard(audio.current!); check(); audio.current = null; setLocalRecording(null);
     });
   };
-  const replyAllowed = () => !!voiceContext.current.capabilities?.conversation && !voiceContext.current.usageBlocked && !mediaPrivacy.isBlocked();
+  const replyAllowed = () => !!voiceContext.current.capabilities?.conversation && !voiceContext.current.usageBlocked && !serviceBlocked && !mediaPrivacy.isBlocked();
   async function voiceReply(signal: AbortSignal, check: () => void, transcript: RealTranscript, key: string) {
     check();
     pending.current = { key, kind: 'conversation', voiceTranscriptId: transcript.transcript_id };
@@ -449,7 +464,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     return () => clearInterval(timer);
   }, [recording]);
   const beginCapture = () => {
-    if (authenticationBlocked.current || bootstrap.current || voiceConsent.current !== voiceScope() || !active.current || capturing.current || !sessionId || !capabilities?.transcription || audio.current || unresolved || ambiguousEdit || usageBlocked || mediaPrivacy.isBlocked()) return;
+    if (authenticationBlocked.current || bootstrap.current || voiceConsent.current !== voiceScope() || !active.current || capturing.current || !sessionId || !capabilities?.transcription || audio.current || unresolved || ambiguousEdit || usageBlocked || serviceBlocked || mediaPrivacy.isBlocked()) return;
     void run(async (_signal, check) => {
       if (playback.current) await playback.current.stop(); check(); setPlaying(false);
       recorder.current ??= createNativeRecorder();
@@ -459,7 +474,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     });
   };
   const startCapture = () => {
-    if (authenticationBlocked.current || bootstrap.current || !active.current || capturing.current || locked.current || !sessionId || !capabilities?.transcription || audio.current || unresolved || ambiguousEdit || usageBlocked || mediaPrivacy.isBlocked()) return;
+    if (authenticationBlocked.current || bootstrap.current || !active.current || capturing.current || locked.current || !sessionId || !capabilities?.transcription || audio.current || unresolved || ambiguousEdit || usageBlocked || serviceBlocked || mediaPrivacy.isBlocked()) return;
     if (voiceConsent.current !== voiceScope()) {
       consentIntent.current = { epoch: epoch.current, scope: voiceScope() }; setConsentOpen(true); return;
     }
@@ -472,7 +487,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     voiceConsent.current = intent.scope; cancelConsent(); beginCapture();
   };
   const retryRecording = () => {
-    if (!audio.current || locked.current || unresolved || ambiguousEdit || usageBlocked || voiceConsent.current !== voiceScope()) return;
+    if (!audio.current || locked.current || unresolved || ambiguousEdit || usageBlocked || serviceBlocked || voiceConsent.current !== voiceScope()) return;
     const captured = audio.current, key = createRecordingId();
     void run((signal, check) => transcribeAndReply(signal, check, captured, key), { key, kind: 'transcription', voice: true });
   };
@@ -481,7 +496,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const canReply = (transcript: RealTranscript) => transcript.project_id === project.id &&
     transcript.session_id === sessionId && transcript.language === project.language && transcript.status === 'completed' &&
     !unresolved && !ambiguousEdit && !suspended && !authenticationFailed &&
-    !opening && !busy && !recording && !localRecording && !!capabilities?.conversation && !usageBlocked && !mediaBlocked &&
+    !opening && !busy && !recording && !localRecording && !!capabilities?.conversation && !usageBlocked && !serviceBlocked && !mediaBlocked &&
     readStates.messages.loaded && !readStates.messages.loading && !readStates.messages.error &&
     (transcript.transcript_id === safeReplyId || (readStates.transcripts.loaded &&
       !readStates.transcripts.loading && !readStates.transcripts.error && pages.messages === null)) &&
@@ -492,7 +507,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     void run((signal, check) => voiceReply(signal, check, transcript, key), { key, kind: 'conversation', voiceTranscriptId: transcript.transcript_id });
   };
   const sendText = () => {
-    if (authenticationBlocked.current || bootstrap.current || locked.current || !active.current || !capabilities?.conversation || unresolved || ambiguousEdit || recording || localRecording || usageBlocked || !textDraft.trim() || [...textDraft].length > 4000) return;
+    if (authenticationBlocked.current || bootstrap.current || locked.current || !active.current || !capabilities?.conversation || unresolved || ambiguousEdit || recording || localRecording || usageBlocked || serviceBlocked || !textDraft.trim() || [...textDraft].length > 4000) return;
     const original = textDraft, key = createRecordingId();
     setTextSending(true);
     void run(async (signal, check) => {
@@ -508,7 +523,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     }, { key, kind: 'conversation', inputType: 'typed' });
   };
   const speak = (message: RealMessage) => {
-    if (!capabilities?.speech || unresolved || recording || localRecording || ambiguousEdit || usageBlocked || mediaPrivacy.isBlocked()) return;
+    if (!capabilities?.speech || unresolved || recording || localRecording || ambiguousEdit || usageBlocked || serviceBlocked || mediaPrivacy.isBlocked()) return;
     const renewing = renewSpeech.has(message.id);
     const cached = renewing ? undefined : speech.current.get(message.id), key = createRecordingId();
     void run(async (signal, check) => {
@@ -549,7 +564,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     });
   };
   const generate = () => {
-    if (!capabilities?.writing || !reads.current.memories.loaded || !generationConsent || unresolved || ambiguousEdit || usageBlocked || !memories.some(item => item.status === 'confirmed')) return;
+    if (!capabilities?.writing || !reads.current.memories.loaded || !generationConsent || unresolved || ambiguousEdit || usageBlocked || serviceBlocked || !memories.some(item => item.status === 'confirmed')) return;
     const key = createRecordingId();
     void run(async (signal, check) => { const result = await generateRealDraft(scope(signal), key); check();
       setDrafts(previous => [result, ...previous]); setSelected(result.draft_id); setHistory(null); setGenerationConsent(false); setNotice(t.bookCreated);
@@ -662,7 +677,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       <ActionButton language={language} label={t.stop} onPress={stopCapture} disabled={busy} primary />
     </> : localRecording ? <>
       {note(busy ? t.transcribing : t.recorded)}
-      {!busy && !unresolved && <ActionButton language={language} label={t.retry} onPress={retryRecording}
+      {!busy && !unresolved && !usageBlocked && !serviceBlocked && <ActionButton language={language} label={t.retry} onPress={retryRecording}
         disabled={usageBlocked || mediaBlocked || !capabilities?.transcription} primary />}
       <ActionButton language={language} label={t.discard} onPress={discardAudio} disabled={busy || !!unresolved} />
     </> : <>
@@ -672,9 +687,9 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
           onChangeText={value => { if (!locked.current && active.current) setTextDraft(value); }} />
         <View testID="conversation-composer-actions" style={styles.composerActions}>
           <ComposerAction language={language} label={t.start} icon="microphone" onPress={startCapture}
-            disabled={blocked || !chatReady || usageBlocked || !sessionId || !capabilities?.transcription} />
+            disabled={blocked || !chatReady || usageBlocked || serviceBlocked || !sessionId || !capabilities?.transcription} />
           <ComposerAction language={language} label={t.send} icon="send" onPress={sendText}
-            disabled={blocked || !chatReady || usageBlocked || !sessionId || !capabilities?.conversation || !textDraft.trim() || [...textDraft].length > 4000} />
+            disabled={blocked || !chatReady || usageBlocked || serviceBlocked || !sessionId || !capabilities?.conversation || !textDraft.trim() || [...textDraft].length > 4000} />
         </View>
       </View>
     </>}
@@ -682,7 +697,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   </View>;
   const generationControls = <>
     {checkbox(t.generationConsent, generationConsent, () => setGenerationConsent(!generationConsent), blocked || editor !== null)}
-    <ActionButton {...actionDefaults} label={t.generate} onPress={generate} disabled={blocked || usageBlocked || editor !== null || !generationConsent || !capabilities?.writing || !readStates.memories.loaded || !memories.some(item => item.status === 'confirmed')} primary />
+    <ActionButton {...actionDefaults} label={t.generate} onPress={generate} disabled={blocked || usageBlocked || serviceBlocked || editor !== null || !generationConsent || !capabilities?.writing || !readStates.memories.loaded || !memories.some(item => item.status === 'confirmed')} primary />
   </>;
   return <Screen scrollViewRef={contentScroll} working keyboardAware bottomKeyboardAware back={{ language, label: t.back, onPress: () => leave.requestLeave(() => latest.current.onBack()) }}
     bottomControls={composer}><View style={styles.workspace}>
@@ -705,6 +720,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     </StoryDisclosure>
     {notice !== '' && <Text allowFontScaling accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.notice}>{notice}</Text>}
     {usageBlocked && note(t.usageLimit)}
+    {serviceBlocked && note(t.serviceUnavailable)}
     {mediaBlocked && <View style={styles.card}>{note(t.cleanupBlocked)}<ActionButton language={language} label={t.retryCleanup}
       onPress={() => { void mediaPrivacy.retry(); }} /></View>}
     {suspended ? <>{note(t.background)}<ActionButton language={language} label={t.resume} onPress={open} disabled={busy} primary /></> : <>
@@ -723,13 +739,13 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
             {message.role === 'user' && message.source_transcript_id && note(t.voiceMessage)}
             <Text allowFontScaling selectable accessibilityLanguage={accessibilityLanguages[project.language]} style={styles.body}>{message.text}</Text>
             {message.role === 'assistant' && <ActionButton {...actionDefaults} label={renewSpeech.has(message.id) ? t.renewSpeech : t.speak}
-              onPress={() => speak(message)} disabled={blocked || usageBlocked || !capabilities?.speech} />}
+              onPress={() => speak(message)} disabled={blocked || usageBlocked || serviceBlocked || !capabilities?.speech} />}
           </View>)}
           {transcripts.filter(source => !messages.some(message => message.source_transcript_id === source.transcript_id)).map(source => <View key={source.transcript_id} style={[styles.bubble, styles.userBubble]}>
             <Text allowFontScaling style={styles.speaker}>{t.you}</Text>{note(t.voiceMessage)}
             <Text allowFontScaling selectable accessibilityLanguage={accessibilityLanguages[project.language]} style={styles.body}>{source.text}</Text>
             {canReply(source) && <ActionButton {...actionDefaults} label={t.process} onPress={() => ask(source)}
-              disabled={blocked || usageBlocked || !capabilities?.conversation} primary />}
+              disabled={blocked || usageBlocked || serviceBlocked || !capabilities?.conversation} primary />}
           </View>)}
           {(textSending || voiceReplySending) && <Text allowFontScaling accessibilityLiveRegion="polite" style={styles.note}>{t.thinking}</Text>}
         </View>
@@ -755,7 +771,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         {readStates.drafts.loaded && <AutobiographyContent key={`${draft?.draft_id ?? 'empty'}:${draft?.revision ?? 0}`}
         language={language} storyLanguage={project.language} draft={draft} drafts={drafts} memories={memories} editor={editor}
         history={history} exports={exports} memoriesLoading={!readStates.memories.loaded && !readStates.memories.error}
-        memoriesUnavailable={!readStates.memories.loaded && !!readStates.memories.error} historyLoading={readStates.history.loading} exportsLoading={readStates.exports.loading} blocked={blocked} busy={busy} ambiguousEdit={ambiguousEdit} usageBlocked={usageBlocked}
+        memoriesUnavailable={!readStates.memories.loaded && !!readStates.memories.error} historyLoading={readStates.history.loading} exportsLoading={readStates.exports.loading} blocked={blocked} busy={busy} ambiguousEdit={ambiguousEdit} usageBlocked={usageBlocked || serviceBlocked}
         writingAvailable={!!capabilities?.writing} privacyReady={privacy.ready} privacyFailed={privacy.failed} generationControls={generationControls}
         onEdit={() => { if (!blocked && active.current && !locked.current && !bootstrap.current && !authenticationBlocked.current) {
           const job = readJobs.current.get('drafts'); job?.controller.abort(); readJobs.current.delete('drafts'); readTickets.current.drafts++;

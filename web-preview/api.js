@@ -15,6 +15,17 @@ const NO_DISPATCH = new Map([
   ['TEXT_CHAT_NOT_READY', 503],
 ]);
 
+const RECOVERY = {
+  'contact-operator': ['AI_USAGE_LIMIT', 'AI_GLOBAL_BUDGET_EXHAUSTED', 'AI_USER_BUDGET_EXHAUSTED', 'AI_SPENDING_NOT_APPROVED', 'AI_USAGE_UNAVAILABLE', 'LIVE_AI_DISABLED', 'AI_PROVIDER_QUOTA_EXHAUSTED', 'AI_PROVIDER_AUTHENTICATION_FAILED', 'AI_PROVIDER_ACCESS_DENIED', 'REAL_AI_NOT_CONFIGURED'],
+  'sign-in': ['INVALID_ACCESS_TOKEN', 'MISSING_ACCESS_TOKEN', 'AI_USER_LIMIT_UNAVAILABLE'],
+  wait: ['AI_RATE_LIMIT', 'RATE_LIMITED', 'AI_BUSY', 'AUDIO_BUSY', 'API_BUSY'],
+  'check-saved': ['AI_PROVIDER_RATE_LIMIT', 'AI_PROVIDER_TIMEOUT', 'AI_PROVIDER_UNAVAILABLE', 'REAL_AI_UNCERTAIN'],
+};
+const SAFE_CODES = new Set([...Object.values(RECOVERY).flat(), ...NO_DISPATCH.keys(), 'SPEECH_EXPIRED', 'SUPABASE_UNAVAILABLE', 'REAL_AI_CONFLICT', 'PREVIEW_BACKEND_UNAVAILABLE']);
+function recoveryFor(code, header) {
+  return Object.keys(RECOVERY).find(kind => RECOVERY[kind].includes(code)) ||
+    (SAFE_CODES.has(code) && ['contact-operator', 'sign-in', 'check-saved'].includes(header) ? header : undefined);
+}
 async function textDigest(value) {
   const bytes = new TextEncoder().encode(value);
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(byte => byte.toString(16).padStart(2, '0')).join('');
@@ -113,13 +124,14 @@ function messageFor(code, status) {
 }
 
 export function createApi(auth, { request = fetch, timeoutMs = 145000, makeId = () => crypto.randomUUID() } = {}) {
-  let disposed = false, epoch = 0, pending = null;
+  let disposed = false, epoch = 0, pending = null, retryAt = 0;
   const controllers = new Set();
   async function call(method, path, options = {}) {
     validatePath(path);
     if (!['GET', 'POST', 'PATCH'].includes(method)) throw new AppError('This action is unavailable.');
     const version = epoch;
     if (disposed) throw new AppError('This view is closed.', 'CANCELLED');
+    if (Date.now() < retryAt) throw Object.assign(new AppError('Memy is busy right now. Please try again shortly.'), { recovery: 'wait' });
     const token = await auth.getAccessToken();
     if (disposed || version !== epoch) throw new AppError('This view is closed.', 'CANCELLED');
     if (!token) throw new AppError('Please sign in again.', 'AUTH_REQUIRED');
@@ -140,18 +152,24 @@ export function createApi(auth, { request = fetch, timeoutMs = 145000, makeId = 
       if (disposed || version !== epoch) throw new AppError('This view is closed.', 'CANCELLED', Boolean(options.key));
       if (!response.ok) {
         let code = 'REQUEST_FAILED';
-        try { const value = await response.json(); if (/^[A-Z0-9_]{1,80}$/.test(value?.error?.code)) code = value.error.code; } catch { /* No raw server error is shown. */ }
+        try { const value = await response.json(); if (SAFE_CODES.has(value?.error?.code)) code = value.error.code; } catch { /* No raw server error is shown. */ }
         const operationId = response.headers.get('X-Memy-Operation-Id');
-        const noDispatch = !operationId && NO_DISPATCH.get(code) === response.status;
-        const uncertain = Boolean(options.key) && (Boolean(operationId) ||
+        const recovery = recoveryFor(code, response.headers.get('X-Memy-Recovery'));
+        const noDispatch = !operationId && (['contact-operator', 'sign-in', 'wait'].includes(recovery) || NO_DISPATCH.get(code) === response.status);
+        const uncertain = Boolean(options.key) && (Boolean(operationId) || recovery === 'check-saved' ||
           (!noDispatch && (response.status >= 500 || response.status === 409)));
         const message = code === 'TEXT_CHAT_NOT_READY' && operationId
           ? 'Typed conversation setup could not be confirmed. Check your saved action before sending again. Nothing will be retried automatically.'
           : messageFor(code, response.status);
         const error = new AppError(message, code, uncertain);
-        error.status = response.status;
+        error.status = response.status; error.recovery = recovery;
+        if (recovery === 'wait') {
+          const raw = response.headers.get('Retry-After');
+          const seconds = raw && /^\d+$/.test(raw) ? Math.max(1, Math.min(86400, Number(raw))) : code === 'API_BUSY' ? 1 : 60;
+          retryAt = Date.now() + seconds * 1000;
+        }
         if (UUID.test(operationId || '')) error.operationId = operationId;
-        if (response.status === 401) auth.invalidate();
+        if (response.status === 401 || recovery === 'sign-in') auth.invalidate();
         throw error;
       }
       if (options.binary) {

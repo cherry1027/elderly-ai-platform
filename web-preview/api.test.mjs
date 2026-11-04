@@ -371,3 +371,34 @@ test('missing typed database setup is retryable only when no operation header ex
     assert.equal(api.hasPending(), withHeader);
   }
 });
+
+test('recovery code fallback preserves allowance, sign-in, wait and uncertain boundaries', async () => {
+  for (const [code, status, recovery, held] of [
+    ['AI_GLOBAL_BUDGET_EXHAUSTED', 429, 'contact-operator', false],
+    ['INVALID_ACCESS_TOKEN', 401, 'sign-in', false],
+    ['AI_RATE_LIMIT', 429, 'wait', false],
+    ['AI_PROVIDER_TIMEOUT', 504, 'check-saved', true],
+  ]) {
+    let calls = 0, invalidated = 0;
+    const api = createApi({ ...auth, invalidate() { invalidated++; } }, { makeId: () => key,
+      request: async () => { calls++; return response({ error: { code, message: 'must never be shown' } }, status); } });
+    await assert.rejects(api.paid('transcription', `/api/v2/story-sessions/${session}/transcribe`,
+      { scope: { projectId: project, sessionId: session } }), error => error.recovery === recovery && !error.message.includes('must never'));
+    assert.equal(api.hasPending(), held);
+    assert.equal(invalidated, recovery === 'sign-in' ? 1 : 0);
+    if (recovery === 'wait' || held) {
+      await assert.rejects(api.paid('transcription', `/api/v2/story-sessions/${session}/transcribe`));
+      assert.equal(calls, 1);
+    }
+    api.dispose();
+  }
+});
+
+test('unknown recovery values cannot clear an uncertain paid operation', async () => {
+  const api = createApi(auth, { makeId: () => key, request: async () => response(
+    { error: { code: 'UNREVIEWED_SERVER_CODE', message: 'private diagnostic' } }, 503,
+    { 'X-Memy-Recovery': 'contact-operator' }) });
+  await assert.rejects(api.paid('transcription', `/api/v2/story-sessions/${session}/transcribe`),
+    error => error.uncertain && error.recovery === undefined && !error.message.includes('private'));
+  assert.equal(api.hasPending(), true); api.dispose();
+});

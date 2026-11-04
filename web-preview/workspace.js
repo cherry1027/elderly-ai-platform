@@ -66,7 +66,7 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
   let disposed = false, epoch = 0, busy = false, error = '', notice = '', tab = 'conversation';
   let projects = [], project = null, session = null, sessions = [], transcripts = [], messages = [], memories = [], drafts = [], exports = [];
   let selectedTranscript = '', selectedDraft = '', history = [], historyDraft = '';
-  let recording = null;
+  let recording = null, mediaEpoch = 0;
   let composerText = '', composerState = 'idle', voiceOpen = false, workingLabel = '';
   let homeForm = { title: '', description: '', language: 'en' }, detailForm = null, draftEditing = null;
   let correctionInputs = new Map(), openPanels = new Set();
@@ -158,12 +158,12 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
       entry.discard ||= discard;
       clearTimeout(entry.timer); clearInterval(entry.tick);
       if (entry.recorder.state !== 'inactive') entry.recorder.stop();
-      entry.tracks.getTracks().forEach(track => track.stop());
+      entry.tracks.getTracks().forEach(track => { track.onended = null; track.stop(); });
       if (discard) entry.chunks = [];
     }
     if (discard) { audioFile = null; audioName = ''; }
   }
-  function clearPrivateMedia() { stopRecording(true); clearPlayback(); clearDownload(); audioFile = null; audioName = ''; consent = false; }
+  function clearPrivateMedia() { mediaEpoch++; stopRecording(true); clearPlayback(); clearDownload(); audioFile = null; audioName = ''; consent = false; }
   function switchContext() {
     epoch++; clearPrivateMedia(); preparedSpeech.clear(); clearFormMemory(); generationConsent = false; history = []; historyDraft = '';
     selectedTranscript = ''; selectedDraft = ''; transcripts = []; messages = []; memories = []; drafts = []; exports = []; sessions = [];
@@ -174,6 +174,14 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
     if (cause?.status === 401 || ['UNAUTHORIZED', 'SESSION_EXPIRED', 'AUTH_REQUIRED'].includes(cause?.code)) {
       dispose(); onSessionLost?.(); return;
     }
+    const sv = project?.language === 'sv';
+    if (cause?.recovery === 'contact-operator') {
+      const budget = ['AI_USAGE_LIMIT', 'AI_GLOBAL_BUDGET_EXHAUSTED', 'AI_USER_BUDGET_EXHAUSTED'].includes(cause.code);
+      error = budget ? (sv ? 'Memys AI-utrymme är för tillfället förbrukat. Dina sparade berättelser är trygga.' : 'Memy’s AI allowance is currently used up. Your saved stories are still safe.')
+        : (sv ? 'Memy är tillfälligt otillgänglig. Dina sparade berättelser är trygga.' : 'Memy is temporarily unavailable. Your saved stories are still safe.');
+      return;
+    }
+    if (cause?.recovery === 'wait') { error = sv ? 'Memy är upptagen just nu. Försök igen om en liten stund.' : 'Memy is busy right now. Please try again shortly.'; return; }
     error = cause instanceof Error ? cause.message : 'This action could not be completed. Please reload saved data.';
   }
   async function run(action, busyLabel = '') {
@@ -243,7 +251,7 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
   }
   async function loadSpeech(record, g) {
     if (!currentSpeech(record, g)) throw Error('This prepared spoken reply is unavailable in the open conversation.');
-    if (speechExpired(record)) { clearPlayback(); throw Error('This prepared audio expired after five minutes. A new spoken reply requires a separate AI action.'); }
+    if (speechExpired(record)) { clearPlayback(); throw Error('This prepared audio has expired. A new spoken reply requires a separate AI action.'); }
     clearPlayback();
     if (document.hidden) return;
     const version = audioVersion;
@@ -266,7 +274,7 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
       if (!currentSpeech(record, g)) return;
       if (cause?.status === 410 || cause?.code === 'SPEECH_EXPIRED') {
         record.expired = true;
-        throw Error('This prepared audio expired after five minutes or was cleared by a server restart. A new spoken reply requires a separate AI action.');
+        throw Error('This prepared audio is no longer available. A new spoken reply requires a separate AI action.');
       }
       throw Error('The prepared audio could not be loaded or verified. Choose Load prepared audio to retry the same reply without a new AI request.');
     } finally { response?.bytes?.fill(0); }
@@ -287,7 +295,7 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
     catch (cause) {
       if (!alive(g)) return;
       if (cause?.status === 410 || cause?.code === 'SPEECH_EXPIRED') throw Error('The prepared audio has expired or was cleared. Creating another spoken reply is a separate AI action.');
-      if (cause?.status === 404) throw Error('No prepared audio is available for this reply. Creating one with Listen to Memy is a separate AI action.');
+      if (cause?.status === 404) throw Object.assign(Error('No prepared audio is available for this reply. Creating one with Listen to Memy is a separate AI action.'), { status: 404 });
       throw cause;
     }
     if (!alive(g)) return;
@@ -299,12 +307,18 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
     const record = preparedSpeech.get(item.id), available = currentSpeech(record), expired = available && speechExpired(record);
     const loaded = available && !expired && player && speech?.speech_id === record.metadata.speech_id;
     return el('div', { class: 'playback-controls' },
-      !available && paidButton('Listen to Memy · Real AI', async g => {
+      !available && button('Listen to Memy · Real AI', async g => {
+        try { await recoverSpeech(item, g); return; }
+        catch (cause) {
+          // A free lookup failure is never permission to repeat a paid action.
+          if (cause?.status !== 404) throw cause;
+        }
+        if (capabilities?.enabled !== true || capabilities?.speech === false || pending()) throw Error('Memy cannot prepare new audio right now. Your saved work is safe.');
         const result = await performPaid('speech', `${v2}/conversation-messages/${item.id}/speech`, { json: { language: project.language } }, g);
         if (result?.assistant_message_id !== item.id) throw Error('The prepared spoken reply could not be verified.');
         if (result) await prepareSpeech(result, g);
       }),
-      expired && p('This prepared audio has expired. It is kept for only five minutes.', 'field-help'),
+      expired && p('This prepared audio has expired. Creating another reply needs your explicit choice.', 'field-help'),
       expired && paidButton('Create new spoken reply · Real AI', async g => {
         const result = await performPaid('speech', `${v2}/conversation-messages/${item.id}/speech`, { json: { language: project.language } }, g);
         if (result?.assistant_message_id !== item.id) throw Error('The prepared spoken reply could not be verified.');
@@ -321,7 +335,7 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
       loaded && button('Stop spoken reply', () => stopSpeech(), false, 'secondary'),
       loaded && button('Load prepared audio', g => loadSpeech(record, g), false, 'secondary'),
       button('Check prepared spoken reply', g => recoverSpeech(item, g), false, 'secondary'),
-      p('AI-generated voice · prepared audio expires after five minutes.', 'field-help'));
+      p('AI-generated voice · prepared audio is available until its saved expiry time.', 'field-help'));
   }
   async function preparePdf(path, options, g, filename) {
     const response = await api.call(options ? 'POST' : 'GET', path, { ...options, binary: 'pdf' });
@@ -334,7 +348,24 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
     if (options) await refresh(g, ['exports']);
     notice = 'Your PDF is ready. Use the download link below.';
   }
+  async function saveVoice(g, reply = false) {
+    const captureEpoch = mediaEpoch;
+    if (!alive(g) || document.hidden || !audioFile || !consent || pending() || capabilities?.transcription !== true) return;
+    const form = new FormData(); form.append('file', audioFile, `recording.${audioName.split('.').at(-1).toLowerCase()}`);
+    form.append('language', project.language); form.append('consent', 'true');
+    const result = await performPaid('transcription', `${v2}/story-sessions/${session.id}/transcribe`, { form }, g);
+    if (!result || !alive(g) || captureEpoch !== mediaEpoch) return;
+    selectedTranscript = result.transcript_id; audioFile = null; audioName = ''; consent = false;
+    await refresh(g, ['transcripts']);
+    notice = project.language === 'sv' ? 'Dina ord är sparade.' : 'Your words are saved.';
+    if (!reply || captureEpoch !== mediaEpoch || !alive(g) || document.hidden || pending() || capabilities?.conversation !== true) return;
+    await performPaid('conversation', `${v2}/story-sessions/${session.id}/messages`,
+      { json: { source_transcript_id: result.transcript_id, language: project.language } }, g);
+    if (alive(g)) await refresh(g, ['messages', 'memories', 'drafts']);
+  }
   async function startRecording(g) {
+    if (capabilities?.transcription === false) throw Error((project.language === 'sv' ? 'Memy kan inte skriva ned ditt tal just nu. Ditt sparade arbete finns kvar.' : 'Memy cannot transcribe right now. Your saved work is safe.'));
+    if (globalThis.isSecureContext === false) throw Error((project.language === 'sv' ? 'Mikrofonen kräver en säker anslutning. Öppna den godkända HTTPS-adressen.' : 'Microphone access requires a secure connection. Open the approved HTTPS address.'));
     if (!consent || !session) throw Error('Give recording and transcription consent first.');
     if (recording) throw Error('Wait for the current recording to finish.');
     if (!navigator.mediaDevices?.getUserMedia || !globalThis.MediaRecorder) { openPanels.add('record-options'); throw Error('Microphone recording is unavailable in this browser. Use an audio file below.'); }
@@ -353,6 +384,7 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
     try { recorder = new MediaRecorder(tracks, { mimeType: mime }); }
     catch { tracks.getTracks().forEach(track => track.stop()); openPanels.add('record-options'); throw Error('Recording could not start. Use an audio file below.'); }
     const entry = { recorder, tracks, chunks: [], bytes: 0, seconds: 0, discard: false, timer: null, tick: null }; recording = entry;
+    tracks.getTracks().forEach(track => { track.onended = () => { if (recording === entry) { error = (project.language === 'sv' ? 'Inspelningen avbröts. Spela in igen.' : 'Recording was interrupted. Please record again.'); stopRecording(true); } }; });
     recorder.ondataavailable = ({ data }) => {
       if (!alive(g) || entry.discard || !data.size) return;
       if (entry.bytes + data.size > MAX_AUDIO) { entry.discard = true; error = 'Recording reached the 25 MB limit and was discarded.'; stopRecording(true); return; }
@@ -361,14 +393,16 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
     recorder.onerror = () => { entry.discard = true; if (alive(g)) error = 'Recording failed. Choose an audio file or record again.'; if (recording === entry) stopRecording(true); };
     recorder.onstop = () => {
       const current = recording === entry, discard = entry.discard || !alive(g) || document.hidden;
-      clearTimeout(entry.timer); clearInterval(entry.tick); tracks.getTracks().forEach(track => track.stop());
+      clearTimeout(entry.timer); clearInterval(entry.tick); tracks.getTracks().forEach(track => { track.onended = null; track.stop(); });
       if (current) recording = null;
       if (current && !discard && entry.chunks.length) {
         const container = (recorder.mimeType || mime).split(';')[0];
         audioFile = new Blob(entry.chunks, { type: container }); audioName = `recording.${container === 'audio/mp4' ? 'm4a' : 'webm'}`;
-        notice = 'Recording is held in memory. Choose “Save transcript” to send it to Real AI.';
+        notice = project.language === 'sv' ? 'Sparar dina ord…' : 'Saving your words…';
+        Promise.resolve().then(() => { if (alive(g) && !document.hidden && !busy) void run(g => saveVoice(g, true)); });
       }
-      entry.chunks = [];
+      if (current && !discard && !entry.bytes) error = (project.language === 'sv' ? 'Inget ljud spelades in. Försök spela in igen.' : 'No sound was recorded. Please try recording again.');
+      entry.chunks = []; recorder.ondataavailable = null; recorder.onstop = null; recorder.onerror = null;
       if (alive(g)) render();
     };
     try { recorder.start(250); }
@@ -568,7 +602,7 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
       composer,
       memories.some(item => item.status === 'pending') && el('aside', { class: 'chat-memory-invitation' }, el('span', { class: 'memory-invitation-mark', 'aria-hidden': 'true' }, '❧'), el('div', {}, p(copy.reviewHint, 'muted'), button(`${copy.review} · ${memories.filter(item => item.status === 'pending').length}`, () => { tab = 'memories'; }, false, 'text-button'))));
     const recordControl = isRecording ? button(`Stop recording · ${recording.seconds}s`, () => stopRecording(), false, 'record-orb is-recording') :
-      button(finalizing ? 'Finishing recording…' : 'Start recording', startRecording, !consent || !active || Boolean(recording), 'record-orb primary');
+      button(finalizing ? 'Finishing recording…' : 'Start recording', startRecording, !consent || !active || Boolean(recording) || capabilities?.transcription === false, 'record-orb primary');
     if (isRecording) { recordControl.dataset.recordStop = ''; recordControl.setAttribute('aria-label', 'Stop recording'); }
     const recordState = p(isRecording ? `${String(Math.floor(recording.seconds / 60)).padStart(2, '0')}:${String(recording.seconds % 60).padStart(2, '0')} · Recording` : finalizing ? 'Finishing your recording…' : audioFile ? 'Unsent · only on this device' : 'Up to 60 seconds · no audio sent until you choose', `record-state ${isRecording ? 'recording' : ''}`);
     recordState.dataset.recordState = '';
@@ -579,20 +613,14 @@ export function createWorkspace({ root, api, user, onExit, onSessionLost }) {
       el('div', { class: 'record-consent' }, check('I consent to recording and sending this audio to OpenAI for transcription.', consent, checkboxChange(value => { consent = value; if (!value) stopRecording(true); }))),
       el('div', { class: 'record-actions' }, recordControl), recordState,
       el('div', { class: 'unsent-audio' }, audioFile && p(`Ready: ${audioName} · ${(audioFile.size / 1_000_000).toFixed(2)} MB`, 'muted'),
-        paidButton('Save transcript · Real AI', async g => {
-          if (!audioFile || !consent) return;
-          const form = new FormData(); form.append('file', audioFile, `recording.${audioName.split('.').at(-1).toLowerCase()}`); form.append('language', project.language); form.append('consent', 'true');
-          const result = await performPaid('transcription', `${v2}/story-sessions/${session.id}/transcribe`, { form }, g);
-          if (!result) return;
-          selectedTranscript = result.transcript_id; audioFile = null; audioName = ''; consent = false; await refresh(g, ['transcripts']); notice = 'Original transcript saved. Review it before sending a conversation turn.';
-        }, !audioFile || !consent || Boolean(recording) || !active), audioFile && button('Discard audio', () => { audioFile = null; audioName = ''; consent = false; }, false, 'text-button')),
+        paidButton('Save transcript · Real AI', saveVoice, !audioFile || !consent || Boolean(recording) || !active), audioFile && button('Discard audio', () => { audioFile = null; audioName = ''; consent = false; }, false, 'text-button')),
       panel('record-options', 'Use an audio file instead', p('Choose a WAV, MP3, M4A or WebM file, up to 25 MB. It stays in memory until you explicitly save its transcript.', 'field-help'), label('Or choose an audio file', file)));
     const transcriptReview = el('section', { class: 'transcript-review card' }, p('PRESERVED IN YOUR OWN WORDS', 'eyebrow'), el('h2', {}, 'Saved original transcripts'),
       transcripts.length ? el('div', {}, label('Choose transcript', source), chosen && el('div', {}, prose(chosen.text), provenance(chosen), p('Your saved original remains unchanged.', 'field-help'),
-        paidButton(used.has(chosen.transcript_id) ? 'Transcript already sent' : 'Send selected transcript · Real AI', async g => {
+        paidButton(used.has(chosen.transcript_id) ? 'Transcript already sent' : (project.language === 'sv' ? 'Få Memys svar' : 'Get Memy’s reply'), async g => {
           await performPaid('conversation', `${v2}/story-sessions/${session.id}/messages`, { json: { source_transcript_id: chosen.transcript_id, language: project.language } }, g);
           if (alive(g)) { await refresh(g, ['messages', 'memories', 'drafts']); notice = 'Conversation turn saved. Review the suggested memories.'; }
-        }, used.has(chosen.transcript_id) || !active))) : p('Your original words will appear here after you save a transcript.', 'muted'));
+        }, used.has(chosen.transcript_id) || !active || capabilities?.conversation === false))) : p('Your original words will appear here after you save a transcript.', 'muted'));
     const voiceOptions = el('div', { id: 'voice-options', class: 'voice-options', hidden: !voiceOpen }, recorder, transcriptReview);
     return [el('div', { class: `conversation-layout typed-conversation ${voiceOpen ? 'voice-is-open' : ''}` }, chat, voiceOptions), nextStep()];
   }

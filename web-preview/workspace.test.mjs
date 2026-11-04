@@ -69,7 +69,7 @@ test('owned workspace reads, recorder finalization, explicit pending reconciliat
     hasPending: () => pending,
     async call(method, path, options) {
       calls.push({ method, path, options });
-      if (method === 'GET' && path === '/api/v2/capabilities') return { contract: 'real-v2', mode: 'real', enabled: true };
+      if (method === 'GET' && path === '/api/v2/capabilities') return { contract: 'real-v2', mode: 'real', transcription: true, conversation: true, writing: true, speech: true, enabled: true };
       if (method === 'GET' && path === '/api/v1/story-projects?limit=100&offset=0') return [project];
       if (method === 'GET' && path === `/api/v1/story-projects/${ids.project}`) return project;
       if (method === 'POST' && path === `/api/v1/story-projects/${ids.project}/continue`) { assert.deepEqual(options.json, {}); return { session }; }
@@ -144,7 +144,7 @@ test('owned workspace reads, recorder finalization, explicit pending reconciliat
   assert(root.querySelector('input[type=file]').disabled, 'a file cannot replace audio during finalization');
   assert.equal(paidCalls, 0, 'stopping a recording never transcribes automatically');
   recorder.finish();
-  assert(root.textContent.includes('Recording is held in memory'));
+  assert(root.textContent.includes('Saving your words'));
   assert(!find('Save transcript · Real AI').disabled);
   assert(stoppedTracks >= 2, 'microphone tracks are stopped when capture ends');
   visibility(true);
@@ -153,10 +153,10 @@ test('owned workspace reads, recorder finalization, explicit pending reconciliat
   assert(!root.hidden);
   assert(find('Save transcript · Real AI').disabled, 'background cleanup removes raw audio and consent');
 
-  const send = find('Send selected transcript · Real AI');
+  const send = find('Get Memy’s reply');
   send.click(); send.click(); await tick();
   assert.equal(paidCalls, 1, 'a rapid second click cannot submit another turn');
-  assert(find('Send selected transcript · Real AI').disabled, 'uncertain actions block a replacement provider call');
+  assert(find('Get Memy’s reply').disabled, 'uncertain actions block a replacement provider call');
   await click('Reload saved action');
   assert.equal(reconciliations, 1);
   assert(find('Transcript already sent').disabled);
@@ -231,7 +231,7 @@ test('paused AI keeps saved reading, memory review and deliberate editing availa
   await click('Reload stories');
   assert.equal(root.querySelector('input[name=title]').value, 'My unfinished new title', 'presentation refresh retains unsaved form input');
   await click('Open story');
-  assert(find('Send selected transcript · Real AI').disabled);
+  assert(find('Get Memy’s reply').disabled);
   await click('Review memories'); await click('Confirm');
   await click('Your autobiography');
   assert(root.querySelector('.book-reader').textContent.includes(draft.content));
@@ -259,7 +259,7 @@ async function microphoneTestWorkspace(t, getUserMedia, Recorder = class {
     async paid() { paidCalls++; assert.fail('A microphone failure must not dispatch paid work.'); },
     async call(method, path) {
       calls.push({ method, path });
-      if (method === 'GET' && path === '/api/v2/capabilities') return { contract: 'real-v2', mode: 'real', enabled: true };
+      if (method === 'GET' && path === '/api/v2/capabilities') return { contract: 'real-v2', mode: 'real', transcription: true, conversation: true, writing: true, speech: true, enabled: true };
       if (method === 'GET' && path === '/api/v1/story-projects?limit=100&offset=0') return [project];
       if (method === 'GET' && path === `/api/v1/story-projects/${ids.project}`) return project;
       if (method === 'POST' && path === `/api/v1/story-projects/${ids.project}/continue`) return { session };
@@ -273,7 +273,7 @@ async function microphoneTestWorkspace(t, getUserMedia, Recorder = class {
   const click = async name => { const node = find(name); assert(node && !node.disabled, `Enabled button: ${name}`); node.click(); await tick(); };
   const workspace = createWorkspace({ root, api, user: { email: 'synthetic-user@example.invalid' } });
   onCleanup(() => workspace.dispose()); await tick(); await click('Open story');
-  return { root, find, click, calls, paidCalls: () => paidCalls };
+  return { root, find, click, calls, api, paidCalls: () => paidCalls };
 }
 
 test('system microphone denial shows recovery and preserves an unsent file without upload or retry', async t => {
@@ -394,7 +394,7 @@ async function speechTestWorkspace(t, options = {}) {
       if (path === '/api/v1/story-projects?limit=100&offset=0') return [project];
       if (path === `/api/v1/story-projects/${project.id}`) return project;
       if (method === 'POST' && path === `/api/v1/story-projects/${project.id}/continue`) return { session };
-      if (method === 'GET' && path === `/api/v2/conversation-messages/${assistantId}/speech`) { metadataGets++; if (options.metadataError) throw options.metadataError; return { ...metadata }; }
+      if (method === 'GET' && path === `/api/v2/conversation-messages/${assistantId}/speech`) { metadataGets++; if (options.metadataError) throw options.metadataError; if (!paidCalls && !options.prepared && options.enabled !== false && !options.metadataPatch) throw Object.assign(Error('No prepared audio'), { status: 404 }); return { ...metadata }; }
       if (method === 'GET' && path === `/api/v2/spoken-replies/${speechId}/audio`) { audioGets++; return options.audioGate ? options.audioGate() : { bytes: bytes.slice(), headers: new Headers({ 'Content-Type': 'audio/wav' }) }; }
       if (method === 'GET' && path === `/api/v2/story-sessions/${session.id}/messages?limit=100&offset=0`) return [message];
       if (method === 'GET' && /\/(drafts|exports|sessions|transcripts|memories)\?limit=100&offset=0$/.test(path)) return [];
@@ -433,7 +433,7 @@ test('prepared speech plays and stops for free, and background reload uses only 
 
 test('prepared audio recovery works with AI paused and never makes a paid request', async t => {
   const view = await speechTestWorkspace(t, { enabled: false });
-  assert(view.find('Listen to Memy · Real AI').disabled);
+  assert(!view.find('Listen to Memy · Real AI').disabled, 'owned prepared audio remains readable while paid synthesis is paused');
   await view.click('Check prepared spoken reply');
   assert(view.root.textContent.includes('This lookup made no new AI request'));
   await view.click('Play spoken reply');
@@ -602,7 +602,7 @@ test('startup requests saved stories without waiting for the capability round tr
     hasPending: () => false,
     async call(_method, path) {
       requests.push(path);
-      if (path === '/api/v2/capabilities') { await gate; return { contract: 'real-v2', mode: 'real', enabled: true }; }
+      if (path === '/api/v2/capabilities') { await gate; return { contract: 'real-v2', mode: 'real', transcription: true, conversation: true, writing: true, speech: true, enabled: true }; }
       assert.equal(path, '/api/v1/story-projects?limit=100&offset=0');
       return [{ id: ids.project, title: 'Synthetic parallel startup', language: 'en' }];
     },
@@ -633,7 +633,7 @@ test('successful actions reload only changed collections, while an explicit relo
   const api = {
     hasPending: () => false,
     async call(method, path, options) {
-      if (path === '/api/v2/capabilities') return { contract: 'real-v2', mode: 'real', enabled: true };
+      if (path === '/api/v2/capabilities') return { contract: 'real-v2', mode: 'real', transcription: true, conversation: true, writing: true, speech: true, enabled: true };
       if (path === `/api/v1/story-projects/${ids.project}`) return project;
       if (method === 'POST' && path.endsWith('/continue')) return { session };
       const match = /\/(story-projects|drafts|exports|sessions|transcripts|messages|memories)\?limit=100&offset=0$/.exec(path);
@@ -699,7 +699,7 @@ test('successful actions reload only changed collections, while an explicit relo
   await readsAfter('Save transcript · Real AI', ['transcripts']);
   assert(root.textContent.includes(transcript.text));
   assert.deepEqual(paidKinds, ['transcription'], 'saving the transcript never automatically sends the conversation turn');
-  await readsAfter('Send selected transcript · Real AI', ['messages', 'memories', 'drafts']);
+  await readsAfter('Get Memy’s reply', ['messages', 'memories', 'drafts']);
   assert(root.textContent.includes('Synthetic saved reply.'));
   await click('Your autobiography');
   assert(root.textContent.includes('Source memories have changed.'), 'a new conversation clarification refreshes existing-draft freshness');
@@ -731,7 +731,7 @@ test('startup failure waits for late capabilities before rendering the final con
     hasPending: () => false,
     async paid() { assert.fail('Startup recovery cannot dispatch paid work.'); },
     async call(method, path) {
-      if (path === '/api/v2/capabilities') { await gate; return { contract: 'real-v2', mode: 'real', enabled: true }; }
+      if (path === '/api/v2/capabilities') { await gate; return { contract: 'real-v2', mode: 'real', transcription: true, conversation: true, writing: true, speech: true, enabled: true }; }
       if (path === '/api/v1/story-projects?limit=100&offset=0') {
         if (++libraryReads === 1) throw Error('Synthetic library failure');
         return [project];
@@ -754,7 +754,7 @@ test('startup failure waits for late capabilities before rendering the final con
   assert(root.querySelector('.notice.error').textContent.includes('Synthetic library failure'));
   assert(!root.querySelector('.workspace-status.is-working'));
   await click('Reload stories'); await click('Open story');
-  assert(find('Send selected transcript · Real AI') && !find('Send selected transcript · Real AI').disabled,
+  assert(find('Get Memy’s reply') && !find('Get Memy’s reply').disabled,
     'the recovered story uses the completed capability state without another capability request');
 });
 
@@ -768,7 +768,7 @@ test('a server-confirmed unsent generation releases the held UI and explains the
   const api = createApi({ getAccessToken: async () => 'synthetic-token', invalidate() {} }, {
     makeId: () => ids.draft,
     request: async (path, options) => {
-      if (path === '/api/v2/capabilities') return reply({ contract: 'real-v2', mode: 'real', enabled: true });
+      if (path === '/api/v2/capabilities') return reply({ contract: 'real-v2', mode: 'real', transcription: true, conversation: true, writing: true, speech: true, enabled: true });
       if (path === '/api/v1/story-projects?limit=100&offset=0') return reply([project]);
       if (path === `/api/v1/story-projects/${project.id}`) return reply(project);
       if (options.method === 'POST' && path.endsWith('/continue')) return reply({ session });
@@ -796,7 +796,7 @@ test('a server-confirmed unsent generation releases the held UI and explains the
   root.querySelector('.generation-panel input[type=checkbox]').click();
   await click('Generate new draft · Real AI');
   assert(api.hasPending());
-  assert(root.textContent.includes('separate from your OpenAI account balance'));
+  assert(root.textContent.includes('Your saved stories are still safe.'));
   await click('Reload saved action');
   assert(!api.hasPending());
   assert(!find('Reload saved action'), 'verified unsent work no longer traps every later action');
@@ -905,7 +905,7 @@ test('a closed allowance preserves unsent words without retry and privacy cleanu
   assert.equal(view.posts(), 1); assert.equal(view.api.hasPending(), false);
   assert.equal(view.root.querySelector('.chat-input').value, original);
   assert.match(view.root.querySelector('#chat-state').textContent, /Not sent/);
-  assert.match(view.root.querySelector('[role=alert]').textContent, /local AI testing allowance/);
+  assert.match(view.root.querySelector('[role=alert]').textContent, /AI allowance is currently used up/);
   assert(view.root.querySelector('.chat-send').disabled);
   view.visibility(true); view.visibility(false);
   assert.equal(view.root.querySelector('.chat-input').value, '');
@@ -951,4 +951,64 @@ test('paused AI still allows a private typed draft but never dispatches Send', a
   assert(view.root.querySelector('.chat-send').disabled);
   assert.match(view.root.querySelector('.chat-paused').textContent, /AI is paused/);
   assert.equal(view.posts(), 0);
+});
+
+test('Listen first reuses already prepared owned audio without a paid generation', async t => {
+  const app = await speechTestWorkspace(t, { prepared: true });
+  await app.click('Listen to Memy · Real AI');
+  assert.equal(app.counts().paidCalls, 0);
+  assert.equal(app.counts().metadataGets, 1);
+  assert.equal(app.counts().audioGets, 1);
+});
+
+test('record Stop saves once and replies once; an interrupted track never uploads', async t => {
+  let recorder, stops = 0;
+  const track = { onended: null, stop() { stops++; } };
+  class Recorder {
+    static isTypeSupported(type) { return type === 'audio/webm;codecs=opus'; }
+    constructor(_stream, options) { this.mimeType = options.mimeType; this.state = 'inactive'; recorder = this; }
+    start() { this.state = 'recording'; }
+    stop() { this.state = 'inactive'; setTimeout(() => { this.ondataavailable?.({ data: new Blob(['synthetic voice']) }); this.onstop?.(); }, 0); }
+  }
+  const view = await microphoneTestWorkspace(t, async () => ({ getTracks: () => [track] }), Recorder);
+  const paid = [];
+  view.api.paid = async (kind, _path, options) => { paid.push(kind);
+    if (kind === 'transcription') { assert.equal(options.form.get('consent'), 'true'); return { transcript_id: ids.transcript }; }
+    assert.equal(options.json.source_transcript_id, ids.transcript); return {};
+  };
+  view.root.querySelector('input[type=checkbox]').click(); await view.click('Start recording');
+  assert.equal(recorder.mimeType, 'audio/webm;codecs=opus');
+  await view.click('Stop recording'); await tick(); await tick(); await tick();
+  assert.deepEqual(paid, ['transcription', 'conversation']); assert(stops > 0); assert.equal(track.onended, null);
+  view.root.querySelector('input[type=checkbox]').click(); await view.click('Start recording');
+  track.onended(); await tick(); await tick();
+  assert.deepEqual(paid, ['transcription', 'conversation']);
+});
+
+test('unsupported microphone format never asks permission or sends audio', async t => {
+  let permissions = 0;
+  class UnsupportedRecorder { static isTypeSupported() { return false; } }
+  const view = await microphoneTestWorkspace(t, async () => { permissions++; throw Error('must not request'); }, UnsupportedRecorder);
+  view.root.querySelector('input[type=checkbox]').click(); await view.click('Start recording');
+  assert.equal(permissions, 0); assert.equal(view.paidCalls(), 0);
+  assert(view.root.textContent.includes('cannot record a supported format'));
+});
+test('saved microphone transcription survives a reply failure without another upload', async t => {
+  class Recorder {
+    static isTypeSupported(type) { return type === 'audio/mp4'; }
+    constructor(_stream, options) { this.mimeType = options.mimeType; this.state = 'inactive'; }
+    start() { this.state = 'recording'; }
+    stop() { this.state = 'inactive'; setTimeout(() => { this.ondataavailable?.({ data: new Blob(['synthetic voice']) }); this.onstop?.(); }, 0); }
+  }
+  const view = await microphoneTestWorkspace(t, async () => ({ getTracks: () => [{ stop() {} }] }), Recorder);
+  const call = view.api.call, paid = []; let saved = false;
+  const source = { transcript_id: ids.transcript, project_id: ids.project, session_id: ids.session, language: 'en', text: 'Synthetic saved words', created_at: '2026-01-01T00:00:00Z' };
+  view.api.call = async (method, path) => saved && path.includes('/transcripts?') ? [source] : call(method, path);
+  view.api.paid = async kind => { paid.push(kind); if (kind === 'transcription') { saved = true; return source; } throw Object.assign(Error('Memy is busy'), { recovery: 'wait' }); };
+  view.root.querySelector('input[type=checkbox]').click(); await view.click('Start recording'); await view.click('Stop recording');
+  await tick(); await tick(); await tick();
+  assert.deepEqual(paid, ['transcription', 'conversation']);
+  assert(view.root.textContent.includes(source.text)); assert(!view.find('Get Memy’s reply').disabled);
+  await view.click('Get Memy’s reply'); assert.deepEqual(paid, ['transcription', 'conversation', 'conversation']);
+  assert(view.find('Save transcript · Real AI').disabled, 'verified saved audio cannot be uploaded again');
 });

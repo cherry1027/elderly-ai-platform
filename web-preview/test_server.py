@@ -288,3 +288,14 @@ class PreviewTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class StagingOriginTests(unittest.TestCase):
+    def test_explicit_staging_origin(self):
+        self.assertEqual(server.approved_backend_origin('https://memy-staging.example.test'), 'https://memy-staging.example.test')
+        self.assertEqual(server.approved_backend_origin(server.BACKEND_URL), server.BACKEND_URL)
+
+    def test_rejects_unapproved_shapes(self):
+        for value in ['http://public.example.test', 'https://user:secret@example.test', 'https://example.test/path',
+                      'https://example.test?secret=value', 'https://example.test#fragment', 'https://localhost', '//example.test']:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                server.approved_backend_origin(value)

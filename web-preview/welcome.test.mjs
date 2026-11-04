@@ -20,17 +20,18 @@ let serial = 0;
 async function install(t, authResponder = async () => { throw Error('Unexpected authentication in read-only welcome test'); }) {
   const html = await readFile(new URL('./index.html', import.meta.url), 'utf8');
   const dom = new JSDOM(html, { url: 'http://127.0.0.1:8767/' });
-  const saved = new Map(['window', 'document', 'fetch'].map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
+  const saved = new Map(['window', 'document', 'Node', 'fetch'].map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
   const calls = [];
   let writes = 0;
   const originalWrite = dom.window.Storage.prototype.setItem;
   dom.window.Storage.prototype.setItem = () => { writes++; throw Error('Welcome must not persist credentials or preferences'); };
   Object.defineProperty(globalThis, 'window', { value: dom.window, configurable: true });
+  Object.defineProperty(globalThis, 'Node', { value: dom.window.Node, configurable: true });
   Object.defineProperty(globalThis, 'document', { value: dom.window.document, configurable: true });
   Object.defineProperty(globalThis, 'fetch', { value: async (url, init) => {
     calls.push({ url, init });
     if (url === '/client-config') return new Response(JSON.stringify({ supabaseUrl: expected, publishableKey: 'sb_publishable_synthetic_test_value_1234567890' }), { headers: { 'Content-Type': 'application/json' } });
-    if (url === expected + '/auth/v1/token?grant_type=password') return authResponder(url, init);
+    if (url.startsWith(expected + '/auth/v1/') || url.startsWith('/api/')) return authResponder(url, init);
     throw Error('Unexpected network destination in offline welcome test');
   }, configurable: true });
   t.after(() => {
@@ -154,4 +155,33 @@ test('another inspiration is explicit and the story action focuses sign-in witho
   assert.equal(email.value, 'offline-person@example.invalid');
   assert.equal(writes(), 0);
   assert.deepEqual(calls.map(call => call.url), ['/client-config']);
+});
+
+test('verified browser login and sign-out retain credentials only in runtime memory', async t => {
+  const id = '11111111-1111-4111-8111-111111111111';
+  const token = 'header.' + Buffer.from(JSON.stringify({ iss: expected + '/auth/v1', role: 'authenticated', sub: id, exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url') + '.signature';
+  const view = await install(t, async (url) => {
+    const value = url.includes('grant_type=password') ? { access_token: token, refresh_token: 'synthetic.refresh', expires_in: 3600 }
+      : url.endsWith('/auth/v1/user') ? { id, is_anonymous: false, email_confirmed_at: '2026-01-01T00:00:00Z', email: 'synthetic@example.invalid' }
+      : url.includes('capabilities') ? { contract: 'real-v2', mode: 'real', enabled: false } : [];
+    if (url.includes('/logout')) return new Response(null, { status: 204 });
+    return new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
+  });
+  document.getElementById('email').value = 'synthetic@example.invalid'; document.getElementById('password').value = 'synthetic-password';
+  view.root.querySelector('form').dispatchEvent(new view.dom.window.Event('submit', { bubbles: true, cancelable: true }));
+  await tick(); await tick(); await tick();
+  assert(view.calls.some(call => call.url.endsWith('/auth/v1/user')), 'server identity verification is required');
+  const signOut = [...view.root.querySelectorAll('button')].find(button => button.textContent === 'Sign out');
+  assert(signOut); signOut.click(); await tick(); await tick();
+  assert(document.getElementById('password')); assert.equal(view.writes(), 0);
+  assert(view.calls.some(call => call.url.includes('/logout')));
+});
+test('expired identity cannot open the browser workspace', async t => {
+  const token = 'header.' + Buffer.from(JSON.stringify({ iss: expected + '/auth/v1', role: 'authenticated', sub: 'synthetic', exp: 1 })).toString('base64url') + '.signature';
+  const view = await install(t, async () => new Response(JSON.stringify({ access_token: token, refresh_token: 'synthetic.refresh', expires_in: 3600 })));
+  document.getElementById('email').value = 'synthetic@example.invalid'; document.getElementById('password').value = 'synthetic-password';
+  view.root.querySelector('form').dispatchEvent(new view.dom.window.Event('submit', { bubbles: true, cancelable: true }));
+  await tick(); await tick();
+  assert(document.getElementById('password')); assert(!view.calls.some(call => call.url.startsWith('/api/')));
+  assert.equal(view.writes(), 0);
 });

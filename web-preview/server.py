@@ -78,6 +78,18 @@ CSP = "; ".join((
 ))
 
 
+def approved_backend_origin(value: str) -> str:
+    """Explicit launch configuration pins one upstream; no user-request override."""
+    if value == BACKEND_URL:
+        return value
+    if not isinstance(value, str) or len(value) > 256 or not re.fullmatch(r"https://[a-z0-9]+(?:[.-][a-z0-9]+)*", value):
+        raise ValueError("Approved HTTPS backend origin required.")
+    parsed = urlsplit(value)
+    if not parsed.hostname or "." not in parsed.hostname:
+        raise ValueError("Approved HTTPS backend origin required.")
+    return value
+
+
 class InvalidClientConfig(ValueError):
     """The client configuration does not have the explicitly public schema."""
 
@@ -301,7 +313,7 @@ class PreviewHandler(BaseHTTPRequestHandler):
         body = self._body()
         if body is None:
             return
-        url = BACKEND_URL + path + ("?" + query if query else "")
+        url = getattr(self.server, "backend_origin", BACKEND_URL) + path + ("?" + query if query else "")
         try:
             # An explicit Request avoids merging shared-client cookies, default
             # auth, or other mutable per-user state into another user's call.
@@ -409,7 +421,8 @@ class PreviewServer(ThreadingHTTPServer):
     request_queue_size = 16
 
     def __init__(self, port: int, public_config: Mapping[str, str], *,
-                 assets_dir: Path = HERE, client: httpx.Client | None = None):
+                 assets_dir: Path = HERE, client: httpx.Client | None = None, backend_origin: str = BACKEND_URL):
+        self.backend_origin = approved_backend_origin(backend_origin)
         self.public_config = public_client_config(public_config)
         self.assets_dir = assets_dir
         self.client = client or httpx.Client(
@@ -443,13 +456,14 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=8767)
     parser.add_argument("--client-config", type=Path, default=CLIENT_CONFIG_PATH,
                         help="Path to the mobile client's public Supabase JSON configuration.")
+    parser.add_argument("--backend-origin", default=BACKEND_URL, help="One explicitly approved HTTPS staging origin, or the existing loopback backend.")
     args = parser.parse_args()
     if not 1024 <= args.port <= 65535:
         parser.error("port must be between 1024 and 65535")
     try:
         config = load_client_config(args.client_config)
-        server = PreviewServer(args.port, config)
-    except InvalidClientConfig:
+        server = PreviewServer(args.port, config, backend_origin=approved_backend_origin(args.backend_origin))
+    except (InvalidClientConfig, ValueError):
         print("Preview client configuration is unavailable.", file=sys.stderr)
         return 1
     except OSError:

@@ -21,8 +21,8 @@ file, server key or provider key here.
 
 Sign in using an existing confirmed development account. Credentials and the
 session stay in browser memory; reloading closes the session. Create or open a
-story, record up to 60 seconds or select a supported audio file, and explicitly
-save its transcript. Send a transcript to the interviewer, review memories,
+story and give recording consent. Record up to 60 seconds; Stop saves the
+transcript and requests one reply. File upload remains an explicit fallback. Review memories,
 generate/edit a draft, and download its PDF. Preparing spoken replies is a
 separate explicit AI action. Browser microphone availability depends on the
 browser and OS permissions; file upload is the supported fallback.
@@ -89,7 +89,8 @@ spoken reply** uses the free authenticated
 `GET /api/v2/conversation-messages/{message_id}/speech`, so a lost client state
 can recover audio that is still available, even when paid AI is paused.
 
-Audio expires after five minutes and is lost on a backend restart. Expired audio
+The pinned backend retains encrypted prepared speech across restarts until its
+reported expiry. The client checks owned metadata before synthesis. Expired audio
 is reported honestly; creating a replacement always needs a separate explicit
 AI action and available budget. Browser playback errors offer free reload or
 Play again rather than silently generating new speech. Owner/project/session
@@ -227,3 +228,60 @@ typing check. The separately approved development migration and its rollback-onl
 verification are recorded in `docs/typed-chat.md`. New live typed-provider and
 actual-device acceptance remain separate. With AI paused, the real preview still
 accepts a private draft but correctly disables Send; it never fabricates a reply.
+
+
+## Frontend completion and staging checklist — 5 November 2026
+
+Baseline: ac95e8c54a91a6c50e04b688958e23b17ef8013a. Browser changes belong
+only to web-preview in this separate checkout, not the mobile branch.
+
+Recording uses explicit consent, getUserMedia and MediaRecorder, choosing accepted
+WebM/Opus or MP4 only when supported. Stop saves once and requests one reply;
+interruption/background cancels capture. An uncertain result stays held for an
+owned check, never an automatic retry. A verified transcript can request a reply
+without uploading again. Listening checks prepared metadata first; expiry requires
+an explicit replacement action. Actual Safari/Chrome device acceptance is pending.
+
+Private unsent text survives safe in-app presentation changes, but background,
+sign-out and account replacement clear it. Raw recordings are not persisted.
+Tokens stay in memory. Hard reload requires sign-in; saved server work reloads
+after verification. No new localStorage/sessionStorage persistence was added.
+
+Charan's remaining staging configuration:
+1. Choose one approved HTTPS API origin. No staging hostname has been supplied.
+   Start the proxy with --backend-origin https://APPROVED-API-HOST (replace this
+   placeholder with the canonical lowercase origin, no path or port).
+   Keep --client-config pointing at the existing two-field public Supabase config.
+   Default backend remains http://127.0.0.1:8001.
+2. Local browser origin is http://127.0.0.1:8767 with --port 8767. The proxy stays
+   loopback-only and validates Host/Origin. Public HTTPS hosting and its exact app
+   origin are not configured by this pass; review the hosting boundary before use.
+3. API calls use the same-origin proxy. They do not require browser-to-backend
+   wildcard CORS. If deployment changes that topology, configure only the exact
+   chosen browser origin in the backend separately, not '*'.
+4. Provision at most five confirmed accounts in the existing approved Supabase
+   project, using securely supplied passwords. No public signup was enabled.
+5. This client has no password-reset request or callback route. No reset redirect
+   URL is implemented or verified. Use provisioned-password login for this pilot;
+   reset-link onboarding requires a separately approved callback implementation
+   and exact Supabase allowed redirect URL after the hosted origin is selected.
+6. Verify real login, invalid credentials, sign-out/account switch, HTTPS microphone
+   permission, English/Swedish device behavior and allowance-gated provider actions
+   after WSL reconciliation and explicit testing allowance. Offline mocks are not
+   evidence of live Auth/provider/device acceptance. No paid AI was used here.
+
+There is no browser TypeScript, lint or bundler command in this client. Validate
+its JavaScript with node --check and run the Node suites and Python proxy tests
+listed above. Existing historical results in this README describe earlier passes.
+
+
+Files changed by this completion pass (relative to this separate checkout):
+
+- web-preview/README.md
+- web-preview/api.js
+- web-preview/api.test.mjs
+- web-preview/server.py
+- web-preview/test_server.py
+- web-preview/welcome.test.mjs
+- web-preview/workspace.js
+- web-preview/workspace.test.mjs

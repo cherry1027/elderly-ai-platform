@@ -130,8 +130,8 @@ it.each(languages)('root My Stories keeps real cards but moves account/signout t
   expect(screen.queryByText('fictional@example.test')).toBeNull();
   expect(screen.queryByRole('button', {name:text.signOut})).toBeNull();
   expect(screen.getByText('A fictional title')).toBeOnTheScreen();
-  expect(screen.getByText(text.language + ': ' + text.swedish)).toBeOnTheScreen();
-  expect(screen.getByText(text.status + ': ' + text.otherStatus)).toBeOnTheScreen();
+  expect(screen.getByText(text.swedish)).toBeOnTheScreen();
+  expect(screen.queryByText(text.status + ': ' + text.otherStatus)).toBeNull();
   await fireEvent.press(screen.getByRole('button', {name:text.openStory + ': A fictional title'}));
   expect(open).toHaveBeenCalledWith('10000000-0000-4000-8000-000000000001');
 });

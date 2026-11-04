@@ -1,7 +1,7 @@
 import { getComponent } from './component-probe';
 import { nativeNodes, nativeNode, nativeRef, contentLayout } from './native-tree';
 import { createRef, type ReactElement, type ComponentRef } from 'react';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react-native';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react-native';
 import { Keyboard, KeyboardAvoidingView, Platform, ScrollView, TextInput, View } from 'react-native';
 import { Screen } from '../src/components/Screen';
 import { LoginScreen } from '../src/screens/LoginScreen';
@@ -101,6 +101,32 @@ it('leaves ordinary B1 screens without form keyboard behavior',async ()=>{
  await render(<Screen><View/></Screen>);
  const scroll=nativeNode('scroll');
  expect(scroll.props.automaticallyAdjustKeyboardInsets).toBe(false);expect(scroll.props.keyboardDismissMode).toBeUndefined();
+});
+
+it.each(['ios','android'] as const)('%s keeps the chat composer and history in separate keyboard-aware scroll regions with Back outside',async platform=>{
+ jest.replaceProperty(Platform,'OS',platform);
+ const back=jest.fn(),send=jest.fn();
+ await render(<Screen keyboardAware bottomKeyboardAware back={{language:'en',label:'My Stories',onPress:back}}
+  bottomControls={<TextInput accessibilityLabel="Memory" value="Unsent words" onSubmitEditing={send} allowFontScaling/>}>
+  <View testID="conversation-history"/>
+ </Screen>);
+ const keyboardArea=screen.getByTestId('story-keyboard-area');
+ const history=screen.getByTestId('story-content-scroll'),composer=screen.getByTestId('story-bottom-controls');
+ expect(getComponent(KeyboardAvoidingView).props.behavior).toBe(platform==='ios'?'padding':'height');
+ expect(within(keyboardArea).getByTestId('story-content-scroll')).toBeOnTheScreen();
+ expect(within(keyboardArea).getByTestId('story-bottom-controls')).toBeOnTheScreen();
+ expect(within(keyboardArea).queryByTestId('story-top-back')).toBeNull();
+ expect(within(history).getByTestId('conversation-history')).toBeOnTheScreen();
+ expect(within(history).queryByLabelText('Memory')).toBeNull();
+ expect(within(composer).getByLabelText('Memory')).toHaveDisplayValue('Unsent words');
+ expect(nativeNodes('scroll')).toHaveLength(2);
+ expect(history.props.automaticallyAdjustKeyboardInsets).toBe(false);
+ expect(composer.props.keyboardShouldPersistTaps).toBe('handled');
+ expect(history).toHaveStyle({flex:1,minHeight:0});
+ expect(composer).toHaveStyle({maxHeight:'50%',flexShrink:1});
+ expect(screen.getByLabelText('Memory').props.allowFontScaling).toBe(true);
+ await fireEvent.press(screen.getByTestId('story-top-back'));
+ expect(back).toHaveBeenCalledTimes(1);expect(send).not.toHaveBeenCalled();
 });
 
 it.each<Language>(['en','sv'])('%s account errors do not override focused-field scrolling while the keyboard is visible',async language=>{

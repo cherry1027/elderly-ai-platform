@@ -1,5 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
 import { LargeButton } from '../components/LargeButton';
+import { AccountAction } from '../components/AccountPresentation';
 import { LanguageSelector } from '../components/LanguageSelector';
 import { Screen } from '../components/Screen';
 import { accessibilityLanguages, type Language } from '../i18n';
@@ -25,17 +26,17 @@ export function SettingsScreen({ language, onSelectLanguage, onReplayIntroductio
         <LanguageSelector language={language} onSelectLanguage={onSelectLanguage} density="compact" />
         <Text accessibilityLanguage={locale} allowFontScaling style={styles.help}>{text.languageHelp}</Text>
       </View>
-      <LargeButton language={language} label={text.replay} variant="secondary" density="compact" onPress={onReplayIntroduction} />
+      <AccountAction language={language} label={text.replay} quiet onPress={onReplayIntroduction} />
       <View style={styles.account}>
         <Text accessibilityRole="header" accessibilityLanguage={locale} allowFontScaling style={styles.label}>{text.accountTitle}</Text>
         {user?.email && <Text accessibilityLanguage={locale} allowFontScaling selectable style={styles.description}>{user.email}</Text>}
-        <LargeButton language={language} label={text.signOut} variant="secondary" density="compact" onPress={onSignOut} />
+        <LargeButton language={language} label={text.signOut} variant="tertiary" density="compact" onPress={onSignOut} />
       </View>
     </View>
   </Screen>;
 }
 const styles = StyleSheet.create({
-  composition: { width: '100%', gap: 20 },
+  composition: { width: '100%', gap: 28 },
   section: { width: '100%', gap: 12 }, account: { width: '100%', gap: 12, paddingTop: 16,
     borderTopWidth: 1, borderTopColor: colors.border },
   description: { color: colors.muted, fontSize: 21, lineHeight: 31, flexShrink: 1 },

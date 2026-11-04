@@ -185,7 +185,7 @@ describe('readability and flexible native layout', () => {
     // remain on the Android device verification checklist.
   });
 
-  it.each(['primary', 'secondary'] as const)('%s buttons retain readable labels and visible keyboard focus', async (variant) => {
+  it.each(['primary', 'secondary', 'tertiary'] as const)('%s buttons retain readable labels and visible keyboard focus', async (variant) => {
     const onPress = jest.fn();
     await render(<LargeButton label="Change language" language="en" onPress={onPress} variant={variant} />);
     const button = screen.getByRole('button', { name: 'Change language' });
@@ -194,7 +194,8 @@ describe('readability and flexible native layout', () => {
     await fireEvent(button, 'focus');
     expect(button).toHaveStyle({ borderColor: colors.ink });
     await fireEvent(button, 'blur');
-    expect(button).toHaveStyle({ borderColor: colors.forest });
+    expect(button).toHaveStyle({ borderColor: variant === 'primary' ? colors.forest : 'transparent',
+      backgroundColor: variant === 'primary' ? colors.forest : variant === 'secondary' ? colors.selected : 'transparent' });
     await fireEvent.press(button);
     expect(onPress).toHaveBeenCalledTimes(1);
   });

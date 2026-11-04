@@ -76,7 +76,7 @@ async function editAndSave(title = 'Draft corrected title') {
   await waitFor(() => expect(updateStoryProject).toHaveBeenCalledTimes(1));
 }
 
-it.each<Locale>(['en', 'sv'])('opens only fresh selected metadata in %s and returns to a newly fetched list', async language => {
+it.each<Locale>(['en', 'sv'])('opens fresh selected metadata in %s and returns to the unchanged in-memory list', async language => {
   await openDetails(language);
   expect(screen.queryByText('Cached list title')).toBeNull();
   await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy[language].more }));
@@ -86,7 +86,7 @@ it.each<Locale>(['en', 'sv'])('opens only fresh selected metadata in %s and retu
   expect(call.projectId).toBe(id); await call.getAccessToken();
   expect(auth.getAccessToken).toHaveBeenCalledWith('account-a');
   await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy[language].back }));
-  await screen.findByText('Cached list title'); expect(listStoryProjects).toHaveBeenCalledTimes(2);
+  await screen.findByText('Cached list title'); expect(listStoryProjects).toHaveBeenCalledTimes(1);
   expect(screen.queryByText('Private selected description')).toBeNull();
   expect(updateStoryProject).not.toHaveBeenCalled(); expect(globalThis.fetch).not.toHaveBeenCalled();
 });

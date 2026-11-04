@@ -61,11 +61,16 @@ function deferred<T>() {
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 }
-let appChange: (state: 'active' | 'inactive' | 'background') => void;
+const appListeners = new Set<(state: 'active' | 'inactive' | 'background') => void>();
+function appChange(state: 'active' | 'inactive' | 'background') {
+  AppState.currentState = state;
+  for (const listener of [...appListeners]) listener(state);
+}
 function verified(owner = 'account-a') {
   jest.mocked(useAuth).mockReturnValue({ status: 'signed-in', user: { id: owner }, appActive: true } as ReturnType<typeof useAuth>);
 }
 beforeEach(() => {
+  AppState.currentState = 'active'; appListeners.clear();
   jest.mocked(readMobileApiConfig).mockReturnValue({ baseUrl: 'http://192.168.20.30:8000' });
   jest.mocked(readStoryPreviewEnabled).mockReturnValue(false);
   jest.mocked(Crypto.randomUUID).mockReset().mockReturnValue(actionKey); verified();
@@ -74,11 +79,12 @@ beforeEach(() => {
   jest.mocked(getStoryVerification).mockReset().mockResolvedValue(report());
   jest.mocked(generateStoryDraft).mockReset().mockResolvedValue(draft());
   token.mockClear(); back.mockClear(); signOut.mockClear(); review.mockClear();
-  jest.spyOn(AppState, 'addEventListener').mockImplementation((_, listener) => {
-    appChange = listener; return { remove: jest.fn() };
+  jest.spyOn(AppState, 'addEventListener').mockImplementation((event, listener) => {
+    if (event === 'change') appListeners.add(listener);
+    return { remove: () => { appListeners.delete(listener); } };
   });
 });
-afterEach(async () => { await cleanup(); jest.restoreAllMocks(); });
+afterEach(async () => { await cleanup(); appListeners.clear(); AppState.currentState = 'active'; jest.restoreAllMocks(); });
 function saved(value = draft()) {
   jest.mocked(listStoryDrafts).mockResolvedValue([value]);
   jest.mocked(getStoryDraft).mockResolvedValue(value);

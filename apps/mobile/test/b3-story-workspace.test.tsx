@@ -44,8 +44,10 @@ it.each<Language>(['en', 'sv'])('presents clear %s workspace actions without exp
   const actions = callbacks(), text = storyDetailsCopy[language], saved = project(language);
   await render(<StoryDetailsScreen language={language} state={{ status: 'ready', project: saved }} {...actions} />);
   expect(screen.getByRole('header', { name: saved.title })).toBeOnTheScreen();
-  expect(screen.getByText(`${text.language}: ${language === 'sv' ? text.swedish : text.english}`)).toBeOnTheScreen();
-  expect(screen.getByText(text.autobiographyHelp)).toBeOnTheScreen();
+  expect(screen.queryByText(`${text.language}: ${language === 'sv' ? text.swedish : text.english}`)).toBeNull();
+  expect(screen.getByText(text.introduction)).toBeOnTheScreen();
+  expect(screen.queryByText(text.autobiographyHelp)).toBeNull();
+  for (const label of [text.review, text.generate]) expect(screen.getByRole('button', { name: label })).toHaveStyle({ backgroundColor: 'transparent' });
   expect(screen.queryByText(saved.description!)).toBeNull();
   expect(screen.queryByRole('button', { name: text.edit })).toBeNull();
   expect(screen.queryByRole('button', { name: text.refresh })).toBeNull();
@@ -58,12 +60,14 @@ it.each<Language>(['en', 'sv'])('presents clear %s workspace actions without exp
   const more = screen.getByRole('button', { name: text.more }); expect(more.props.accessibilityState.expanded).toBe(false);
   expect(more).toHaveStyle({ minHeight: 56 }); await fireEvent(more, 'focus'); expect(more).toHaveStyle({ borderColor: '#342f27' });
   await fireEvent.press(more); expect(more.props.accessibilityState.expanded).toBe(true);
+  expect(screen.getByText(`${text.language}: ${language === 'sv' ? text.swedish : text.english}`)).toBeOnTheScreen();
   expect(screen.getByText(saved.description!)).toHaveProp('selectable', true);
-  expect(screen.getByText(text.metadataHelp)).toBeOnTheScreen();
+  expect(screen.queryByText(text.metadataHelp)).toBeNull();
+  expect(screen.getByRole('button', { name: text.edit })).toHaveTextContent(text.edit);
   await fireEvent.press(screen.getByRole('button', { name: text.edit })); expect(actions.onEdit).toHaveBeenCalledTimes(1);
   await fireEvent.press(more); expect(screen.queryByRole('button', { name: text.edit })).toBeNull();
   expect(screen.getByRole('button', { name: text.back })).toBeOnTheScreen();
-  expect(screen.getByRole('button', { name: text.signOut })).toBeOnTheScreen();
+  expect(screen.queryByRole('button', { name: text.signOut })).toBeNull();
   for (const node of screen.getAllByText(/[\s\S]*/, { includeHiddenElements: true })) {
     expect(node.props.allowFontScaling).toBe(true); expect(node.props.numberOfLines).toBeUndefined();
     expect(StyleSheet.flatten(node.props.style)?.maxHeight).toBeUndefined();

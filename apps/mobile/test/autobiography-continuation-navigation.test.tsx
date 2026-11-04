@@ -12,7 +12,7 @@ import { Conversation } from '../src/stories/Conversation';
 import { MemoryReview } from '../src/memories/MemoryReview';
 import { ConversationScreen } from '../src/screens/ConversationScreen';
 import { readMobileApiConfig } from '../src/api/config';
-import { continueStoryProject, listStorySessions, StoryProjectsError,
+import { continueStoryProject, listStoryProjects, listStorySessions, StoryProjectsError,
   type ConversationSession, type StoryContinuation, type StoryProject } from '../src/api/story-projects';
 import { generateStoryDraft } from '../src/api/story-drafts';
 import { usePdfPrivacy, type PdfPrivacyValue } from '../src/exports/PdfPrivacy';
@@ -25,7 +25,7 @@ jest.mock('../src/screens/HomeScreen', () => { const actual = jest.requireActual
 jest.mock('expo-router', () => ({ useFocusEffect: jest.fn() }));
 jest.mock('../src/api/config', () => ({ readMobileApiConfig: jest.fn() }));
 jest.mock('../src/api/story-projects', () => ({ ...jest.requireActual('../src/api/story-projects'),
-  listStorySessions: jest.fn(), continueStoryProject: jest.fn() }));
+  listStoryProjects: jest.fn(), listStorySessions: jest.fn(), continueStoryProject: jest.fn() }));
 jest.mock('../src/api/story-drafts', () => ({ ...jest.requireActual('../src/api/story-drafts'), generateStoryDraft: jest.fn() }));
 jest.mock('../src/exports/PdfPrivacy', () => ({ usePdfPrivacy: jest.fn() }));
 jest.mock('../src/generation/GenerateStory', () => ({ GenerateStory: jest.requireActual<typeof import('./component-probe')>('./component-probe').observeComponent(jest.fn(() => null)) }));
@@ -86,6 +86,9 @@ beforeEach(() => {
   jest.mocked(useFocusEffect).mockImplementation(useMockFocus);
   jest.mocked(usePdfPrivacy).mockReturnValue({ consumeReturn: jest.fn(() => null) } as unknown as PdfPrivacyValue);
   jest.mocked(readMobileApiConfig).mockReturnValue({ baseUrl: 'http://192.168.20.30:8000' });
+  jest.mocked(listStoryProjects).mockReset().mockImplementation(async ({ getAccessToken }) => {
+    await getAccessToken(); return [project()];
+  });
   jest.mocked(listStorySessions).mockReset().mockResolvedValue([session()]);
   jest.mocked(continueStoryProject).mockReset().mockResolvedValue(continuation());
   jest.mocked(generateStoryDraft).mockClear(); jest.mocked(GenerateStory).mockClear();

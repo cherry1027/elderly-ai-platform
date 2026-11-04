@@ -57,12 +57,12 @@ beforeEach(async () => {
   jest.mocked(listStoryProjects).mockResolvedValue([]);
   jest.mocked(createStoryProject).mockResolvedValue(project());
 });
-async function openCreate(language: Locale = 'en') {
+async function openCreate(language: Locale = 'en', configured = true) {
   await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language, completed: true }));
   const flow = await renderRouter(routes, { initialUrl: '/' });
   await openMyStories(language);
   await screen.findByRole('header', { name: storiesCopy[language].title });
-  await fireEvent.press(screen.getByRole('button', { name: storiesCopy[language].createStory }));
+  await fireEvent.press(await screen.findByRole('button', { name: configured ? storiesCopy[language].firstStory : storiesCopy[language].createStory }));
   await screen.findByRole('header', { name: createStoryCopy[language].title });
   return flow;
 }
@@ -84,7 +84,7 @@ it.each<Locale>(['en', 'sv'])('navigates intentionally from My Stories to native
   await fireEvent.press(screen.getByRole('button', { name: leaveCopy[language].discard }));
   await screen.findByRole('header', { name: storiesCopy[language].title });
   expect(screen.queryByText('Unsaved private title')).toBeNull();
-  await fireEvent.press(screen.getByRole('button', { name: storiesCopy[language].createStory }));
+  await fireEvent.press(await screen.findByRole('button', { name: storiesCopy[language].firstStory }));
   expect(screen.getByLabelText(createStoryCopy[language].titleLabel).props.value).toBe('');
 });
 it.each(['checking', 'signed-out', 'blocked', 'busy'] as const)('never exposes creation or makes a POST for %s authentication', async status => {
@@ -102,7 +102,7 @@ it('ignores URL claims that try to open or submit a creation form', async () => 
 });
 it('keeps the unconfigured live preview honest and never invents saved data', async () => {
   jest.mocked(readMobileApiConfig).mockReturnValue(null);
-  await openCreate(); await save();
+  await openCreate('en', false); await save();
   await screen.findByText(createStoryCopy.en.errors.configuration);
   expect(createStoryProject).not.toHaveBeenCalled(); expect(auth.getAccessToken).not.toHaveBeenCalled();
   expect(screen.queryByText(createStoryCopy.en.success)).toBeNull();
@@ -144,7 +144,7 @@ it('cannot carry an account A title or late response into account B', async () =
   await openSettings(); await screen.findByText('account-b@example.test'); await openMyStories(); expect(signal.aborted).toBe(true);
   await act(async () => { finish(project('Account A private response')); });
   expect(screen.queryByText('Account A private response')).toBeNull();
-  await fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.createStory }));
+  await fireEvent.press(await screen.findByRole('button', { name: storiesCopy.en.firstStory }));
   expect(screen.getByLabelText(createStoryCopy.en.titleLabel).props.value).toBe('');
 });
 it('drops the form and in-flight request during session revalidation rather than resubmitting', async () => {

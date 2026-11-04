@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ComponentRef, type PropsWithChildren, type ReactNode, type RefObject } from 'react';
-import { Keyboard, Platform, Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import { Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, layout } from '../theme';
 import { ApiBackoffBanner } from '../api/ApiBackoff';
@@ -13,6 +13,7 @@ type ScreenProps = PropsWithChildren<{
   keyboardAware?: boolean;
   back?: { language: Language; label: string; onPress: () => void };
   bottomControls?: ReactNode;
+  bottomKeyboardAware?: boolean;
 }>;
 
 /** Presentation only: the owning screen supplies its existing safe leave action. */
@@ -33,7 +34,7 @@ export function ScreenBackControl({ language, label, onPress }: NonNullable<Scre
   </View>;
 }
 
-export function Screen({ children, scrollViewRef, onContentLayout, working = false, keyboardAware = false, back, bottomControls }: ScreenProps) {
+export function Screen({ children, scrollViewRef, onContentLayout, working = false, keyboardAware = false, back, bottomControls, bottomKeyboardAware = false }: ScreenProps) {
   const edgeSwipe = useEdgeSwipeBack(back?.onPress);
   const internalScrollView = useRef<ComponentRef<typeof ScrollView>>(null);
   const scroll = scrollViewRef ?? internalScrollView;
@@ -48,15 +49,12 @@ export function Screen({ children, scrollViewRef, onContentLayout, working = fal
     const shown = Keyboard.addListener('keyboardDidShow', () => { if (active) revealFocus(); });
     return () => { active = false; focusedTarget.current = null; shown.remove(); };
   }, [keyboardAware, revealFocus]);
-  return (
-    <SafeAreaView {...edgeSwipe} testID={back ? 'story-gesture-surface' : undefined}
-      style={styles.safeArea} edges={working ? ['top', 'left', 'right'] : ['top', 'bottom', 'left', 'right']}>
-      {back && <ScreenBackControl {...back} />}
+  const body = <>
       <ScrollView
         ref={scroll}
         testID={back || bottomControls ? 'story-content-scroll' : undefined}
         style={back || bottomControls ? styles.boundedScroll : keyboardAware ? styles.keyboardScroll : undefined}
-        automaticallyAdjustKeyboardInsets={keyboardAware && Platform.OS === 'ios'}
+        automaticallyAdjustKeyboardInsets={keyboardAware && Platform.OS === 'ios' && !(bottomControls && bottomKeyboardAware)}
         contentInsetAdjustmentBehavior={keyboardAware ? 'never' : undefined}
         keyboardDismissMode={keyboardAware ? Platform.OS === 'ios' ? 'interactive' : 'on-drag' : undefined}
         onFocus={keyboardAware ? event => {
@@ -74,6 +72,13 @@ export function Screen({ children, scrollViewRef, onContentLayout, working = fal
         contentContainerStyle={styles.bottomControlsContent} keyboardShouldPersistTaps="handled" alwaysBounceVertical={false}>
         <View style={styles.fixedContent}>{bottomControls}</View>
       </ScrollView>}
+    </>;
+  return (
+    <SafeAreaView {...edgeSwipe} testID={back ? 'story-gesture-surface' : undefined}
+      style={styles.safeArea} edges={working ? ['top', 'left', 'right'] : ['top', 'bottom', 'left', 'right']}>
+      {back && <ScreenBackControl {...back} />}
+      {bottomControls && bottomKeyboardAware ? <KeyboardAvoidingView testID="story-keyboard-area" style={styles.keyboardScroll}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>{body}</KeyboardAvoidingView> : body}
     </SafeAreaView>
   );
 }
@@ -112,8 +117,8 @@ const styles = StyleSheet.create({
   topNavigation: { paddingHorizontal: layout.screenPadding, paddingVertical: 8, flexShrink: 0 },
   fixedContent: { width: '100%', maxWidth: layout.contentWidth, alignSelf: 'center' },
   backButton: { alignSelf: 'flex-start', maxWidth: '100%', minWidth: layout.minimumTouchTarget,
-    minHeight: layout.minimumTouchTarget, paddingHorizontal: 16, paddingVertical: 10, flexDirection: 'row',
-    alignItems: 'center', gap: 10, borderWidth: 2, borderColor: colors.forest, borderRadius: 16, backgroundColor: colors.paper },
+    minHeight: layout.minimumTouchTarget, paddingHorizontal: 8, paddingVertical: 10, flexDirection: 'row',
+    alignItems: 'center', gap: 8, borderWidth: 2, borderColor: 'transparent', borderRadius: 12, backgroundColor: 'transparent' },
   backArrow: { color: colors.forest, fontSize: 30, lineHeight: 34 },
   backLabel: { color: colors.forest, fontSize: 22, lineHeight: 32, fontWeight: '600', flexShrink: 1 },
   backPressed: { backgroundColor: colors.selected }, backFocused: { borderColor: colors.ink },

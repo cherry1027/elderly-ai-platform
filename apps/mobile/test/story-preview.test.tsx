@@ -116,8 +116,8 @@ it.each(['list', 'create', 'details', 'edit'] as const)('sample Sign Out from %s
     await fireEvent.changeText(screen.getByLabelText(createStoryCopy.en.titleLabel), 'Discard this sample draft');
   } else if (where === 'details' || where === 'edit') {
     await fireEvent.press(screen.getByRole('button', { name: 'Open story: A made-up summer memory' }));
+    await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.more }));
     if (where === 'edit') {
-      await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.more }));
       await fireEvent.press(screen.getByRole('button', { name: storyDetailsCopy.en.edit }));
       await fireEvent.changeText(screen.getByLabelText(storyDetailsCopy.en.titleLabel), 'Discard this sample draft');
     }

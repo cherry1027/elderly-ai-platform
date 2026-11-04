@@ -17,6 +17,8 @@ it.each(['en', 'sv'] as const)('shows project fields and simple controls in %s',
   const actions = await open({ status: 'ready', project: p }, language); const text = storyDetailsCopy[language];
   expect(screen.getByRole('header', { name: p.title })).toBeOnTheScreen();
   expect(screen.queryByRole('button', { name: text.edit })).toBeNull();
+  expect(screen.queryByRole('button', { name: text.signOut })).toBeNull();
+  expect(screen.queryByText(`${text.language}: ${language === 'sv' ? text.swedish : text.english}`)).toBeNull();
   await fireEvent.press(screen.getByRole('button', { name: text.more }));
   expect(screen.getByText(p.description!)).toBeOnTheScreen();
   expect(screen.getByText(`${text.language}: ${language === 'sv' ? text.swedish : text.english}`)).toBeOnTheScreen();
@@ -76,12 +78,12 @@ it.each(['en', 'sv'] as const)('keeps the three %s choices clear and metadata se
   const actions = { onConversation: jest.fn(), onReviewMemories: jest.fn(), onGenerate: jest.fn(),
     onBack: jest.fn(), onEdit: jest.fn(), onRefresh: jest.fn(), onSignOut: jest.fn() };
   await render(<StoryDetailsScreen language={language} state={{ status: 'ready', project }} {...actions} />);
-  expect(screen.queryByText(text.introduction)).toBeNull();
+  expect(screen.getByText(text.introduction)).toBeOnTheScreen();
   expect(screen.queryByText(`Status: ${text.draft}`)).toBeNull();
   expect(screen.queryByText(project.description!)).toBeNull();
   for (const [label, help, callback] of [[text.conversation, text.shareHelp, actions.onConversation],
     [text.review, text.reviewHelp, actions.onReviewMemories], [text.generate, text.autobiographyHelp, actions.onGenerate]] as const) {
-    expect(screen.getByText(help)).toBeOnTheScreen();
+    expect(screen.queryByText(help)).toBeNull();
     const button = screen.getByRole('button', { name: label }); expect(button).toHaveStyle({ minHeight: 56 });
     await fireEvent.press(button); expect(callback).toHaveBeenCalledTimes(1);
   }
@@ -92,4 +94,36 @@ it.each(['en', 'sv'] as const)('keeps the three %s choices clear and metadata se
   await fireEvent.press(refresh); expect(actions.onRefresh).toHaveBeenCalledTimes(1);
   expect(screen.getByRole('button', { name: text.signOut })).toHaveStyle({ backgroundColor: 'transparent' });
   await fireEvent.press(screen.getByTestId('story-top-back')); expect(actions.onBack).toHaveBeenCalledTimes(1);
+});
+
+it.each(['loading', 'authentication'] as const)('keeps direct Sign Out available for %s recovery', async kind => {
+  const state: StoryDetailsState = kind === 'loading' ? { status: 'loading' } : { status: 'error', error: 'authentication' };
+  const actions = await open(state);
+  const signOut = screen.getByRole('button', { name: storyDetailsCopy.en.signOut });
+  expect(signOut).toBeEnabled(); expect(signOut).toHaveStyle({ minHeight: 56 });
+  await fireEvent.press(signOut); expect(actions.onSignOut).toHaveBeenCalledTimes(1);
+  expect(screen.getByTestId('story-top-back')).toBeOnTheScreen();
+});
+
+it.each(['en', 'sv'] as const)('gives Talk visual priority and keeps rare actions behind accessible %s options', async language => {
+  const text = storyDetailsCopy[language];
+  const actions = { onConversation: jest.fn(), onReviewMemories: jest.fn(), onGenerate: jest.fn(),
+    onBack: jest.fn(), onEdit: jest.fn(), onRefresh: jest.fn(), onSignOut: jest.fn() };
+  await render(<StoryDetailsScreen language={language} state={{ status: 'ready', project }} {...actions} />);
+  const talk = screen.getByRole('button', { name: text.conversation });
+  expect(talk).toHaveStyle({ minHeight: 56 });
+  for (const label of [text.review, text.generate]) {
+    expect(screen.getByRole('button', { name: label })).toHaveStyle({ backgroundColor: 'transparent', minHeight: 56 });
+  }
+  const options = screen.getByRole('button', { name: text.more });
+  expect(options.props.accessibilityState.expanded).toBe(false);
+  expect(options).toHaveTextContent('⋯');
+  expect(screen.queryByText(text.more)).toBeNull();
+  await fireEvent.press(options);
+  expect(screen.getByRole('button', { name: text.more }).props.accessibilityState.expanded).toBe(true);
+  expect(screen.getByRole('button', { name: text.edit })).toBeEnabled();
+  expect(screen.getByRole('button', { name: text.refresh })).toBeEnabled();
+  expect(screen.getByRole('button', { name: text.signOut })).toBeEnabled();
+  expect(actions.onConversation).not.toHaveBeenCalled(); expect(actions.onGenerate).not.toHaveBeenCalled();
+  expect(globalThis.fetch).not.toHaveBeenCalled();
 });

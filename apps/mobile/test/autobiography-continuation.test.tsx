@@ -216,8 +216,17 @@ it('does not navigate on a selected-resource response after sign-out/unmount or 
   await act(async () => pending.resolve(draft())); expect(proceed).not.toHaveBeenCalled();
 });
 it('cancels and ignores continuation checks on background without changing a saved draft', async () => {
-  let change!: (value: 'active' | 'background') => void;
-  jest.spyOn(AppState, 'addEventListener').mockImplementation((_, listener) => { change = listener; return { remove: jest.fn() }; });
+  const listeners = new Set<(value: 'active' | 'inactive' | 'background') => void>();
+  const previousState = AppState.currentState;
+  const change = (value: 'active' | 'background') => {
+    AppState.currentState = value;
+    for (const listener of [...listeners]) listener(value);
+  };
+  AppState.currentState = 'active';
+  jest.spyOn(AppState, 'addEventListener').mockImplementation((event, listener) => {
+    if (event === 'change') listeners.add(listener);
+    return { remove: () => listeners.delete(listener) };
+  });
   await render(<GenerateStory {...props()} />); await ready();
   const staleReview = panel().onReviewMemories;
   const pending = deferred<StoryDraft>(); jest.mocked(getStoryDraft).mockReturnValueOnce(pending.promise);
@@ -226,4 +235,5 @@ it('cancels and ignores continuation checks on background without changing a sav
   await act(() => staleReview()); expect(review).not.toHaveBeenCalled();
   expect(proceed).not.toHaveBeenCalled(); expect(generateStoryDraft).not.toHaveBeenCalled();
   await act(() => change('active')); await ready(); expect(required(panel().state.draft).content).toBe(draft().content);
+  AppState.currentState = previousState;
 });

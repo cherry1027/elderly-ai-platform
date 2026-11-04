@@ -64,15 +64,15 @@ it('loads once with the verified owner token accessor and preserves backend orde
   expect(listStoryProjects).toHaveBeenCalledTimes(1);
   expect(globalThis.fetch).not.toHaveBeenCalled();
 });
-it('refreshes by replacing rows, clearing stale rows while loading and preventing duplicate submissions', async () => {
+it('refreshes by retaining useful rows until replacement arrives and preventing duplicate submissions', async () => {
   jest.mocked(listStoryProjects).mockResolvedValueOnce([project('Before refresh')]);
   await open(); await screen.findByText('Before refresh');
   let finish!: (rows: StoryProject[]) => void;
   jest.mocked(listStoryProjects).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
   const button = screen.getByRole('button', { name: storiesCopy.en.refresh });
   await fireEvent.press(button); await fireEvent.press(button);
-  expect(screen.queryByText('Before refresh')).toBeNull();
-  expect(screen.getByRole('button', { name: storiesCopy.en.refreshing })).toBeDisabled();
+  expect(screen.getByText('Before refresh')).toBeOnTheScreen();
+  expect(screen.getByRole('button', { name: storiesCopy.en.refresh })).toBeDisabled();
   expect(listStoryProjects).toHaveBeenCalledTimes(2);
   await act(async () => { finish([project('After refresh')]); });
   expect(screen.getAllByText('After refresh')).toHaveLength(1);

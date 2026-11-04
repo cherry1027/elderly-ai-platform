@@ -7,6 +7,7 @@ import { getStoryProject, validateStoryProjectId, type StoryProject } from '../a
 import type { Language } from '../i18n';
 import { CreateStory } from './CreateStory';
 import { StoryDashboard } from './StoryDashboard';
+import { useStoryProjects } from './useStoryProjects';
 import { StoryDetails } from './StoryDetails';
 import { readMobileApiConfig } from '../api/config';
 import { usePdfPrivacy } from '../exports/PdfPrivacy';
@@ -33,7 +34,7 @@ interface Props {
 }
 
 type View = { kind: 'home' | 'list' | 'settings' | 'create' | 'inactive' | 'returning' }
-  | { kind: 'details'; projectId: string }
+  | { kind: 'details'; projectId: string; openTalk?: boolean }
   | { kind: 'conversation'; project: StoryProject; reviewOnOpen?: boolean; returnDraftId?: string }
   | { kind: 'generation'; project: StoryProject; initialDraftId?: string };
 const isRoot = (view: View) => ['home', 'list', 'settings'].includes(view.kind);
@@ -47,6 +48,9 @@ export function StoriesHome(props: Props) {
 }
 function StoryViews(props: Props) {
   const [view, setView] = useState<View>(() => rootView(props.initialRootTab ?? 'home'));
+  const projects = useStoryProjects({ owner: props.user.id, getAccessToken: props.getAccessToken, enabled: view.kind === 'list' });
+  const clearProjects = projects.clear, invalidateProjects = projects.invalidate;
+  const authenticationFailed = useCallback(() => clearProjects('authentication'), [clearProjects]);
   const [realConfig] = useState(readRealAiConfig);
   const [realRequested] = useState(readRealAiRequested);
   const currentView = useRef(view);
@@ -106,10 +110,10 @@ function StoryViews(props: Props) {
     // internal replay return may restore Settings; no private text is retained.
     return () => {
       focused.current = false; navigationEpoch.current++; restoration.current?.abort();
-      cancelReturn();
+      cancelReturn(); clearProjects();
       publish({ kind: 'inactive' });
     };
-  }, [consumeReplayReturn, publish, restorePdfReturn]));
+  }, [consumeReplayReturn, publish, restorePdfReturn, clearProjects]));
   useEffect(() => {
     if (!isRoot(view) || view.kind === 'home') return;
     const listener = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -120,24 +124,30 @@ function StoryViews(props: Props) {
   }, [view, navigate]);
 
   const showList = () => navigate(view, { kind: 'list' });
-  const showCreate = () => navigate(view, { kind: 'create' });
-  const showDetails = (value: string) => {
-    try { navigate(view, { kind: 'details', projectId: validateStoryProjectId(value) }); }
+  const showCreate = () => {
+    if (!alive.current || !focused.current || currentView.current !== view) return;
+    invalidateProjects(); navigate(view, { kind: 'create' });
+  };
+  const showDetails = (value: string, openTalk = false) => {
+    try { navigate(view, { kind: 'details', projectId: validateStoryProjectId(value), openTalk }); }
     catch { /* Invalid selections never start a request or establish ownership. */ }
   };
   const signOut = () => {
     if (!alive.current || !focused.current || currentView.current !== view) return;
     focused.current = false; navigationEpoch.current++; restoration.current?.abort();
-    props.onSignOut();
+    clearProjects(); props.onSignOut();
   };
-  const scopedProps = { ...props, onSignOut: signOut };
+  const scopedProps = { ...props, onSignOut: signOut, onAuthenticationFailure: authenticationFailed };
   if (view.kind === 'inactive' || view.kind === 'returning') return <PreferenceLoading language={props.language} />;
-  if (view.kind === 'create') return <CreateStory {...scopedProps} onBack={showList} />;
+  if (view.kind === 'create') return <CreateStory {...scopedProps} onBack={() => {
+    if (!alive.current || !focused.current || currentView.current !== view) return;
+    invalidateProjects(); showList();
+  }} />;
   if (realConfig && (view.kind === 'conversation' || view.kind === 'generation')) return <RealStoryWorkspace
     {...scopedProps} config={realConfig} project={view.project}
     initialTab={view.kind === 'generation' ? 'book' : view.reviewOnOpen ? 'memories' : 'chat'}
     initialDraftId={view.kind === 'generation' ? view.initialDraftId : view.returnDraftId}
-    onBack={() => showDetails(view.project.id)} />;
+    onBack={showList} onStoryDetails={() => showDetails(view.project.id)} />;
   if (view.kind === 'generation') return <GenerateStory {...scopedProps} project={view.project} initialDraftId={view.initialDraftId}
     onBack={() => showDetails(view.project.id)}
     onSelectionChange={draftId => {
@@ -161,7 +171,8 @@ function StoryViews(props: Props) {
       if (view.returnDraftId) navigate(view, { kind: 'generation', project: view.project, initialDraftId: view.returnDraftId });
       else showDetails(view.project.id);
     }} />;
-  if (view.kind === 'details') return <StoryDetails key={view.projectId} {...scopedProps} projectId={view.projectId} onBack={showList}
+  if (view.kind === 'details') return <StoryDetails key={view.projectId} {...scopedProps} projectId={view.projectId} onBack={showList} openTalk={view.openTalk}
+    onProjectChanged={invalidateProjects}
     onConversation={project => navigate(view, { kind: 'conversation', project })}
     onReviewMemories={project => navigate(view, { kind: 'conversation', project, reviewOnOpen: true })}
     onGenerate={project => navigate(view, { kind: 'generation', project, initialDraftId: selectedGenerations.current.get(project.id) })} />;
@@ -184,8 +195,7 @@ function StoryViews(props: Props) {
           focused.current = false; navigationEpoch.current++; restoration.current?.abort();
           if (props.onReplayIntroduction() !== true) focused.current = true;
         }} onSignOut={signOut} />
-        // Fresh list read after leaving Create; never insert a POST response or
-        // keep another project cache in Home.
-        : <StoryDashboard {...scopedProps} root onCreateStory={showCreate} onOpenStory={showDetails} />}
+        // The verified owner retains only bounded saved rows in memory.
+        : <StoryDashboard {...scopedProps} controller={projects} root onCreateStory={showCreate} onOpenStory={projectId => showDetails(projectId, !!realConfig)} />}
   </AuthenticatedShell>;
 }

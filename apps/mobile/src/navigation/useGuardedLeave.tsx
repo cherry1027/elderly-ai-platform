@@ -17,12 +17,12 @@ interface Options {
   checkDisabled?: boolean;
 }
 export const leaveCopy = {
-  en: { title: 'Keep your changes?', dirty: 'You have changes that have not been saved. Keep editing, or leave without saving these changes.',
-    uncertain: 'Your save may already have reached Memy. Leaving does not undo it. Check the saved result before trying to save again.',
-    keep: 'Keep Editing', discard: 'Leave Without Saving', leave: 'Leave Anyway', check: 'Check Saved Result' },
-  sv: { title: 'Vill du behålla dina ändringar?', dirty: 'Du har ändringar som inte har sparats. Fortsätt redigera eller lämna utan att spara ändringarna.',
-    uncertain: 'Din sparning kan redan ha nått Memy. Den ångras inte om du lämnar. Kontrollera det sparade resultatet innan du försöker spara igen.',
-    keep: 'Fortsätt redigera', discard: 'Lämna utan att spara', leave: 'Lämna ändå', check: 'Kontrollera sparat resultat' },
+  en: { title: 'Leave this screen?', dirty: 'You have words or a recording that have not been saved. Stay here, or leave without saving them.',
+    uncertain: 'We are still checking what happened. Leaving will not undo anything already sent or saved. Check the saved result before trying again.',
+    keep: 'Stay here', discard: 'Leave without saving', leave: 'Leave anyway', check: 'Check saved result' },
+  sv: { title: 'Vill du lämna sidan?', dirty: 'Du har ord eller en inspelning som inte har sparats. Stanna kvar eller lämna utan att spara dem.',
+    uncertain: 'Vi kontrollerar fortfarande vad som hände. Det som redan har skickats eller sparats ångras inte om du lämnar. Kontrollera det sparade resultatet innan du försöker igen.',
+    keep: 'Stanna kvar', discard: 'Lämna utan att spara', leave: 'Lämna ändå', check: 'Kontrollera sparat resultat' },
 } as const;
 
 /** A RAM-only leave intent. It never retries writes or outlives the private view. */

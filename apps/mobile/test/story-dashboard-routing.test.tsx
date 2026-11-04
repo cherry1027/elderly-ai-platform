@@ -91,6 +91,7 @@ it('never carries completed rows or late work into another verified account', as
   await renderRouter(routes, { initialUrl: '/' }); await openMyStories(); await screen.findByText('Account A story');
   let finish!: (rows: StoryProject[]) => void;
   jest.mocked(listStoryProjects).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.listOptions }));
   await fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.refresh }));
   const signal = jest.mocked(listStoryProjects).mock.calls[1][0].signal!;
   jest.mocked(listStoryProjects).mockResolvedValueOnce([project('Account B story')]);
@@ -123,6 +124,7 @@ it('clears prior rows on a rejected refresh and requires normal sign-in after a 
   jest.mocked(listStoryProjects).mockResolvedValueOnce([project('Private story')]);
   await renderRouter(routes, { initialUrl: '/' }); await openMyStories(); await screen.findByText('Private story');
   jest.mocked(listStoryProjects).mockRejectedValueOnce(new StoryProjectsError('authentication', 401));
+  await fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.listOptions }));
   await fireEvent.press(screen.getByRole('button', { name: storiesCopy.en.refresh }));
   await screen.findByText(storiesCopy.en.errors.authentication);
   expect(screen.queryByText('Private story')).toBeNull();

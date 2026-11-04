@@ -13,23 +13,23 @@ export function HomeScreen({ language, onOpenStories, onCreateStory, apiContract
   const text = rootNavigationCopy[language], locale = accessibilityLanguages[language];
   return <Screen working>
     <View style={styles.composition}>
-      <View style={styles.introduction}>
+      <View testID="home-introduction" style={styles.introduction}>
         <RootScreenHeading language={language} title={text.homeTitle} centered />
         <Text accessibilityLanguage={locale} allowFontScaling style={styles.description}>{text.homeDescription}</Text>
       </View>
-      <View style={styles.actions}>
+      <View testID="home-artwork" style={styles.artwork}><MemoryBookArtwork /></View>
+      <View testID="home-actions" style={styles.actions}>
         <LargeButton language={language} label={text.openStories} onPress={onOpenStories} />
-        <LargeButton language={language} label={text.createStory} variant="secondary" onPress={onCreateStory} />
+        <LargeButton language={language} label={text.createStory} variant="tertiary" onPress={onCreateStory} />
       </View>
-      <View style={styles.artwork}><MemoryBookArtwork /></View>
-      <Text accessibilityLanguage={locale} allowFontScaling style={styles.note}>{apiContract === 'real-v2' ? text.realAvailability : text.simulation}</Text>
+      {apiContract !== 'real-v2' && <Text accessibilityLanguage={locale} allowFontScaling style={styles.note}>{text.simulation}</Text>}
     </View>
   </Screen>;
 }
 const styles = StyleSheet.create({
-  composition: { width: '100%', gap: 16 },
-  introduction: { width: '100%', gap: 8 }, actions: { width: '100%', gap: 12 },
-  artwork: { width: '100%', maxWidth: 184, alignSelf: 'center' },
+  composition: { width: '100%', gap: 24 },
+  introduction: { width: '100%', gap: 8 }, actions: { width: '100%', gap: 6 },
+  artwork: { width: '100%', maxWidth: 320, alignSelf: 'center', marginVertical: 4 },
   description: { color: colors.muted, fontSize: 22, lineHeight: 33, textAlign: 'center', flexShrink: 1 },
   note: { color: colors.muted, fontSize: 18, lineHeight: 26, textAlign: 'center', flexShrink: 1 },
 });

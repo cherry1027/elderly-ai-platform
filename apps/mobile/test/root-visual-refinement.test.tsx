@@ -33,9 +33,12 @@ it.each(languages)('refined %s Home retains Memy identity once, real actions and
   expect(screen.getByText(text.homeDescription)).toBeOnTheScreen();
   expect(screen.getByText(text.simulation)).toBeOnTheScreen();
   expect(getComponent(MemoryBookArtwork)).toBeDefined();
+  const order = nativeNodes('view').map(node => node.props.testID).filter(id => ['home-introduction', 'home-artwork', 'home-actions'].includes(id));
+  expect(order).toEqual(['home-introduction', 'home-artwork', 'home-actions']);
+  expect(screen.queryByRole('button', { name: text.settingsTitle })).toBeNull();
   const artwork = nativeNodes('view').find(node => StyleSheet.flatten(node.props.style)?.aspectRatio === 760 / 650)!;
   let ancestor = artwork.parent;
-  while (ancestor && StyleSheet.flatten(ancestor.props.style)?.maxWidth !== 184) ancestor = ancestor.parent;
+  while (ancestor && StyleSheet.flatten(ancestor.props.style)?.maxWidth !== 320) ancestor = ancestor.parent;
   expect(ancestor).not.toBeNull();
   expect(StyleSheet.flatten(ancestor!.props.style)).toMatchObject({ width: '100%', alignSelf: 'center' });
   expect(nativeNode('scroll').props.scrollEnabled).not.toBe(false);
@@ -132,4 +135,25 @@ it('compact button density preserves disabled behavior, full labels and the defa
   const label = screen.getByText('Öppna min sparade berättelse');
   expect(label).toHaveStyle({fontSize:22, lineHeight:32});
   expect(label.props.allowFontScaling).toBe(true); expect(label.props.numberOfLines).toBeUndefined();
+});
+
+
+it.each(languages)('keeps the larger %s Home illustration bounded and both actions reachable with large text', async language => {
+  jest.spyOn(Dimensions, 'get').mockReturnValue({ width: 320, height: 568, scale: 2, fontScale: 2.5 });
+  const open = jest.fn(), create = jest.fn(), text = rootNavigationCopy[language];
+  await render(<HomeScreen language={language} apiContract="real-v2" onOpenStories={open} onCreateStory={create} />);
+  expect(screen.getByTestId('home-artwork')).toHaveStyle({ width: '100%', maxWidth: 320, alignSelf: 'center' });
+  expect(nativeNode('scroll').props.scrollEnabled).not.toBe(false);
+  expect(screen.getAllByRole('button')).toHaveLength(2);
+  expect(screen.getByRole('button', { name: text.openStories })).toHaveStyle({ minHeight: 56 });
+  expect(screen.getByRole('button', { name: text.createStory })).toHaveStyle({ minHeight: 56, backgroundColor: 'transparent' });
+  expect(screen.queryByText(text.simulation)).toBeNull();
+  for (const label of nativeNodes('text')) {
+    expect(label.props.allowFontScaling).toBe(true);
+    expect(label.props.numberOfLines).toBeUndefined();
+    expect(label.props.maxFontSizeMultiplier).toBeUndefined();
+  }
+  await fireEvent.press(screen.getByRole('button', { name: text.openStories }));
+  await fireEvent.press(screen.getByRole('button', { name: text.createStory }));
+  expect(open).toHaveBeenCalledTimes(1); expect(create).toHaveBeenCalledTimes(1);
 });

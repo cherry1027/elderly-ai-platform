@@ -48,7 +48,9 @@ describe('native read-only My Stories presentation', () => {
     const { onRefresh, onSignOut } = await setup({ status: 'loading' }, language);
     const text = storiesCopy[language];
     expect(screen.getByText(text.loading).props.accessibilityLiveRegion).toBe('polite');
-    const refresh = screen.getByRole('button', { name: text.refreshing });
+    expect(screen.getAllByText(text.loading)).toHaveLength(1);
+    expect(screen.queryByText(text.refreshing)).toBeNull();
+    const refresh = screen.getByRole('button', { name: text.refresh });
     expect(refresh).toBeDisabled(); expect(refresh.props.accessibilityState.busy).toBe(true);
     await fireEvent.press(refresh); expect(onRefresh).not.toHaveBeenCalled();
     const signOut = screen.getByRole('button', { name: text.signOut });

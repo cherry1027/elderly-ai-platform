@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BackHandler } from 'react-native';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { BackHandler, Text } from 'react-native';
 import type { AuthUser } from '../auth/client';
 import { readMobileApiConfig } from '../api/config';
 import {
   getStoryProject, updateStoryProject, validateStoryProjectId, validateUpdateStoryInput,
   StoryProjectsError, type StoryProject, type UpdateStoryProjectInput,
 } from '../api/story-projects';
-import type { Language } from '../i18n';
+import { accessibilityLanguages, type Language } from '../i18n';
+import { Screen, screenStyles } from '../components/Screen';
+import { storyDetailsCopy } from '../story-details-copy';
 import { StoryDetailsScreen, type StoryDetailsState } from '../screens/StoryDetailsScreen';
 import { EditStoryScreen, type EditStoryState } from '../screens/EditStoryScreen';
 import type { LeaveHandle } from '../navigation/useGuardedLeave';
@@ -18,9 +20,12 @@ interface Props {
   getAccessToken: (expectedUserId: string) => Promise<string | null>;
   onBack: () => void;
   onSignOut: () => void;
+  onAuthenticationFailure?: () => void;
+  onProjectChanged?: () => void;
   onConversation?: (project: StoryProject) => void;
   onReviewMemories?: (project: StoryProject) => void;
   onGenerate?: (project: StoryProject) => void;
+  openTalk?: boolean;
 }
 type Frame = {
   owner: string; projectId: string | null; revision: number;
@@ -28,7 +33,7 @@ type Frame = {
 };
 type Phase = 'loading' | 'details' | 'details-error' | 'editing' | 'saving' | 'edit-blocked' | 'left';
 
-export function StoryDetails({ language, user, projectId: rawId, getAccessToken, onBack, onSignOut, onConversation, onReviewMemories, onGenerate }: Props) {
+export function StoryDetails({ language, user, projectId: rawId, getAccessToken, onBack, onSignOut, onConversation, onReviewMemories, onGenerate, onAuthenticationFailure, onProjectChanged, openTalk = false }: Props) {
   const projectId = useMemo(() => { try { return validateStoryProjectId(rawId); } catch { return null; } }, [rawId]);
   const [config] = useState(readMobileApiConfig);
   const [revision, setRevision] = useState(0);
@@ -38,6 +43,9 @@ export function StoryDetails({ language, user, projectId: rawId, getAccessToken,
   const generation = useRef(0);
   const phase = useRef<Phase>('loading');
   const authenticationBlocked = useRef(false);
+  const authenticationFailure = useRef(onAuthenticationFailure), projectChanged = useRef(onProjectChanged);
+  useLayoutEffect(() => { authenticationFailure.current = onAuthenticationFailure; projectChanged.current = onProjectChanged; },
+    [onAuthenticationFailure, onProjectChanged]);
   const selection = useRef({ owner: user.id, projectId });
   const request = useRef<AbortController | null>(null);
   const formLeave = useRef<LeaveHandle | null>(null);
@@ -70,6 +78,7 @@ export function StoryDetails({ language, user, projectId: rawId, getAccessToken,
         if (!current()) return;
         const kind = error instanceof StoryProjectsError ? error.kind : 'network';
         authenticationBlocked.current = kind === 'authentication';
+        if (authenticationBlocked.current) authenticationFailure.current?.();
         phase.current = 'details-error';
         setFrame({ owner, projectId, revision, details: { status: 'error', error: kind }, editing: false, edit: { status: 'idle' } });
       }).finally(() => { if (current()) request.current = null; });
@@ -79,6 +88,7 @@ export function StoryDetails({ language, user, projectId: rawId, getAccessToken,
 
   const reload = useCallback(() => {
     if (!alive.current || phase.current === 'left') return;
+    if (phase.current === 'saving') projectChanged.current?.();
     cancelRequest();
     if (authenticationBlocked.current) {
       phase.current = 'details-error';
@@ -90,6 +100,7 @@ export function StoryDetails({ language, user, projectId: rawId, getAccessToken,
     setRevision(value => value + 1);
   }, [cancelRequest, user.id, projectId, revision]);
   const leave = useCallback((destination: () => void) => {
+    if (phase.current === 'saving') projectChanged.current?.();
     phase.current = 'left';
     alive.current = false;
     cancelRequest();
@@ -100,6 +111,7 @@ export function StoryDetails({ language, user, projectId: rawId, getAccessToken,
   const matching = frame.owner === user.id && frame.projectId === projectId && frame.revision === revision;
   const details: StoryDetailsState = !projectId ? { status: 'error', error: 'validation' }
     : !config ? { status: 'error', error: 'configuration' } : matching ? frame.details : { status: 'loading' };
+  const readyProject = details.status === 'ready' ? details.project : null;
   const editing = matching && frame.editing && details.status === 'ready';
   const back = useCallback(() => {
     if (['editing', 'saving', 'edit-blocked'].includes(phase.current)) formLeave.current?.requestLeave(reload);
@@ -147,22 +159,27 @@ export function StoryDetails({ language, user, projectId: rawId, getAccessToken,
       const project = await updateStoryProject({ baseUrl: config.baseUrl, projectId, input, expectedLanguage,
         getAccessToken: () => getAccessToken(owner), signal: controller.signal });
       if (!current()) return;
-      phase.current = 'details';
+      phase.current = 'details'; onProjectChanged?.();
       setFrame({ owner, projectId, revision, details: { status: 'ready', project, saved: true }, editing: false, edit: { status: 'idle' } });
     }).catch((error: unknown) => {
       if (!current()) return;
       const failure = error instanceof StoryProjectsError ? error : new StoryProjectsError('network', undefined, true);
       authenticationBlocked.current = failure.kind === 'authentication';
+      if (authenticationBlocked.current) authenticationFailure.current?.();
+      else if (failure.mayHaveWritten) onProjectChanged?.();
       phase.current = failure.mayHaveWritten || authenticationBlocked.current ? 'edit-blocked' : 'editing';
       setFrame(previous => ({ ...previous, edit: { status: 'error', error: failure.kind, uncertain: failure.mayHaveWritten } }));
     }).finally(() => { if (current()) request.current = null; });
   }
 
-  function beginConversation() {
-    if (!onConversation || !alive.current || phase.current !== 'details' || !matching || details.status !== 'ready' ||
+  const beginConversation = useCallback(() => {
+    if (!onConversation || !alive.current || phase.current !== 'details' || !matching || !readyProject ||
         selection.current.owner !== user.id || selection.current.projectId !== projectId) return;
-    leave(() => onConversation(details.project));
-  }
+    leave(() => onConversation(readyProject));
+  }, [onConversation, matching, readyProject, user.id, projectId, leave]);
+  // The owned metadata read remains authoritative. Only its already-fenced
+  // successful state may enter Talk; no cached row or route parameter does so.
+  useEffect(() => { if (openTalk) beginConversation(); }, [openTalk, beginConversation]);
 
   function beginGeneration() {
     if (!onGenerate || !alive.current || phase.current !== 'details' || !matching || details.status !== 'ready' ||
@@ -178,6 +195,11 @@ export function StoryDetails({ language, user, projectId: rawId, getAccessToken,
     leave(() => onReviewMemories(details.project));
   }
 
+  if (openTalk && onConversation && !editing && details.status !== 'error') return <Screen working
+    back={{ language, label: storyDetailsCopy[language].back, onPress: () => requestWorkspaceLeave(onBack) }}>
+    <Text allowFontScaling accessibilityLanguage={accessibilityLanguages[language]} accessibilityLiveRegion="polite"
+      style={screenStyles.description}>{storyDetailsCopy[language].loading}</Text>
+  </Screen>;
   if (editing && details.status === 'ready') return <EditStoryScreen key={`${user.id}:${projectId}`} leaveRef={formLeave} language={language}
     project={details.project} state={frame.edit} onSubmit={save} onBack={reload} onSignOut={() => leave(onSignOut)} />;
   return <StoryDetailsScreen language={language} state={details} onEdit={beginEdit}

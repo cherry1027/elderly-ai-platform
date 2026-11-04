@@ -13,9 +13,10 @@ interface Props {
   getAccessToken: (expectedUserId: string) => Promise<string | null>;
   onBack: () => void;
   onSignOut: () => void;
+  onAuthenticationFailure?: () => void;
 }
 
-export function CreateStory({ language, user, getAccessToken, onBack, onSignOut }: Props) {
+export function CreateStory({ language, user, getAccessToken, onBack, onSignOut, onAuthenticationFailure }: Props) {
   const [config] = useState(readMobileApiConfig);
   const [result, setResult] = useState<{ owner: string; state: CreateStoryState }>({ owner: user.id, state: { status: 'idle' } });
   const alive = useRef(false);
@@ -75,6 +76,7 @@ export function CreateStory({ language, user, getAccessToken, onBack, onSignOut 
         if (!current()) return;
         const failure = error instanceof StoryProjectsError ? error : new StoryProjectsError('network', undefined, true);
         finished.current = failure.mayHaveCreated || failure.kind === 'authentication';
+        if (failure.kind === 'authentication') onAuthenticationFailure?.();
         setResult({ owner, state: { status: 'error', error: failure.kind, uncertain: failure.mayHaveCreated } });
       }).finally(() => {
         if (current()) { working.current = false; request.current = null; }

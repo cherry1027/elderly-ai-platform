@@ -97,13 +97,21 @@ it.each(['onBack', 'onSignOut', 'onGenerate', 'onRefresh'] as const)(
   });
 
 it('ignores captured reader exits after background privacy teardown', async () => {
-  let change: ((value: 'active' | 'background') => void) | undefined;
-  jest.spyOn(AppState, 'addEventListener').mockImplementation((_, listener) => {
-    change = listener; return { remove: jest.fn() };
+  const listeners = new Set<(value: 'active' | 'inactive' | 'background') => void>();
+  const previousState = AppState.currentState;
+  const change = (value: 'active' | 'background') => {
+    AppState.currentState = value;
+    for (const listener of [...listeners]) listener(value);
+  };
+  AppState.currentState = 'active';
+  jest.spyOn(AppState, 'addEventListener').mockImplementation((event, listener) => {
+    if (event === 'change') listeners.add(listener);
+    return { remove: () => listeners.delete(listener) };
   });
   await open('en'); const stale = reader();
   await act(() => required(change)('background'));
   await act(() => { stale.onBack(); stale.onSignOut(); });
   expect(back).not.toHaveBeenCalled(); expect(signOut).not.toHaveBeenCalled();
   expect(generateStoryDraft).not.toHaveBeenCalled();
+  AppState.currentState = previousState;
 });

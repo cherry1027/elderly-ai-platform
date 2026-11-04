@@ -46,13 +46,13 @@ it('keeps ordinary Screen usable outside optional provider without authenticatio
 });
 it('shows English wait metadata and disables explicit requests while retaining page content', async () => {
   const view = await render(tree()); await admission();
-  expect(view.getByText(/Memy needs a short wait/)).toBeTruthy(); expect(view.getByText('The service requested a pause of 10 seconds.')).toBeTruthy();
+  expect(view.getByText('Please wait before trying again. Nothing will be sent again automatically.')).toBeTruthy(); expect(view.getByText('Wait time: 10 seconds.')).toBeTruthy();
   expect(view.getByRole('button', { name: 'Try action' })).toBeDisabled(); expect(view.getByText('one')).toBeTruthy();
   expect(current.waiting).toBe(true); expect(send).not.toHaveBeenCalled();
 });
 it('shows Swedish wait and explicit-action expiry copy', async () => {
   language('sv'); const view = await render(tree()); await admission('2');
-  expect(view.getByText(/Memy behöver en kort paus/)).toBeTruthy(); expect(view.getByText('Tjänsten begärde en paus på 2 sekunder.')).toBeTruthy();
+  expect(view.getByText('Vänta lite innan du försöker igen. Ingenting skickas igen automatiskt.')).toBeTruthy(); expect(view.getByText('Väntetid: 2 sekunder.')).toBeTruthy();
   await act(() => jest.advanceTimersByTime(2000));
   expect(view.getByText(/Du kan försöka igen nu/)).toBeTruthy(); expect(current.waiting).toBe(false); expect(send).not.toHaveBeenCalled();
 });

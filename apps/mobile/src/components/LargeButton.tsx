@@ -9,7 +9,7 @@ interface LargeButtonProps {
   language: Language;
   onPress: () => void;
   disabled?: boolean;
-  variant?: 'primary' | 'secondary';
+  variant?: 'primary' | 'secondary' | 'tertiary';
   density?: 'comfortable' | 'compact';
 }
 
@@ -38,7 +38,7 @@ export function LargeButton({
       style={({ pressed }) => [
         styles.button,
         density === 'compact' && styles.compact,
-        primary ? styles.primary : styles.secondary,
+        primary ? styles.primary : variant === 'tertiary' ? styles.tertiary : styles.secondary,
         pressed && !disabled && (primary ? styles.primaryPressed : styles.secondaryPressed),
         disabled && styles.disabled,
         focused && styles.focused,
@@ -74,9 +74,10 @@ const styles = StyleSheet.create({
     borderColor: colors.forest,
   },
   secondary: {
-    backgroundColor: colors.paper,
-    borderColor: colors.forest,
+    backgroundColor: colors.selected,
+    borderColor: 'transparent',
   },
+  tertiary: { backgroundColor: 'transparent', borderColor: 'transparent', paddingHorizontal: 8 },
   primaryPressed: {
     backgroundColor: colors.forestPressed,
     borderColor: colors.forestPressed,

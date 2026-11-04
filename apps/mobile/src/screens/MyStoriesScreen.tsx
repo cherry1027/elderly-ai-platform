@@ -10,11 +10,10 @@ import { accessibilityLanguages, type Language } from '../i18n';
 import { storiesCopy } from '../stories-copy';
 import { colors, headingFont, layout } from '../theme';
 import { RootScreenHeading } from '../navigation/AuthenticatedShell';
-import { rootNavigationCopy } from '../root-navigation-copy';
 
 export type MyStoriesState =
   | { status: 'loading' }
-  | { status: 'ready'; projects: StoryProject[] }
+  | { status: 'ready'; projects: StoryProject[]; refreshing?: boolean; refreshError?: StoryProjectsErrorKind }
   | { status: 'error'; error: StoryProjectsErrorKind };
 
 interface MyStoriesScreenProps {
@@ -33,10 +32,105 @@ export function MyStoriesScreen({ language, user, state, onRefresh, onCreateStor
   const { waiting } = useApiBackoff();
   const [refreshFocused, setRefreshFocused] = useState(false);
   const [createFocused, setCreateFocused] = useState(false);
+  const [focusedProject, setFocusedProject] = useState<string | null>(null);
+  const [listOptionsExpanded, setListOptionsExpanded] = useState(false), [optionsFocused, setOptionsFocused] = useState(false);
   const loading = state.status === 'loading';
+  const refreshing = state.status === 'ready' && state.refreshing === true;
+  const reading = loading || refreshing;
   const authenticationFailed = state.status === 'error' && state.error === 'authentication';
-  const refreshDisabled = waiting || loading || authenticationFailed;
+  const refreshDisabled = waiting || reading || authenticationFailed;
+  const quietRefresh = root && state.status === 'ready' && !state.refreshError;
+  const refreshHidden = quietRefresh && !listOptionsExpanded;
   const projects = state.status === 'ready' ? state.projects.slice(0, 50) : [];
+
+  const firstStory = root && state.status === 'ready' && projects.length === 0;
+  const createLabel = firstStory ? text.firstStory : text.createStory;
+  const createPrimary = !root || firstStory;
+  const controls = <View style={[styles.controls, root && styles.rootControls]}>
+      <Pressable accessibilityRole="button" accessibilityLabel={createLabel}
+        accessibilityLanguage={accessibilityLanguages[language]}
+        accessibilityState={{ disabled: authenticationFailed }} disabled={authenticationFailed}
+        onPress={() => { if (!authenticationFailed) onCreateStory(); }}
+        onFocus={() => setCreateFocused(true)} onBlur={() => setCreateFocused(false)}
+        style={({ pressed }) => [styles.refresh, root && styles.rootCreate, createPrimary && styles.create, pressed && !authenticationFailed && (createPrimary ? styles.createPressed : styles.pressed),
+          createFocused && styles.focused, authenticationFailed && styles.disabled]}>
+        <Text allowFontScaling style={[styles.refreshLabel, createPrimary && styles.createLabel]}>{root && !firstStory ? '+ ' : ''}{createLabel}</Text>
+      </Pressable>
+      {quietRefresh && <Pressable accessibilityRole="button" accessibilityLabel={text.listOptions}
+        accessibilityLanguage={accessibilityLanguages[language]} accessibilityState={{ expanded: listOptionsExpanded }}
+        onPress={() => setListOptionsExpanded(value => !value)} onFocus={() => setOptionsFocused(true)} onBlur={() => setOptionsFocused(false)}
+        style={({ pressed }) => [styles.options, pressed && styles.pressed, optionsFocused && styles.focused]}>
+        <Text accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" allowFontScaling style={styles.optionsLabel}>⋯</Text>
+      </Pressable>}
+      <View accessibilityElementsHidden={refreshHidden} importantForAccessibility={refreshHidden ? 'no-hide-descendants' : 'auto'} style={refreshHidden && styles.hidden}>
+      <Pressable accessibilityRole="button" accessibilityLabel={text.refresh}
+        accessibilityLanguage={accessibilityLanguages[language]}
+        accessibilityState={{ disabled: refreshDisabled, busy: reading }} disabled={refreshDisabled}
+        onPress={() => { if (!refreshDisabled) onRefresh(); }} onFocus={() => setRefreshFocused(true)} onBlur={() => setRefreshFocused(false)}
+        style={({ pressed }) => [styles.refresh, root && styles.rootRefresh, pressed && !refreshDisabled && styles.pressed,
+          refreshFocused && styles.focused, refreshDisabled && styles.disabled]}>
+        <Text allowFontScaling style={[styles.refreshLabel, root && styles.rootRefreshLabel]}>{text.refresh}</Text>
+      </Pressable>
+      </View>
+      {!root && <LargeButton label={text.signOut} language={language} onPress={onSignOut} />}
+    </View>;
+  const results = <View style={styles.results} accessibilityState={{ busy: reading }}>
+      {refreshing && <Text accessibilityLiveRegion="polite" accessibilityLanguage={accessibilityLanguages[language]}
+        allowFontScaling style={styles.updating}>{text.refreshing}</Text>}
+      {state.status === 'ready' && state.refreshError && <Text accessibilityRole="alert" accessibilityLiveRegion="assertive"
+        accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.error}>{text.errors[state.refreshError]}</Text>}
+      {loading && <Text accessibilityLiveRegion="polite" accessibilityLanguage={accessibilityLanguages[language]}
+        allowFontScaling style={screenStyles.description}>{text.loading}</Text>}
+      {state.status === 'error' && <Text accessibilityRole="alert" accessibilityLiveRegion="assertive"
+        accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.error}>{text.errors[state.error]}</Text>}
+      {state.status === 'ready' && (projects.length === 0
+        ? <Text accessibilityLiveRegion="polite" accessibilityLanguage={accessibilityLanguages[language]}
+          allowFontScaling style={screenStyles.description}>{text.empty}</Text>
+        : <>
+          {(!root || projects.length === 50) && <Text accessibilityLiveRegion="polite" accessibilityLanguage={accessibilityLanguages[language]}
+            allowFontScaling style={[screenStyles.footer, root && styles.rootCount]}>{root ? text.listLimit : text.count(projects.length)}</Text>}
+          {projects.map((project) => {
+            const storyLanguage = project.language === 'en' ? text.english : project.language === 'sv' ? text.swedish : text.otherLanguage;
+            const title = project.title.trim();
+            const storyLocale = title && (project.language === 'en' || project.language === 'sv')
+              ? accessibilityLanguages[project.language] : accessibilityLanguages[language];
+            // Only the project status established by the current contract is
+            // translated. Session statuses and arbitrary server text stay out.
+            const status = project.status === 'draft' ? text.draft : text.otherStatus;
+            if (root && onOpenStory) return <Pressable key={project.id} testID={`story-row-${project.id}`}
+              accessibilityRole="button" accessibilityLabel={`${text.openStory}: ${title || text.untitled}`}
+              accessibilityHint={`${text.language}: ${storyLanguage}`}
+              accessibilityLanguage={accessibilityLanguages[language]} onPress={() => onOpenStory(project.id)}
+              onFocus={() => setFocusedProject(project.id)} onBlur={() => setFocusedProject(null)}
+              style={({ pressed }) => [styles.storyRow, pressed && styles.pressed, focusedProject === project.id && styles.focused]}>
+              <View style={styles.rowWords}>
+                <Text accessibilityLanguage={storyLocale} allowFontScaling style={[styles.storyTitle, styles.rootStoryTitle]}>{title || text.untitled}</Text>
+                <View style={styles.rootMetadata}><Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={[styles.detail, styles.rootDetail]}>{storyLanguage}</Text></View>
+              </View>
+              <Text accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" allowFontScaling style={styles.chevron}>›</Text>
+            </Pressable>;
+            return <View key={project.id} style={[styles.card, root && styles.rootCard]}>
+              <Text accessibilityRole="header" accessibilityLanguage={storyLocale}
+                allowFontScaling style={[styles.storyTitle, root && styles.rootStoryTitle]}>{title || text.untitled}</Text>
+              {root ? <View style={styles.rootMetadata}>
+                <Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={[styles.detail, styles.rootDetail]}>
+                  {text.language}: {storyLanguage}
+                </Text>
+              </View> : <>
+                <Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.detail}>
+                  {text.language}: {storyLanguage}
+                </Text>
+                <Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.detail}>
+                  {text.status}: {status}
+                </Text>
+              </>}
+              {onOpenStory && <LargeButton label={`${text.openStory}: ${title || text.untitled}`}
+                accessibilityLabel={`${text.openStory}: ${title || text.untitled}`} language={language} variant="primary" density={root ? 'compact' : 'comfortable'}
+                onPress={() => onOpenStory(project.id)} />}
+            </View>;
+          })}
+        </>)}
+    </View>;
 
   return <Screen working={root}>
     {!root && <MemyBrand />}
@@ -47,89 +141,33 @@ export function MyStoriesScreen({ language, user, state, onRefresh, onCreateStor
         style={[screenStyles.description, root && styles.rootIntroduction]}>{root ? text.rootIntroduction : text.introduction}</Text>
       {!root && <Text allowFontScaling selectable style={styles.identity}>{user.email}</Text>}
     </View>
-    <View style={[styles.controls, root && styles.rootControls]}>
-      <Pressable accessibilityRole="button" accessibilityLabel={text.createStory}
-        accessibilityLanguage={accessibilityLanguages[language]}
-        accessibilityState={{ disabled: authenticationFailed }} disabled={authenticationFailed}
-        onPress={() => { if (!authenticationFailed) onCreateStory(); }}
-        onFocus={() => setCreateFocused(true)} onBlur={() => setCreateFocused(false)}
-        style={({ pressed }) => [styles.refresh, root && styles.rootCreate, styles.create, pressed && !authenticationFailed && styles.createPressed,
-          createFocused && styles.focused, authenticationFailed && styles.disabled]}>
-        <Text allowFontScaling style={[styles.refreshLabel, styles.createLabel]}>{text.createStory}</Text>
-      </Pressable>
-      <Pressable accessibilityRole="button" accessibilityLabel={loading ? text.refreshing : text.refresh}
-        accessibilityLanguage={accessibilityLanguages[language]}
-        accessibilityState={{ disabled: refreshDisabled, busy: loading }} disabled={refreshDisabled}
-        onPress={() => { if (!refreshDisabled) onRefresh(); }} onFocus={() => setRefreshFocused(true)} onBlur={() => setRefreshFocused(false)}
-        style={({ pressed }) => [styles.refresh, root && styles.rootRefresh, pressed && !refreshDisabled && styles.pressed,
-          refreshFocused && styles.focused, refreshDisabled && styles.disabled]}>
-        <Text allowFontScaling style={[styles.refreshLabel, root && styles.rootRefreshLabel]}>{loading ? text.refreshing : text.refresh}</Text>
-      </Pressable>
-      {!root && <LargeButton label={text.signOut} language={language} onPress={onSignOut} />}
-    </View>
-    <View style={styles.results} accessibilityState={{ busy: loading }}>
-      {loading && <Text accessibilityLiveRegion="polite" accessibilityLanguage={accessibilityLanguages[language]}
-        allowFontScaling style={screenStyles.description}>{text.loading}</Text>}
-      {state.status === 'error' && <Text accessibilityRole="alert" accessibilityLiveRegion="assertive"
-        accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.error}>{text.errors[state.error]}</Text>}
-      {state.status === 'ready' && (projects.length === 0
-        ? <Text accessibilityLiveRegion="polite" accessibilityLanguage={accessibilityLanguages[language]}
-          allowFontScaling style={screenStyles.description}>{text.empty}</Text>
-        : <>
-          <Text accessibilityLiveRegion="polite" accessibilityLanguage={accessibilityLanguages[language]}
-            allowFontScaling style={[screenStyles.footer, root && styles.rootCount]}>{root ? text.rootCount(projects.length) : text.count(projects.length)}</Text>
-          {projects.map((project) => {
-            const storyLanguage = project.language === 'en' ? text.english : project.language === 'sv' ? text.swedish : text.otherLanguage;
-            const title = project.title.trim();
-            const storyLocale = title && (project.language === 'en' || project.language === 'sv')
-              ? accessibilityLanguages[project.language] : accessibilityLanguages[language];
-            // Only the project status established by the current contract is
-            // translated. Session statuses and arbitrary server text stay out.
-            const status = project.status === 'draft' ? text.draft : text.otherStatus;
-            return <View key={project.id} style={[styles.card, root && styles.rootCard]}>
-              <Text accessibilityRole="header" accessibilityLanguage={storyLocale}
-                allowFontScaling style={[styles.storyTitle, root && styles.rootStoryTitle]}>{title || text.untitled}</Text>
-              {root ? <View style={styles.rootMetadata}>
-                <Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={[styles.detail, styles.rootDetail]}>
-                  {text.language}: {storyLanguage}
-                </Text>
-                <Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={[styles.detail, styles.rootDetail]}>
-                  {text.status}: {status}
-                </Text>
-              </View> : <>
-                <Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.detail}>
-                  {text.language}: {storyLanguage}
-                </Text>
-                <Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.detail}>
-                  {text.status}: {status}
-                </Text>
-              </>}
-              {onOpenStory && <LargeButton label={root ? rootNavigationCopy[language].openStory : `${text.openStory}: ${title || text.untitled}`}
-                accessibilityLabel={`${text.openStory}: ${title || text.untitled}`} language={language} variant={root ? 'secondary' : 'primary'} density={root ? 'compact' : 'comfortable'}
-                onPress={() => onOpenStory(project.id)} />}
-            </View>;
-          })}
-        </>)}
-    </View>
+    {!root && controls}
+    {results}
+    {root && controls}
   </Screen>;
 }
 
 const styles = StyleSheet.create({
+  options: { minHeight: layout.minimumTouchTarget, minWidth: layout.minimumTouchTarget, alignSelf: 'flex-end', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, borderWidth: 2, borderColor: 'transparent', borderRadius: 12 },
+  optionsLabel: { color: colors.forest, fontSize: 30, lineHeight: 40 }, hidden: { display: 'none' },
+  updating: { color: colors.muted, fontSize: 17, lineHeight: 26, textAlign: 'left', flexShrink: 1 },
   rootSection: { alignItems: 'stretch', gap: 10 },
   rootIntroduction: { textAlign: 'left', fontSize: 21, lineHeight: 31 },
   rootControls: { gap: 6 },
-  rootCreate: { paddingVertical: 12, paddingHorizontal: 20 },
+  rootCreate: { width: 'auto', alignSelf: 'flex-start', paddingVertical: 10, paddingHorizontal: 12, borderColor: 'transparent', backgroundColor: 'transparent' },
   rootRefresh: { width: 'auto', alignSelf: 'flex-start', borderColor: 'transparent',
     backgroundColor: 'transparent', paddingVertical: 10, paddingHorizontal: 10 },
   rootRefreshLabel: { fontSize: 20, lineHeight: 30, textDecorationLine: 'underline', fontWeight: '500' },
   rootCount: { textAlign: 'left', fontSize: 19, lineHeight: 28 },
   rootCard: { padding: 18, gap: 10 },
+  storyRow: { width: '100%', minHeight: layout.minimumTouchTarget, flexDirection: 'row', alignItems: 'center', gap: 16, paddingVertical: 20, paddingHorizontal: 12, borderWidth: 2, borderColor: 'transparent', borderBottomColor: colors.border, borderRadius: 8 },
+  rowWords: { flex: 1, minWidth: 0, gap: 4 }, chevron: { color: colors.forest, fontSize: 30, lineHeight: 36 },
   rootStoryTitle: { fontSize: 26, lineHeight: 36 },
   rootMetadata: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 18, rowGap: 4 },
   rootDetail: { color: colors.muted, fontSize: 19, lineHeight: 28, maxWidth: '100%' },
   heading: { fontFamily: headingFont },
   identity: { color: colors.ink, fontSize: 22, lineHeight: 32, textAlign: 'center', flexShrink: 1 },
-  controls: { width: '100%', gap: 16 }, results: { width: '100%', gap: 20 },
+  controls: { width: '100%', gap: 16 }, results: { width: '100%', gap: 8 },
   refresh: { minHeight: layout.minimumTouchTarget, width: '100%', paddingVertical: 16, paddingHorizontal: 24,
     borderWidth: 2, borderColor: colors.forest, borderRadius: layout.controlRadius,
     backgroundColor: colors.paper, alignItems: 'center', justifyContent: 'center' },

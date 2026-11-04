@@ -61,12 +61,12 @@ export function ApiBackoffProvider({ children }: PropsWithChildren) {
 
 const copy = {
   en: {
-    wait: 'Memy needs a short wait before another request. Your work has not been retried. You can go back or sign out.',
-    ready: 'You can try again now. Choose the action when you are ready; nothing will be sent automatically.',
+    wait: 'Please wait before trying again. Nothing will be sent again automatically.',
+    ready: 'You can try again now. Nothing will be sent until you choose.',
   },
   sv: {
-    wait: 'Memy behöver en kort paus före nästa förfrågan. Ditt arbete har inte skickats igen. Du kan gå tillbaka eller logga ut.',
-    ready: 'Du kan försöka igen nu. Välj åtgärden när du är redo. Ingenting skickas automatiskt.',
+    wait: 'Vänta lite innan du försöker igen. Ingenting skickas igen automatiskt.',
+    ready: 'Du kan försöka igen nu. Ingenting skickas förrän du väljer det.',
   },
 };
 
@@ -79,7 +79,7 @@ export function ApiBackoffBanner() {
     <Text accessibilityLanguage={accessibilityLanguages[language]} accessibilityLiveRegion="polite"
       allowFontScaling style={styles.text}>{message}</Text>
     {waiting && advice && <Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.text}>
-      {language === 'sv' ? 'Tjänsten begärde en paus på' : 'The service requested a pause of'} {advice.retryAfterSeconds} {language === 'sv' ? 'sekunder.' : 'seconds.'}
+      {language === 'sv' ? 'Väntetid:' : 'Wait time:'} {advice.retryAfterSeconds} {language === 'sv' ? 'sekunder.' : 'seconds.'}
     </Text>}
   </View>;
 }

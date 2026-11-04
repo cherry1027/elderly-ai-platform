@@ -328,7 +328,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     updateRead('history', { loaded: !!cached, loading: false, error: '' });
   }, [draftIdentity]);
   useEffect(() => {
-    const ownedSpeechMetadata = speech.current, ownedHistoryCache = historyCache.current;
+    const ownedSpeechMetadata = speech.current, ownedHistoryCache = historyCache.current, ownedCorrectionBases = correctionBases.current;
     mounted.current = true; active.current = AppState.currentState === 'active';
     if (active.current) open();
     const listener = AppState.addEventListener('change', state => {
@@ -347,7 +347,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
     return () => { mounted.current = false; active.current = false; epoch.current++; controller.current?.abort();
       cleanupAudio(); cancelReads(); bootstrap.current?.abort(); bootstrap.current = null; pending.current = null;
-      currentDraft.current = null; editingDraft.current = null; correctionBases.current.clear(); ownedHistoryCache.clear(); ownedSpeechMetadata.clear(); listener.remove(); };
+      currentDraft.current = null; editingDraft.current = null; ownedCorrectionBases.clear(); ownedHistoryCache.clear(); ownedSpeechMetadata.clear(); listener.remove(); };
     // This component is keyed by verified owner/project/language. Configuration is fixed at entry.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -476,8 +476,18 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     const captured = audio.current, key = createRecordingId();
     void run((signal, check) => transcribeAndReply(signal, check, captured, key), { key, kind: 'transcription', voice: true });
   };
+  // Owned reads restore explicit continuation after privacy clearing. A partial
+  // message page cannot prove that a transcript has no saved conversation turn.
+  const canReply = (transcript: RealTranscript) => transcript.project_id === project.id &&
+    transcript.session_id === sessionId && transcript.language === project.language && transcript.status === 'completed' &&
+    !unresolved && !ambiguousEdit && !suspended && !authenticationFailed &&
+    !opening && !busy && !recording && !localRecording && !!capabilities?.conversation && !usageBlocked && !mediaBlocked &&
+    readStates.messages.loaded && !readStates.messages.loading && !readStates.messages.error &&
+    (transcript.transcript_id === safeReplyId || (readStates.transcripts.loaded &&
+      !readStates.transcripts.loading && !readStates.transcripts.error && pages.messages === null)) &&
+    !messages.some(message => message.source_transcript_id === transcript.transcript_id);
   const ask = (transcript: RealTranscript) => {
-    if (transcript.transcript_id !== safeReplyId || !replyAllowed() || unresolved || ambiguousEdit || recording || localRecording) return;
+    if (pending.current || !replyAllowed() || !canReply(transcript)) return;
     const key = createRecordingId();
     void run((signal, check) => voiceReply(signal, check, transcript, key), { key, kind: 'conversation', voiceTranscriptId: transcript.transcript_id });
   };
@@ -561,7 +571,22 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       try {
         const bytes = await exportRealDraft(scope(signal), captured);
         let handle;
-        try { check(); handle = await store.save(bytes); check(); } finally { bytes.fill(0); }
+        try {
+          check();
+          const refreshExports = reads.current.exports.loaded;
+          updateRead('exports', { loaded: false, loading: false, error: '' });
+          setExports(null); setPages(previous => ({ ...previous, exports: null }));
+          if (refreshExports) try {
+            const items = await getRealExports(scope(signal)); check();
+            setExports(items); setPages(previous => ({ ...previous, exports: items.length === 100 ? 100 : null }));
+            updateRead('exports', { loaded: true, loading: false, error: '' });
+          } catch (error) {
+            check();
+            if (readFailure(error)) throw error;
+            updateRead('exports', { loading: false, error: failureMessage(error) });
+          }
+          handle = await store.save(bytes); check();
+        } finally { bytes.fill(0); }
         latest.current.privacy.rememberReturn(user.id, project.id, captured.draft_id);
         await store.share(handle); check();
         await store.discard(handle); check();
@@ -703,7 +728,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
           {transcripts.filter(source => !messages.some(message => message.source_transcript_id === source.transcript_id)).map(source => <View key={source.transcript_id} style={[styles.bubble, styles.userBubble]}>
             <Text allowFontScaling style={styles.speaker}>{t.you}</Text>{note(t.voiceMessage)}
             <Text allowFontScaling selectable accessibilityLanguage={accessibilityLanguages[project.language]} style={styles.body}>{source.text}</Text>
-            {source.transcript_id === safeReplyId && <ActionButton {...actionDefaults} label={t.process} onPress={() => ask(source)}
+            {canReply(source) && <ActionButton {...actionDefaults} label={t.process} onPress={() => ask(source)}
               disabled={blocked || usageBlocked || !capabilities?.conversation} primary />}
           </View>)}
           {(textSending || voiceReplySending) && <Text allowFontScaling accessibilityLiveRegion="polite" style={styles.note}>{t.thinking}</Text>}

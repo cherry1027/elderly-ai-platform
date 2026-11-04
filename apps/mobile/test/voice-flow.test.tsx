@@ -200,3 +200,63 @@ describe('voice consent and automatic chaining — synthetic transports only', (
     expect(api.sendRealMessage).not.toHaveBeenCalled(); expect(api.createRealSpeech).not.toHaveBeenCalled();
   });
 });
+
+describe('independent review: saved voice recovery', () => {
+  it('offers a deliberate continuation after recovering a completed transcription', async () => {
+    jest.mocked(api.transcribeRealRecording).mockRejectedValueOnce(new api.RealAiError('network', undefined, true));
+    await opened(); await permitVoice(); await press(t.stop);
+    await waitFor(() => expect(screen.getByRole('button', { name: t.check })).toBeOnTheScreen());
+    jest.mocked(api.findRealOperation).mockResolvedValue(pendingOperation('transcription', 'completed'));
+    jest.mocked(api.getRealTranscripts).mockResolvedValue([transcript]);
+    await press(t.check);
+    expect(api.sendRealMessage).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: t.process })).toBeOnTheScreen();
+  });
+  it('keeps deliberate reply recovery available after proven unsent reply and background', async () => {
+    jest.mocked(api.sendRealMessage).mockRejectedValueOnce(new api.RealAiError('unavailable', 503, false, 'AI_BUSY'));
+    await opened(); await permitVoice(); await press(t.stop);
+    await waitFor(() => expect(screen.getByRole('button', { name: t.process })).toBeOnTheScreen());
+    jest.mocked(api.getRealTranscripts).mockResolvedValue([transcript]);
+    await emit('background'); await emit('active'); await press(t.resume); await ready();
+    expect(api.sendRealMessage).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: t.process })).toBeOnTheScreen();
+  });
+});
+
+ describe('owned saved voice continuation safeguards', () => {
+  it('does not offer a duplicate reply for a saved turn', async () => {
+    jest.mocked(api.getRealTranscripts).mockResolvedValue([transcript]);
+    jest.mocked(api.getRealMessages).mockResolvedValue([turn.user_message, turn.message]);
+    await opened(); expect(screen.queryByRole('button', { name: t.process })).toBeNull();
+    expect(api.sendRealMessage).not.toHaveBeenCalled();
+  });
+  it('does not infer absence from a partial messages page', async () => {
+    jest.mocked(api.getRealTranscripts).mockResolvedValue([transcript]);
+    jest.mocked(api.getRealMessages).mockResolvedValue(Array.from({ length: 100 }, (_, i) =>
+      realMessage('user', { id: `other-${i}`, sequence: i, source_transcript_id: ids.key })));
+    await opened(); expect(screen.queryByRole('button', { name: t.process })).toBeNull();
+  });
+  it('keeps uncertain conversation recovery ahead of continuation after resume', async () => {
+    jest.mocked(api.sendRealMessage).mockRejectedValueOnce(new api.RealAiError('network', undefined, true));
+    await opened(); await permitVoice(); await press(t.stop);
+    await waitFor(() => expect(screen.getByRole('button', { name: t.check })).toBeOnTheScreen());
+    jest.mocked(api.getRealTranscripts).mockResolvedValue([transcript]);
+    await emit('background'); await emit('active'); await press(t.resume);
+    await waitFor(() => expect(api.getRealTranscripts).toHaveBeenCalledTimes(2));
+    expect(screen.getByLabelText(t.input).props.editable).toBe(false);
+    expect(screen.queryByRole('button', { name: t.process })).toBeNull();
+    expect(api.sendRealMessage).toHaveBeenCalledTimes(1);
+  });
+  it('rejects a saved transcript from another session', async () => {
+    jest.mocked(api.getRealTranscripts).mockResolvedValue([realTranscript({ session_id: ids.key })]);
+    await opened(); expect(screen.queryByRole('button', { name: t.process })).toBeNull();
+  });
+  it('does not inherit continuation across an owner change', async () => {
+    jest.mocked(api.getRealTranscripts).mockResolvedValueOnce([transcript]).mockResolvedValue([]);
+    const view = await opened(); expect(screen.getByRole('button', { name: t.process })).toBeOnTheScreen();
+    await view.rerender(<RealStoryWorkspace {...props} user={{ ...user, id: ids.key }} />); await ready();
+    await waitFor(() => expect(api.getRealTranscripts).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole('button', { name: t.process })).toBeNull();
+    expect(api.sendRealMessage).not.toHaveBeenCalled();
+  });
+ });

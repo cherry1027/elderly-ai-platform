@@ -668,3 +668,24 @@ describe('native typed retry/privacy fences — synthetic UI only', () => {
     expect(screen.getByLabelText(t.input).props.value).toBe(''); expect(api.sendRealTextMessage).not.toHaveBeenCalled();
   });
 });
+
+it('REVIEW: reloads saved PDF metadata after creating a new export in the same view', async () => {
+  jest.mocked(api.getRealDrafts).mockResolvedValue([realDraft()]);
+  jest.mocked(api.getRealExports).mockResolvedValueOnce([]).mockResolvedValueOnce([{
+    export_id: ids.key, project_id: ids.project, draft_id: ids.draft, title: 'Newly exported PDF', language: 'en',
+    draft_version: 1, draft_revision: 1, created_at: project.created_at,
+    renderer_version: 'memy_real_pdf_v1',
+  } as api.RealExport]);
+  await render(<RealStoryWorkspace {...props} initialTab="book" />); await ready('book');
+  await press(t.pdfVersions); await waitFor(() => expect(screen.getByText(t.noExports)).toBeOnTheScreen());
+  await press(t.pdfVersions);
+  await press(t.export); await waitFor(() => expect(mockPdfStore.share).toHaveBeenCalledTimes(1));
+  await press(t.pdfVersions);
+  await waitFor(() => expect(screen.getByText('Newly exported PDF')).toBeOnTheScreen());
+  expect(api.getRealExports).toHaveBeenCalledTimes(2);
+  expect(api.exportRealDraft).toHaveBeenCalledTimes(1);
+  expect(api.getRealDrafts).toHaveBeenCalledTimes(1);
+  expect(api.getRealMemories).toHaveBeenCalledTimes(1);
+  expect(api.getRealMessages).not.toHaveBeenCalled();
+  expect(api.getRealTranscripts).not.toHaveBeenCalled();
+});

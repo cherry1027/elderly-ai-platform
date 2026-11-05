@@ -16,10 +16,12 @@ it('keeps staging configuration out of ordinary verification and development', (
 it('accepts only explicitly selected staging configuration', () => {
   expect(readStagingConfig('/mobile', 'staging', jest.fn(() => JSON.stringify(config)))).toEqual(config);
 });
-it.each(['http://public.example.test', 'https://user:secret@example.test', 'https://example.test/path', 'https://example.test?key=value', 'https://localhost'])('rejects unsafe staging origin %s', apiOrigin => {
+it.each(['http://public.example.test', 'https://user:secret@example.test', 'https://example.test/path', 'https://example.test?key=value', 'https://localhost',
+  'https://192.168.0.2', 'https://127.0.0.1', 'https://staging.local', 'https://invalid-.example.test', `https://${'a'.repeat(64)}.example.test`])('rejects unsafe staging origin %s', apiOrigin => {
   expect(readStagingConfig('/mobile', 'staging', jest.fn(() => JSON.stringify({ ...config, apiOrigin })))).toBeNull();
 });
-it.each([{ secret: 'never-bundle' }, { publishableKey: 'sb_secret_never_bundle' }, { supabaseUrl: 'https://unapproved.supabase.co' }])('rejects secrets and unapproved Auth projects', patch => {
+it.each([{ secret: 'never-bundle' }, { publishableKey: 'sb_secret_never_bundle' },
+  { publishableKey: [config.publishableKey] }, { supabaseUrl: 'https://unapproved.supabase.co' }])('rejects secrets and unapproved Auth projects', patch => {
   expect(readStagingConfig('/mobile', 'staging', jest.fn(() => JSON.stringify({ ...config, ...patch })))).toBeNull();
 });
 it('pins transport requests to the single approved HTTPS origin', () => {
@@ -29,6 +31,6 @@ it('pins transport requests to the single approved HTTPS origin', () => {
     expect(normalizeMobileApiBaseUrl(config.apiOrigin)).toBe(config.apiOrigin);
     expect(() => normalizeMobileApiBaseUrl('https://other.example.test')).toThrow();
     expect(() => normalizeMobileApiBaseUrl('http://public.example.test')).toThrow();
-    expect(normalizeMobileApiBaseUrl('http://192.168.0.2:8000')).toBe('http://192.168.0.2:8000');
+    expect(() => normalizeMobileApiBaseUrl('http://192.168.0.2:8000')).toThrow();
   } finally { Constants.expoConfig = previous; }
 });

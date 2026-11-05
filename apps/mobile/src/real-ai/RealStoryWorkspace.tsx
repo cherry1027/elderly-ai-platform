@@ -181,32 +181,40 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     : error instanceof RealAiError && error.code === 'TEXT_CHAT_NOT_READY' && !error.mayHaveWritten ? t.textNotReady : error instanceof StoryProjectsError
     ? error instanceof RealAiError && error.code === 'AI_USAGE_LIMIT' ? t.usageLimit : error.mayHaveWritten ? t.uncertain : error.kind === 'authentication' ? t.auth
       : error.kind === 'invalid-response' ? t.invalid : t.unavailable : t.audioFailure;
-  async function run(action: (signal: AbortSignal, check: () => void) => Promise<void>, operation?: Pending) {
+  async function run(action: (signal: AbortSignal, check: () => void, beginOperation: (next: Pending) => void) => Promise<void>, operation?: Pending) {
     if (!mounted.current || !active.current || authenticationBlocked.current || bootstrap.current || locked.current || (operation && pending.current)) return;
     // A late saved snapshot may never overwrite a newer mutation/recovery result.
     cancelReads(true);
     locked.current = true; setBusy(true); setNotice('');
     const stamp = epoch.current, abort = new AbortController(); controller.current = abort;
-    if (operation) pending.current = operation;
+    let startedOperation = operation;
+    if (startedOperation) pending.current = startedOperation;
     const check = () => { if (!mounted.current || !active.current || epoch.current !== stamp || abort.signal.aborted) throw new RealAiError('cancelled'); };
-    try { await action(abort.signal, check); check(); if (operation) { pending.current = null; setUnresolved(null); } }
+    const beginOperation = (next: Pending) => {
+      check();
+      if (startedOperation || pending.current) throw new RealAiError('cancelled');
+      // Register only when a write may now be dispatched. Owned replay reads
+      // must never manufacture a paid operation for background reconciliation.
+      startedOperation = next; pending.current = next;
+    };
+    try { await action(abort.signal, check, beginOperation); check(); if (startedOperation) { pending.current = null; setUnresolved(null); } }
     catch (error) {
       if (mounted.current && active.current && epoch.current === stamp) {
         setNotice(failureMessage(error));
         if (allowanceError(error)) setUsageBlocked(true);
         if (error instanceof RealAiError && error.recovery === 'contact-operator' && error.code !== 'LIVE_AI_DISABLED' && !allowanceError(error)) setServiceBlocked(true);
         if (error instanceof RealAiError && error.code === 'LIVE_AI_DISABLED') {
-          const kind = pending.current?.kind ?? operation?.kind;
+          const kind = pending.current?.kind ?? startedOperation?.kind;
           const capability = kind === 'generation' ? 'writing' : kind;
           if (capability) setCapabilities(previous => previous ? { ...previous, [capability]: false } : previous);
         }
         if (error instanceof StoryProjectsError && error.mayHaveWritten) {
-          if (operation) { const current = pending.current ?? operation;
+          if (startedOperation) { const current = pending.current ?? startedOperation;
             const saved = { ...current, operationId: error instanceof RealAiError ? error.operationId ?? current.operationId : current.operationId };
             setUnresolved(saved); pending.current = saved; }
           else setAmbiguousEdit(true);
-        } else if (operation) {
-          const failed = pending.current ?? operation;
+        } else if (startedOperation) {
+          const failed = pending.current ?? startedOperation;
           if (failed.voiceTranscriptId && !(error instanceof StoryProjectsError && error.kind === 'authentication')) {
             setSafeReplyId(failed.voiceTranscriptId);
             if (!(error instanceof RealAiError && error.recovery)) setNotice(t.replyNotReady);
@@ -316,6 +324,10 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         catch (error) { if (!(error instanceof StoryProjectsError && error.mayHaveWritten)) continuing.current = false; throw error; }
       }
       check(); continuing.current = false;
+      // An explicit reopen/refresh may recover an operator-paused service only
+      // after fresh capabilities and the owned session have both been verified.
+      // This does not renew any allowance or send a paid request automatically.
+      if (caps.enabled) setServiceBlocked(false);
       if (session.current && session.current !== id) {
         cancelReads(); reads.current = emptyReads(); setReadStates(reads.current); historyCache.current.clear();
         setTranscripts([]); setMessages([]); setMemories([]); setDrafts([]); setHistory(null); setExports(null); setPages(emptyPages());
@@ -526,7 +538,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     if (unresolved || recording || localRecording || ambiguousEdit || mediaPrivacy.isBlocked()) return;
     const renewing = renewSpeech.has(message.id);
     const cached = renewing ? undefined : speech.current.get(message.id), key = createRecordingId();
-    void run(async (signal, check) => {
+    void run(async (signal, check, beginOperation) => {
       if (playback.current) await playback.current.stop(); check(); setPlaying(false);
       const current = scope(signal);
       // Replays use the same owned cached synthesis. Expiry never triggers an automatic paid synthesis.
@@ -544,6 +556,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       }
       if (!metadata) {
         if (!capabilities?.speech || usageBlocked || serviceBlocked) { setNotice(t.serviceUnavailable); return; }
+        beginOperation({ key, kind: 'speech', assistantId: message.id });
         metadata = await createRealSpeech(current, message.id, key); check();
       }
       speech.current.set(message.id, metadata);
@@ -557,7 +570,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         check(); playback.current ??= createRealPlayback();
         await playback.current.play(bytes, () => { if (mounted.current && active.current) setPlaying(false); }); check(); setPlaying(true);
       } finally { bytes.fill(0); }
-    }, cached ? undefined : { key, kind: 'speech', assistantId: message.id });
+    });
   };
   const stopVoice = () => {
     if (!playback.current) return;

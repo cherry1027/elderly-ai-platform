@@ -1,14 +1,18 @@
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
-import { normalizeMobileApiBaseUrl } from '../api/story-projects';
+import { normalizeMobileApiBaseUrl, readApprovedStagingApiOrigin } from '../api/story-projects';
 
 export interface RealAiConfig { baseUrl: string; apiContract: 'real-v2' }
 export function readRealAiRequested(): boolean {
-  return (__DEV__ || !!Constants.expoConfig?.extra?.memyStagingApiOrigin) && ['ios', 'android'].includes(Platform.OS) &&
+  let approved: string | null;
+  try { approved = readApprovedStagingApiOrigin(); } catch { return false; }
+  return (__DEV__ || approved !== null) && ['ios', 'android'].includes(Platform.OS) &&
     (Constants.expoConfig?.extra?.memyRealAiRequested === true || readRealAiConfig() !== null);
 }
 export function readRealAiConfig(): RealAiConfig | null {
-  if ((!__DEV__ && !Constants.expoConfig?.extra?.memyStagingApiOrigin) || !['ios', 'android'].includes(Platform.OS)) return null;
+  try {
+    if ((!__DEV__ && !readApprovedStagingApiOrigin()) || !['ios', 'android'].includes(Platform.OS)) return null;
+  } catch { return null; }
   const value: unknown = Constants.expoConfig?.extra?.memyRealAiApi;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const row = value as Record<string, unknown>;

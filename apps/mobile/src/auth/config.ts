@@ -1,6 +1,7 @@
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { AuthError } from './errors';
+import { readApprovedStagingApiOrigin } from '../api/story-projects';
 
 export const DEVELOPMENT_SUPABASE_URL = 'https://edbkuunyeyxnyenmmqud.supabase.co';
 export type MobileAuthConfig = { supabaseUrl: string; publishableKey: string };
@@ -16,7 +17,9 @@ export function validateMobileAuthConfig(value: MobileAuthConfig): MobileAuthCon
 
 export function readMobileAuthConfig(): MobileAuthConfig {
   const value: unknown = Constants.expoConfig?.extra?.memyDevelopmentAuth;
-  if ((!__DEV__ && !Constants.expoConfig?.extra?.memyStagingApiOrigin) || !['ios', 'android'].includes(Platform.OS) || !value || typeof value !== 'object') {
+  let staging: string | null;
+  try { staging = readApprovedStagingApiOrigin(); } catch { throw new AuthError('configuration'); }
+  if ((!__DEV__ && staging === null) || !['ios', 'android'].includes(Platform.OS) || !value || typeof value !== 'object') {
     throw new AuthError('configuration');
   }
   const record = value as Record<string, unknown>;

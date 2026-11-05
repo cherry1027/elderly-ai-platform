@@ -1,6 +1,6 @@
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
-import { normalizeMobileApiBaseUrl, StoryProjectsError } from './story-projects';
+import { normalizeMobileApiBaseUrl, readApprovedStagingApiOrigin, StoryProjectsError } from './story-projects';
 
 export interface MobileApiConfig { baseUrl: string }
 
@@ -12,7 +12,9 @@ export function validateMobileApiConfig(value: unknown): MobileApiConfig {
 
 /** No default address, credentials, environment fallback or live settings during checks. */
 export function readMobileApiConfig(): MobileApiConfig | null {
-  if ((!__DEV__ && !Constants.expoConfig?.extra?.memyStagingApiOrigin) || !['ios', 'android'].includes(Platform.OS)) return null;
+  try {
+    if ((!__DEV__ && !readApprovedStagingApiOrigin()) || !['ios', 'android'].includes(Platform.OS)) return null;
+  } catch { return null; }
   const value: unknown = Constants.expoConfig?.extra?.memyDevelopmentApi;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;

@@ -112,12 +112,29 @@ export function validateStoryProjectId(value: unknown): string {
   return value.toLowerCase();
 }
 
-/** Explicit development LAN origins only; never DNS, loopback, public or alternate IP spellings. */
+/** A staging marker is authoritative, including when its value is malformed. */
+export function readApprovedStagingApiOrigin(): string | null {
+  const extra = Constants.expoConfig?.extra;
+  if (!extra || !Object.hasOwn(extra, 'memyStagingApiOrigin')) return null;
+  const value: unknown = extra.memyStagingApiOrigin;
+  try {
+    if (typeof value !== 'string' || value.length > 256 || !value.startsWith('https://')) throw new Error();
+    const url = new URL(value), host = url.hostname;
+    if (url.origin !== value || url.protocol !== 'https:' || !host.includes('.') || host.length > 253 ||
+      /^\d+(?:\.\d+){3}$/.test(host) || /(?:^|\.)(?:localhost|local|internal|lan)$/.test(host) ||
+      !host.split('.').every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))) throw new Error();
+    return value;
+  } catch { throw new StoryProjectsError('configuration'); }
+}
+
+/** Pin staging to its approved HTTPS origin; otherwise use explicit development LAN origins only. */
 export function normalizeMobileApiBaseUrl(value: unknown): string {
   if (typeof value !== 'string' || value.length > 256) throw new StoryProjectsError('configuration');
-  const approved = Constants.expoConfig?.extra?.memyStagingApiOrigin;
-  if (typeof approved === 'string' && value === approved && /^https:\/\/[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(approved) &&
-    approved.slice(8).includes('.') && new URL(approved).origin === approved) return approved;
+  const approved = readApprovedStagingApiOrigin();
+  if (approved !== null) {
+    if (value !== approved) throw new StoryProjectsError('configuration');
+    return approved;
+  }
   const match = /^(https?):\/\/(\d{1,3}(?:\.\d{1,3}){3})(?::([1-9]\d{0,4}))?(\/(?:api\/v1\/?)?)?$/.exec(value);
   if (!match || /\s/.test(value)) throw new StoryProjectsError('configuration');
   const segments = match[2].split('.');

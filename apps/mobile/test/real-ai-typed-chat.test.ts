@@ -62,10 +62,20 @@ describe('native typed-chat contracts — offline HTTP only', () => {
     await expect(sendRealTextMessage(f.scope, '  Jag minns Malmö.\n', ids.key)).rejects.toMatchObject({ mayHaveWritten: true });
     expect(f.request).toHaveBeenCalledTimes(1);
   });
-  it.each(['TEXT_CHAT_NOT_READY', 'LIVE_AI_DISABLED', 'AI_SPENDING_NOT_APPROVED'])('recognizes proven pre-dispatch %s without holding the draft', async code => {
+  it.each(['TEXT_CHAT_NOT_READY', 'LIVE_AI_DISABLED'])('recognizes proven pre-dispatch %s without holding the draft', async code => {
     const f = fixture({ error: { code } }, 503);
     await expect(sendRealTextMessage(f.scope, 'My original', ids.key)).rejects.toMatchObject({ code, mayHaveWritten: false });
     expect(f.request).toHaveBeenCalledTimes(1);
+  });
+  it('preserves the original action key when approval can expire between paid stages', async () => {
+    // The backend can return this after extraction has already run. A missing
+    // operation header does not prove the original turn was never dispatched.
+    const f = fixture({ error: { code: 'AI_SPENDING_NOT_APPROVED' } }, 503);
+    await expect(sendRealTextMessage(f.scope, 'My original', ids.key)).rejects.toMatchObject({
+      code: 'AI_SPENDING_NOT_APPROVED', mayHaveWritten: true, recovery: 'contact-operator',
+    });
+    expect(f.request).toHaveBeenCalledTimes(1);
+    expect((f.request.mock.calls[0] as unknown as [string, RequestInit])[1].headers).toHaveProperty('Idempotency-Key', ids.key);
   });
   it('keeps a claimed operation held even when its error code can also occur before dispatch', async () => {
     const f = fixture({ error: { code: 'AI_SPENDING_NOT_APPROVED' } }, 503, { 'X-Memy-Operation-Id': ids.memory });

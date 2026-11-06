@@ -43,7 +43,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 2, borderColor: 'transparent',
     borderBottomColor: colors.border, borderRadius: 4, backgroundColor: 'transparent' },
   summary: { flexDirection: 'row', alignItems: 'flex-start' }, summaryHeading: { flex: 1, minWidth: 0 },
-  compact: { alignSelf: 'flex-end', width: undefined, minWidth: layout.minimumTouchTarget, paddingHorizontal: 14, borderBottomColor: 'transparent' },
+  compact: { alignSelf: 'flex-end', width: 'auto', flexShrink: 0, minWidth: layout.minimumTouchTarget, paddingHorizontal: 14, borderBottomColor: 'transparent' },
   disclosureLabel: { flex: 1, flexShrink: 1, color: colors.forest, fontSize: 21, lineHeight: 31, fontWeight: '600' },
   marker: { color: colors.forest, fontSize: 24, lineHeight: 32 },
   pressed: { backgroundColor: colors.selected }, focused: { borderColor: colors.ink },

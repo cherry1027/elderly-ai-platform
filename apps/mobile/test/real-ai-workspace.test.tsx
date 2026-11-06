@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { nativeNodes } from './native-tree';
+import { getComponents } from './component-probe';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
-import { AccessibilityInfo, AppState, BackHandler, Keyboard, Platform, type AppStateStatus } from 'react-native';
+import { AccessibilityInfo, AppState, BackHandler, Keyboard, Platform, Pressable, type AppStateStatus } from 'react-native';
 import * as api from '../src/real-ai/api';
 import * as storyApi from '../src/api/story-projects';
 import { createNativeRecorder, createRecordingId } from '../src/audio/native-recorder';
@@ -756,4 +757,42 @@ it('reads prepared speech after reopening without another paid synthesis even wh
   await render(<RealStoryWorkspace {...props} />); await ready(); await press(t.speak);
   expect(api.getPreparedRealSpeech).toHaveBeenCalledTimes(1);
   expect(api.createRealSpeech).not.toHaveBeenCalled(); expect(mockPlayback.play).toHaveBeenCalledTimes(1);
+});
+
+it('replays verified speech from bounded workspace RAM without another download or paid generation, and clears it on background', async () => {
+  const makeWave = () => { const bytes = new Uint8Array(64); bytes.set(new TextEncoder().encode('RIFF')); bytes.set(new TextEncoder().encode('WAVE'), 8); return bytes; };
+  jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant')]);
+  jest.mocked(api.createRealSpeech).mockResolvedValue({ speech_id: ids.draft, assistant_message_id: ids.assistant, language: 'en', media_type: 'audio/wav',
+    audio_sha256: '0'.repeat(64), audio_size: 64, expires_at: new Date(Date.now() + 60000).toISOString(), status: 'ready' });
+  jest.mocked(api.getRealSpeechAudio).mockImplementation(async () => makeWave());
+  await render(<RealStoryWorkspace {...props} />); await ready(); await press(t.speak); await press(t.speak);
+  expect(api.createRealSpeech).toHaveBeenCalledTimes(1); expect(api.getRealSpeechAudio).toHaveBeenCalledTimes(1);
+  expect(mockPlayback.play).toHaveBeenCalledTimes(2);
+  await emit('background'); await emit('active'); await press(t.resume); await ready(); await press(t.speak);
+  expect(api.createRealSpeech).toHaveBeenCalledTimes(1); expect(api.getRealSpeechAudio).toHaveBeenCalledTimes(2);
+});
+it('delivers the requested PDF before waiting for optional Saved PDFs metadata refresh', async () => {
+  jest.mocked(api.getRealDrafts).mockResolvedValue([realDraft()]);
+  const metadata = deferred<api.RealExport[]>();
+  jest.mocked(api.getRealExports).mockResolvedValueOnce([]).mockReturnValueOnce(metadata.promise);
+  await render(<RealStoryWorkspace {...props} initialTab="book" />); await ready('book');
+  await press(t.pdfVersions); await waitFor(() => expect(screen.getByText(t.noExports)).toBeOnTheScreen());
+  await press(t.pdfVersions); await press(t.export);
+  await waitFor(() => expect(api.getRealExports).toHaveBeenCalledTimes(2));
+  expect(mockPdfStore.share).toHaveBeenCalledTimes(1); expect(api.exportRealDraft).toHaveBeenCalledTimes(1);
+  await act(async () => metadata.resolve([]));
+  expect(api.exportRealDraft).toHaveBeenCalledTimes(1);
+});
+it('a captured Listen action cannot replay or generate speech for the previous session after a verified session change', async () => {
+  jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant')]);
+  await render(<RealStoryWorkspace {...props} />); await ready();
+  const staleListen = getComponents(Pressable).find(item => item.props.accessibilityLabel === t.speak)!.props.onPress!;
+  const nextSession = '20000000-0000-4000-8000-000000000002';
+  jest.mocked(storyApi.listStorySessions).mockResolvedValue([{ id: nextSession, project_id: ids.project, language: 'en', status: 'active', created_at: project.created_at, updated_at: project.created_at, ended_at: null }]);
+  jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant', { id: '50000000-0000-4000-8000-000000000004', session_id: nextSession, text: 'A question in the new session' })]);
+  await press(t.moreActions); await press(t.reload);
+  await screen.findByText('A question in the new session'); await ready();
+  await act(async () => staleListen({} as never));
+  expect(api.getPreparedRealSpeech).not.toHaveBeenCalled(); expect(api.createRealSpeech).not.toHaveBeenCalled();
+  expect(api.getRealSpeechAudio).not.toHaveBeenCalled();
 });

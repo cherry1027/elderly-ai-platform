@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ComponentRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentRef } from 'react';
 import { AppState, BackHandler, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 import type { AuthUser } from '../auth/client';
@@ -25,6 +25,8 @@ import { realCopy } from './copy';
 import { createRealPlayback, type RealPlayback } from './native-playback';
 import { mediaPrivacy } from './media-privacy';
 import { MemoriesContent, AutobiographyContent } from './StoryContent';
+import { ChatMessageHistory } from './ChatMessageHistory';
+import { SpeechBytesCache } from './speech-bytes-cache';
 
 interface Props {
   language: Language; user: AuthUser; project: StoryProject; config: RealAiConfig;
@@ -129,17 +131,23 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const controller = useRef<AbortController | null>(null), recorder = useRef<RecordingDriver | null>(null);
   const audio = useRef<AudioRecording | null>(null), capturing = useRef(false), playback = useRef<RealPlayback | null>(null);
   const pdfStore = useRef<PrivatePdfStore | null>(null), pending = useRef<Pending | null>(null);
+  const [speechBytes] = useState(() => new SpeechBytesCache());
+  const speakCurrent = useRef<(message: RealMessage) => void>(() => {});
+  const onSpeak = useCallback((message: RealMessage) => speakCurrent.current(message), []);
   const speech = useRef(new Map<string, SpeechMetadata>()), latest = useRef({ onBack, onSignOut, privacy, onAuthenticationFailure, onStoryDetails });
   const stopRecordingAction = useRef<() => void>(() => {});
   const voiceConsent = useRef<string | null>(null), consentIntent = useRef<{ epoch: number; scope: string } | null>(null);
   const voiceContext = useRef({ capabilities, usageBlocked, sessionId });
   const voiceScope = () => `${user.id}:${project.id}:${project.language}:${voiceContext.current.sessionId}`;
+  const placedTranscriptIds = useMemo(() => new Set(messages.map(message => message.source_transcript_id).filter(Boolean)), [messages]);
+  const unplacedTranscripts = useMemo(() => transcripts.filter(source => !placedTranscriptIds.has(source.transcript_id)), [transcripts, placedTranscriptIds]);
   const draft = drafts.find(item => item.draft_id === selected) ?? drafts[0] ?? null;
   useLayoutEffect(() => { latest.current = { onBack, onSignOut, privacy, onAuthenticationFailure, onStoryDetails }; voiceContext.current = { capabilities, usageBlocked, sessionId };
     currentSection.current = tab; chosenDraft.current = selected; currentDraft.current = draft; });
 
   const releasePdf = () => { if (pdfStore.current) latest.current.privacy.release(pdfStore.current); pdfStore.current = null; };
   const cleanupAudio = () => {
+    speechBytes.clear();
     const previous = recorder.current; recorder.current = null; audio.current = null; capturing.current = false;
     if (previous) void mediaPrivacy.retire(previous);
     if (playback.current) void mediaPrivacy.retire(playback.current); playback.current = null;
@@ -329,6 +337,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       // This does not renew any allowance or send a paid request automatically.
       if (caps.enabled) setServiceBlocked(false);
       if (session.current && session.current !== id) {
+        speechBytes.clear(); speech.current.clear();
         cancelReads(); reads.current = emptyReads(); setReadStates(reads.current); historyCache.current.clear();
         setTranscripts([]); setMessages([]); setMemories([]); setDrafts([]); setHistory(null); setExports(null); setPages(emptyPages());
       }
@@ -535,7 +544,9 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     }, { key, kind: 'conversation', inputType: 'typed' });
   };
   const speak = (message: RealMessage) => {
-    if (unresolved || recording || localRecording || ambiguousEdit || mediaPrivacy.isBlocked()) return;
+    if (unresolved || recording || localRecording || ambiguousEdit || mediaPrivacy.isBlocked() ||
+      message.role !== 'assistant' || message.project_id !== project.id || message.session_id !== sessionId ||
+      message.language !== project.language || !messages.some(saved => saved.id === message.id)) return;
     const renewing = renewSpeech.has(message.id);
     const cached = renewing ? undefined : speech.current.get(message.id), key = createRecordingId();
     void run(async (signal, check, beginOperation) => {
@@ -561,17 +572,23 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       }
       speech.current.set(message.id, metadata);
       setRenewSpeech(previous => { const next = new Set(previous); next.delete(message.id); return next; });
-      let bytes: Uint8Array;
-      try { bytes = await getRealSpeechAudio(current, metadata); }
+      let bytes: Uint8Array, fromCache = false;
+      try {
+        const saved = speechBytes.get(metadata); fromCache = saved !== null;
+        bytes = saved ?? await getRealSpeechAudio(current, metadata);
+      }
       catch (error) { check(); if (error instanceof RealAiError && error.status === 410) {
         setRenewSpeech(previous => new Set(previous).add(message.id)); setNotice(t.voiceExpired); return;
       } throw error; }
       try {
-        check(); playback.current ??= createRealPlayback();
+        check();
+        if (!fromCache) speechBytes.put(metadata, bytes);
+        playback.current ??= createRealPlayback();
         await playback.current.play(bytes, () => { if (mounted.current && active.current) setPlaying(false); }); check(); setPlaying(true);
       } finally { bytes.fill(0); }
     });
   };
+  useLayoutEffect(() => { speakCurrent.current = speak; });
   const stopVoice = () => {
     if (!playback.current) return;
     // Stop is always available, including while a separate request is pending.
@@ -610,28 +627,29 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     const captured = draft;
     void run(async (signal, check) => {
       releasePdf(); const store = latest.current.privacy.createStore(user.id); pdfStore.current = store;
+      const refreshExports = reads.current.exports.loaded;
       try {
         const bytes = await exportRealDraft(scope(signal), captured);
         let handle;
         try {
           check();
-          const refreshExports = reads.current.exports.loaded;
           updateRead('exports', { loaded: false, loading: false, error: '' });
           setExports(null); setPages(previous => ({ ...previous, exports: null }));
-          if (refreshExports) try {
-            const items = await getRealExports(scope(signal)); check();
-            setExports(items); setPages(previous => ({ ...previous, exports: items.length === 100 ? 100 : null }));
-            updateRead('exports', { loaded: true, loading: false, error: '' });
-          } catch (error) {
-            check();
-            if (readFailure(error)) throw error;
-            updateRead('exports', { loading: false, error: failureMessage(error) });
-          }
           handle = await store.save(bytes); check();
         } finally { bytes.fill(0); }
         latest.current.privacy.rememberReturn(user.id, project.id, captured.draft_id);
         await store.share(handle); check();
         await store.discard(handle); check();
+        // Deliver the requested PDF first. A free metadata refresh must not delay download/share.
+        if (refreshExports) try {
+          const items = await getRealExports(scope(signal)); check();
+          setExports(items); setPages(previous => ({ ...previous, exports: items.length === 100 ? 100 : null }));
+          updateRead('exports', { loaded: true, loading: false, error: '' });
+        } catch (error) {
+          check();
+          if (readFailure(error)) throw error;
+          updateRead('exports', { loading: false, error: failureMessage(error) });
+        }
       } finally { latest.current.privacy.release(store); if (pdfStore.current === store) pdfStore.current = null; }
     });
   };
@@ -768,14 +786,9 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         {readFeedback(['messages', 'transcripts'], t.loadingChat)}
         <View style={styles.thread} testID="real-ai-chat-thread">
           {chatReady && !messages.length && !transcripts.length && note(t.noMessages)}
-          {messages.map(message => <View key={message.id} style={[styles.bubble, message.role === 'user' ? styles.userBubble : styles.assistantBubble]}>
-            <Text allowFontScaling accessibilityLanguage={locale} style={styles.speaker}>{message.role === 'user' ? t.you : t.assistant}</Text>
-            {message.role === 'user' && message.source_transcript_id && note(t.voiceMessage)}
-            <Text allowFontScaling selectable accessibilityLanguage={accessibilityLanguages[project.language]} style={styles.body}>{message.text}</Text>
-            {message.role === 'assistant' && <ActionButton {...actionDefaults} label={renewSpeech.has(message.id) ? t.renewSpeech : t.speak}
-              onPress={() => speak(message)} disabled={blocked || (renewSpeech.has(message.id) && (usageBlocked || serviceBlocked || !capabilities?.speech))} />}
-          </View>)}
-          {transcripts.filter(source => !messages.some(message => message.source_transcript_id === source.transcript_id)).map(source => <View key={source.transcript_id} style={[styles.bubble, styles.userBubble]}>
+          <ChatMessageHistory messages={messages} language={language} storyLanguage={project.language} blocked={blocked}
+            renewSpeech={renewSpeech} speechBlocked={usageBlocked || serviceBlocked || !capabilities?.speech} onSpeak={onSpeak} />
+          {unplacedTranscripts.map(source => <View key={source.transcript_id} style={[styles.bubble, styles.userBubble]}>
             <Text allowFontScaling style={styles.speaker}>{t.you}</Text>{note(t.voiceMessage)}
             <Text allowFontScaling selectable accessibilityLanguage={accessibilityLanguages[project.language]} style={styles.body}>{source.text}</Text>
             {canReply(source) && <ActionButton {...actionDefaults} label={t.process} onPress={() => ask(source)}

@@ -71,6 +71,7 @@ mode `0600`. Linked/shared files are refused.
 | `history.json` | Immutable baseline hashes from the approved migration snapshot |
 | `approval.json` | A separately authorized, unexpired spending approval; copying one does not renew it |
 | `budget-policy.json` | Reviewed cumulative ceiling, prior-exposure baseline, unresolved remote hold and per-user limits |
+| `pilot-cohort.json` | Private operator-reviewed list of at most five distinct accounts allowed to start paid AI |
 | `speech.sqlite3` | Optional encrypted owner-scoped prepared-speech cache |
 | `backups/` | Managed financial-state snapshots, private and bounded |
 
@@ -90,10 +91,11 @@ missing baseline never receives an automatically fresh budget.
 
 ## Migration and cutover procedure — future approved operation
 
-1. Record the exact reviewed backend revision and mobile revision. Current
-   changes are uncommitted; the Blueprint cannot deploy them from Git until a
-   separate source-publication decision is made. Do not substitute `main` or an
-   old published revision.
+1. Record the exact reviewed backend revision and mobile revision, including
+   any reviewed local patch hash. The Blueprint deploys committed Git source,
+   not local working-tree edits. A local patch requires a separate reviewed
+   source-publication decision before deployment from Git. Do not substitute
+   `main`, a moving branch or an old published revision.
 2. Stop/disable paid calls on **both** the Mac and Tarun's WSL before exporting.
    Wait for in-flight requests and preserve unknown reservations conservatively.
    Obtain Tarun's returned ledger/usage evidence through the approved encrypted
@@ -134,7 +136,12 @@ missing baseline never receives an automatically fresh budget.
    to remain intact and allows additions. A missing/corrupt/replaced history
    fails startup rather than creating a new allowance.
 8. Only after explicit live-window authorization, configure both enable switches,
-   approved models, policy and server secrets. The current allowance has expired;
+   approved models, policy, private `AI_PILOT_COHORT_PATH` and server secrets.
+   The cohort contains 1–5 unique verified account UUIDs and never enters the
+   mobile app. Staging refuses paid activation without a valid private list;
+   outsiders retain owned saved-data/PDF access but cannot start paid AI.
+   See [five-user operations](five-user-pilot-operations.md).
+   The current allowance has expired;
    no new testing window is authorized by this document. The wrapper requires a
    cumulative budget policy and durable encrypted speech storage if speech is
    enabled. Feature-level disables and the normal approval checks still apply.

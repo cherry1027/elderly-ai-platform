@@ -12,7 +12,7 @@ from pydantic import SecretStr
 from app.core.config import Settings
 from app.core.errors import APIError
 from app.services.auth import AuthenticatedUser
-from app.services.privacy_inventory import RELATIONS, inventory_visible_data
+from app.services.privacy_inventory import CONTRACT_RELATIONS, RELATIONS, REAL_V2_RELATIONS, inventory_visible_data
 from scripts import privacy_inventory as cli
 
 USER = AuthenticatedUser(UUID("11111111-1111-4111-8111-111111111111"), SecretStr("synthetic-user-token"))
@@ -20,10 +20,10 @@ SETTINGS = Settings(_env_file=None, supabase_url="https://example.supabase.co",
                     supabase_publishable_key="synthetic-publishable")
 
 
-def inventory(handler, settings=SETTINGS):
+def inventory(handler, settings=SETTINGS, *, contract="v1"):
     async def scenario():
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=True) as client:
-            return await inventory_visible_data(settings, client, USER)
+            return await inventory_visible_data(settings, client, USER, contract=contract)
     return asyncio.run(scenario())
 
 
@@ -121,3 +121,61 @@ def test_cli_will_not_fall_back_to_echoed_token_entry(monkeypatch, capsys):
     assert cli.main(["--run"]) == 2
     output = capsys.readouterr()
     assert output.out == "" and "no deletion" in output.err
+
+
+@pytest.mark.parametrize("contract", ["real-v2", "all"])
+def test_real_inventory_counts_every_owned_real_relation_without_operation_access(contract):
+    seen = []
+
+    def upstream(request):
+        relation = request.url.path.split("/")[-1]
+        assert relation != "real_ai_operations"
+        column, owner = next((col, field) for name, col, field in CONTRACT_RELATIONS[contract] if name == relation)
+        assert request.method == "HEAD" and request.url.params["limit"] == "0"
+        assert request.url.params["select"] == column
+        if relation.startswith("real_"):
+            assert owner == "owner_id" and request.url.params[owner] == "eq." + str(USER.id)
+        assert request.headers["authorization"] == "Bearer synthetic-user-token"
+        seen.append(relation)
+        # No response body is necessary or consulted by the inventory.
+        return httpx.Response(200, headers={"Content-Range": "*/3"})
+
+    result = inventory(upstream, contract=contract)
+    assert seen == [row[0] for row in CONTRACT_RELATIONS[contract]]
+    assert len(seen) == len(set(seen))
+    assert result["contract"] == contract and result["counts"] == dict.fromkeys(seen, 3)
+    assert any("real_ai_operations" in item for item in result["excluded"])
+    assert result["complete_erasure_inventory"] is False and result["deleted"] is False
+    rendered = json.dumps(result)
+    for marker in (str(USER.id), "synthetic-user-token", "synthetic-publishable"):
+        assert marker not in rendered
+    expected = {"real_text_inputs", "real_transcripts", "real_conversation_messages", "real_memories",
+        "real_memory_clarifications", "real_memory_revisions", "real_story_drafts", "real_story_edits",
+        "real_speech", "real_story_exports"}
+    assert {row[0] for row in REAL_V2_RELATIONS if row[0].startswith("real_")} == expected
+
+
+def test_inventory_unknown_contract_is_closed_without_network():
+    with pytest.raises(APIError):
+        inventory(lambda _request: pytest.fail("Unknown contract cannot connect"), contract="unreviewed")
+
+
+@pytest.mark.parametrize("contract", ["real-v2", "all"])
+def test_missing_real_relation_or_bad_count_does_not_report_false_zero(contract):
+    def missing(request):
+        if request.url.path.endswith("/real_text_inputs"):
+            return httpx.Response(403, text="private-provider-configuration")
+        return httpx.Response(200, headers={"Content-Range": "*/0"})
+
+    with pytest.raises(APIError) as failure:
+        inventory(missing, contract=contract)
+    assert failure.value.code == "PRIVACY_INVENTORY_UNAVAILABLE"
+    assert "private-provider" not in failure.value.message
+
+
+@pytest.mark.parametrize("contract", ["v1", "real-v2", "all"])
+def test_cli_explicit_contract_remains_offline_without_run(monkeypatch, capsys, contract):
+    monkeypatch.setattr(cli, "Settings", lambda: pytest.fail("No credentials should be loaded"))
+    assert cli.main(["--contract", contract]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["network_calls"] == 0 and result["contract"] == contract

@@ -22,6 +22,8 @@ ERROR_RECOVERY = {
     "AI_SPENDING_NOT_APPROVED": ("contact-operator", "The AI testing window is closed. Your saved work is still available."),
     "AI_USAGE_UNAVAILABLE": ("contact-operator", "AI spending controls need attention. Your saved work is still available."),
     "AI_USER_LIMIT_UNAVAILABLE": ("sign-in", "Please sign in again before using AI. Your saved work is still available."),
+    "AI_PILOT_ACCESS_DENIED": ("contact-operator", "AI testing is not enabled for this account. Your saved work is still available."),
+    "AI_PILOT_CONFIG_UNAVAILABLE": ("contact-operator", "AI pilot access needs operator review. Your saved work is still available."),
     "LIVE_AI_DISABLED": ("contact-operator", "This AI action is paused. Your saved work is still available."),
     "AI_PROVIDER_QUOTA_EXHAUSTED": ("contact-operator", "The AI provider's billing allowance needs attention. Your saved work is still available."),
     "AI_PROVIDER_AUTHENTICATION_FAILED": ("contact-operator", "The AI provider configuration needs attention. Your saved work is still available."),

@@ -25,7 +25,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from app.services.ai_budget import baseline_fingerprint
+from app.services.ai_budget import CEILING_INCREASE_COLUMNS, baseline_fingerprint, ceiling_increase_fingerprint
 from app.services.ai_controls import _private_parent, _private_file, SUPPORTED_AI_OPERATIONS
 
 
@@ -72,7 +72,8 @@ def read_ledger(path):
             subjects = connection.execute('SELECT reservation_id,subject_digest,policy_id FROM reservation_subjects LIMIT ?', (MAX_ROWS+1,)).fetchall() if 'reservation_subjects' in tables else []
             policies = connection.execute('SELECT policy_id,digest,subject_namespace_digest,accounting_core_digest FROM budget_policies LIMIT ?', (MAX_ROWS+1,)).fetchall() if 'budget_policies' in tables else []
             reviews = connection.execute('SELECT reservation_id,accounted_microusd,evidence_digest,reviewed_by,reviewed_at,reason FROM usage_overrun_reviews LIMIT ?', (MAX_ROWS+1,)).fetchall() if 'usage_overrun_reviews' in tables else []
-            if any(len(collection)>MAX_ROWS for collection in (approvals,rows,settlements,subjects,policies,reviews)):
+            increases = connection.execute('SELECT '+','.join(CEILING_INCREASE_COLUMNS)+' FROM budget_ceiling_increases ORDER BY from_global_budget_microusd LIMIT 1001').fetchall() if 'budget_ceiling_increases' in tables else []
+            if len(increases)>1000 or any(len(collection)>MAX_ROWS for collection in (approvals,rows,settlements,subjects,policies,reviews)):
                 raise ValueError('Too many ledger rows')
         finally:
             connection.close()
@@ -111,9 +112,29 @@ def read_ledger(path):
             or type(stamp) not in (int,float) or not math.isfinite(stamp)
             or reason != 'transcription_duration_rounding_v1'):
             raise ValueError('Malformed overrun review')
+    policy_rows = {row[0]: row for row in policies}
+    previous_cap, previous_stamp = None, None
+    for row in increases:
+        (identity, old_id, old_digest, new_id, new_digest, old_core, new_core,
+         old_cap, new_cap, delta, reviewer, stamp, fingerprint) = row
+        old, new = policy_rows.get(old_id), policy_rows.get(new_id)
+        if (not all(isinstance(v,str) and _ID.fullmatch(v) for v in (identity,old_id,new_id))
+            or old_id==new_id or not all(isinstance(v,str) and _HEX.fullmatch(v)
+                for v in (old_digest,new_digest,old_core,new_core,fingerprint))
+            or any(type(v) is not int or not 1<=v<=2**53-1 for v in (old_cap,new_cap,delta))
+            or new_cap-old_cap!=delta or (previous_cap is not None and old_cap!=previous_cap)
+            or not isinstance(reviewer,str) or not 1<=len(reviewer)<=120
+            or reviewer!=reviewer.strip() or any(ord(c)<32 for c in reviewer)
+            or type(stamp) not in (int,float) or not math.isfinite(stamp) or stamp<=0
+            or (previous_stamp is not None and stamp<previous_stamp)
+            or ceiling_increase_fingerprint(row[:-1])!=fingerprint
+            or old is None or new is None or old[1]!=old_digest or new[1]!=new_digest
+            or old[2]!=new[2] or old[3]!=old_core or new[3]!=new_core):
+            raise ValueError('Malformed ceiling increase')
+        previous_cap, previous_stamp = new_cap, stamp
     return {'approvals':approvals,'reservations':rows,'usage_settlements':settlements,
             'usage_overrun_reviews':reviews,
-            'reservation_subjects':subjects,'budget_policies':policies}
+            'reservation_subjects':subjects,'budget_policies':policies,'budget_ceiling_increases':increases}
 
 
 def _compare_rows(local, remote, key=0):
@@ -133,6 +154,7 @@ def report(local_path, remote_path=None, *, remote_hold_microusd=750_000):
         'local_reservations':len(rows),'local_approvals':len(local['approvals']),
         'local_settlements':len(local['usage_settlements']),
         'local_overrun_reviews':len(local['usage_overrun_reviews']),
+        'local_ceiling_increases':len(local['budget_ceiling_increases']),
         'local_gross_reserved_microusd':sum(row[5] for row in rows),
         'local_baseline_sha256':baseline_fingerprint(rows),
         'local_operation_counts':dict(sorted(Counter(row[2] for row in rows).items())),
@@ -147,7 +169,7 @@ def report(local_path, remote_path=None, *, remote_hold_microusd=750_000):
     # Approval counters legitimately diverge after a shared snapshot; immutable
     # approval identity/digest must still match. Reservations never may differ.
     conflicts = 0
-    for table in ('reservations','usage_settlements','reservation_subjects','budget_policies','usage_overrun_reviews'):
+    for table in ('reservations','usage_settlements','reservation_subjects','budget_policies','usage_overrun_reviews','budget_ceiling_increases'):
         shared, unique, bad = _compare_rows(local[table],remote[table])
         result[table+'_shared']=shared
         result[table+'_remote_only']=unique

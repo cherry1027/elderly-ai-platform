@@ -30,6 +30,7 @@ from app.services.auth import AuthenticatedUser
 from app.services.real_ai_resources import RealAIGateway, validated, read_together
 from app.services.openai_client import DispatchTrace, ai_dispatch_trace
 from app.services.ai_controls import ai_budget_subject
+from app.services.pilot_cohort import require_pilot_member
 
 router = APIRouter(prefix="/api/v2", tags=["Real AI (explicit opt-in)"], responses={
     code: {"content":{"application/json":{"schema":{"$ref":"#/components/schemas/ErrorResponse"}}}}
@@ -89,6 +90,7 @@ def require_provider(request, *, kind, typed=False):
 
 async def execute(request, gateway, *, project_id, session_id, kind, key, fingerprint, produce, model,
                   typed=False):
+    require_pilot_member(request.app.state.settings, gateway.user.id)
     # Bind only the validated Supabase identity, never a caller-supplied user_id.
     subject = ai_budget_subject.set(str(gateway.user.id))
     try:
@@ -122,9 +124,11 @@ async def _execute(request, gateway, *, project_id, session_id, kind, key, finge
             governor = getattr(request.app.state.real_ai, "governor", None)
             if governor is not None:
                 # Completed idempotent results above remain free to recover.
-                # A new turn/writer needs two stages; avoid a known call-count
-                # failure after paying for only the first stage.
-                governor.check_budget(required_calls=2 if kind in {"conversation", "generation"} else 1)
+                # Match the selected provider path. Story writing still needs
+                # its separate verifier; combined turns need one bounded call.
+                calls = (getattr(provider, "conversation_calls", 2) if kind == "conversation"
+                         else 2 if kind == "generation" else 1)
+                governor.check_budget(required_calls=calls)
             async with asyncio.timeout(120):
                 payload = await produce(provider)
                 row = await gateway.complete(claim, payload, {
@@ -184,6 +188,7 @@ async def operation(operation_id: UUID, gateway: Gateway):
 
 @router.post("/story-sessions/{session_id}/transcribe", response_model=RealTranscript, openapi_extra=UPLOAD_SCHEMA)
 async def transcribe(session_id: UUID, request: Request, gateway: Gateway, idempotency_key: Key):
+    require_pilot_member(request.app.state.settings, gateway.user.id)
     session = await gateway.get_owned_session(session_id, active=True)
     require_provider(request, kind="transcription")  # Fail before capturing/uploading any audio.
     slots = request.app.state.audio_slots
@@ -212,6 +217,7 @@ async def transcripts(session_id: UUID, gateway: Gateway, limit: Limit = 50, off
 
 @router.post("/story-sessions/{session_id}/messages", response_model=RealTurn)
 async def send_message(session_id: UUID, payload: RealMessageCreate, request: Request, gateway: Gateway, idempotency_key: Key):
+    require_pilot_member(request.app.state.settings, gateway.user.id)
     session = await gateway.get_owned_session(session_id, active=True)
     language_matches(payload.language, session)
     check_operation_policy(request, kind="conversation")
@@ -252,6 +258,7 @@ async def messages(session_id: UUID, gateway: Gateway, limit: Limit = 50, offset
 async def send_text_message(session_id: UUID, payload: RealTextMessageCreate, request: Request,
                             gateway: Gateway, idempotency_key: Key):
     """One explicit typed turn; original wording persists with the completed reply."""
+    require_pilot_member(request.app.state.settings, gateway.user.id)
     session = await gateway.get_owned_session(session_id, active=True)
     language_matches(payload.language, session)
     # An unapplied migration must fail before a provider claim or reservation.
@@ -315,6 +322,7 @@ async def review_memory(memory_id: UUID, payload: MemoryPatch, gateway: Gateway)
 
 @router.post("/story-projects/{project_id}/generate", response_model=RealDraft, status_code=201)
 async def generate(project_id: UUID, payload: StoryGenerationRequest, request: Request, gateway: Gateway, idempotency_key: Key):
+    require_pilot_member(request.app.state.settings, gateway.user.id)
     project = await gateway.get_project(project_id)
     language_matches(payload.language, project)
     check_operation_policy(request, kind="generation")
@@ -390,6 +398,7 @@ async def prepared_speech(message_id: UUID, request: Request, gateway: Gateway):
 
 @router.post("/conversation-messages/{message_id}/speech", response_model=RealSpeech)
 async def speak(message_id: UUID, payload: RealSpeechRequest, request: Request, gateway: Gateway, idempotency_key: Key):
+    require_pilot_member(request.app.state.settings, gateway.user.id)
     message = validated(RealMessage, await gateway.one("real_conversation_messages", "id", message_id))
     if message["role"] != "assistant":
         raise APIError(422, "ASSISTANT_MESSAGE_REQUIRED", "Choose an interviewer reply.")

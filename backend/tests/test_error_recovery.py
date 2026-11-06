@@ -27,6 +27,7 @@ def response_for(code, status=429, *, operation_id=None):
     "AI_USAGE_LIMIT", "AI_GLOBAL_BUDGET_EXHAUSTED", "AI_USER_BUDGET_EXHAUSTED",
     "AI_SPENDING_NOT_APPROVED", "AI_USAGE_UNAVAILABLE", "LIVE_AI_DISABLED",
     "AI_PROVIDER_QUOTA_EXHAUSTED", "AI_PROVIDER_AUTHENTICATION_FAILED",
+    "AI_PILOT_ACCESS_DENIED", "AI_PILOT_CONFIG_UNAVAILABLE",
 ])
 def test_closed_allowances_have_no_misleading_retry_timer(code):
     response = response_for(code)

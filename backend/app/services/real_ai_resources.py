@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 import asyncio
+from copy import deepcopy
 import json
 from uuid import UUID
 
@@ -44,6 +45,40 @@ class RealAIGateway(AudioGateway):
     def __init__(self, settings, client, user):
         super().__init__(settings, client, user)
         self.settings = settings
+        # The dependency creates one gateway per HTTP request. Cache only these
+        # validated ownership rows, never Auth, narratives or mutable memories.
+        self._owned_read_scope = (user.id, self.base_url, self.headers["Authorization"])
+        self._owned_read_cache = {}
+        self._owned_read_locks = {}
+
+    async def _owned_read(self, kind, identifier, load):
+        scope = (self.user.id, self.base_url, "Bearer " + self.user.access_token.get_secret_value())
+        if scope != self._owned_read_scope or self.headers.get("Authorization") != scope[2]:
+            # A gateway cannot be carried across sign-ins or have its validated
+            # owner/token replaced. A new HTTP request needs a new gateway.
+            raise unavailable()
+        key = (self.user.id, kind, identifier)
+        if key not in self._owned_read_cache:
+            lock = self._owned_read_locks.setdefault(key, asyncio.Lock())
+            async with lock:
+                if key not in self._owned_read_cache:
+                    # Execute in the caller's task: failure/cancellation leaves
+                    # no result cached and no detached upstream read running.
+                    self._owned_read_cache[key] = deepcopy(await load())
+        return deepcopy(self._owned_read_cache[key])
+
+    async def get_project(self, project_id: UUID) -> dict:
+        return await self._owned_read("project", project_id,
+            lambda: super(RealAIGateway, self).get_project(project_id))
+
+    async def get_owned_session(self, session_id: UUID, *, active: bool = False) -> dict:
+        session = await self._owned_read("session", session_id,
+            lambda: super(RealAIGateway, self).get_owned_session(session_id, active=False))
+        # Checking active state is a per-caller requirement, never a cache key
+        # that lets a previously read completed session authorize a paid turn.
+        if active and session["status"] != "active":
+            raise APIError(409, "SESSION_COMPLETED", "This conversation session is completed.")
+        return session
 
     async def rpc(self, name, payload, *, service=False):
         headers = self.headers

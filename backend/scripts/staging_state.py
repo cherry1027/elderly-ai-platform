@@ -24,6 +24,7 @@ MAX_CONTROL_BYTES = 32 * 1024 * 1024
 _NAME = re.compile(r"^[a-z_][a-z0-9_]*$")
 _IMMUTABLE_TABLES = (
     "reservations", "budget_policies", "reservation_subjects", "usage_settlements", "usage_overrun_reviews",
+    "budget_ceiling_increases",
 )
 
 

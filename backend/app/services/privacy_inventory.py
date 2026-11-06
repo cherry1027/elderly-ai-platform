@@ -32,14 +32,35 @@ RELATIONS = (
     ("story_exports", "id", None),
 )
 
+# Real-v2 shares account/project/session metadata with v1, but stores its own
+# immutable originals and reviewed results. Internal operation/claim records
+# intentionally have no authenticated SELECT grant and must not be probed here.
+REAL_V2_RELATIONS = RELATIONS[:5] + (
+    ("real_text_inputs", "input_id", "owner_id"),
+    ("real_transcripts", "transcript_id", "owner_id"),
+    ("real_conversation_messages", "id", "owner_id"),
+    ("real_memories", "id", "owner_id"),
+    ("real_memory_clarifications", "id", "owner_id"),
+    ("real_memory_revisions", "id", "owner_id"),
+    ("real_story_drafts", "draft_id", "owner_id"),
+    ("real_story_edits", "id", "owner_id"),
+    ("real_speech", "speech_id", "owner_id"),
+    ("real_story_exports", "export_id", "owner_id"),
+)
+CONTRACT_RELATIONS = {
+    "v1": RELATIONS,
+    "real-v2": REAL_V2_RELATIONS,
+    "all": RELATIONS + REAL_V2_RELATIONS[5:],
+}
+
 
 def unavailable() -> APIError:
     return APIError(503, "PRIVACY_INVENTORY_UNAVAILABLE", "The privacy inventory could not be verified.")
 
 
 async def inventory_visible_data(settings: Settings, client: httpx.AsyncClient,
-                                 user: AuthenticatedUser) -> dict:
-    if not settings.supabase_configured:
+                                 user: AuthenticatedUser, *, contract: str = "v1") -> dict:
+    if contract not in CONTRACT_RELATIONS or not settings.supabase_configured:
         raise unavailable()
     origin = str(settings.supabase_url).rstrip("/")
     headers = {
@@ -48,7 +69,7 @@ async def inventory_visible_data(settings: Settings, client: httpx.AsyncClient,
         "Prefer": "count=exact",
     }
     counts = {}
-    for relation, column, owner_column in RELATIONS:
+    for relation, column, owner_column in CONTRACT_RELATIONS[contract]:
         params = {"select": column, "limit": "0"}
         if owner_column:
             params[owner_column] = "eq." + str(user.id)
@@ -65,11 +86,15 @@ async def inventory_visible_data(settings: Settings, client: httpx.AsyncClient,
         if not match or int(match[1]) > 9_223_372_036_854_775_807:
             raise unavailable()
         counts[relation] = int(match[1])
+    excluded = ["RLS-hidden and inaccessible rows", "internal ledgers", "storage objects",
+                "provider copies", "backups", "logs", "downloaded device files"]
+    if contract != "v1":
+        excluded.append("real_ai_operations: privileged operation and claim records")
     return {
         "mode": "read_only_visible_counts", "deleted": False,
+        "contract": contract,
         "counts": counts, "counts_are_additive": False,
         "complete_erasure_inventory": False,
-        "excluded": ["RLS-hidden and inaccessible rows", "internal ledgers", "storage objects",
-                     "provider copies", "backups", "logs", "downloaded device files"],
+        "excluded": excluded,
         "deletion_status": "Requires verified identity, retention/legal review and separate explicit approval.",
     }

@@ -95,7 +95,8 @@ class RealAIRuntime:
                     model=settings.real_ai_speech_model, voice=settings.real_ai_voice,
                     timeout_seconds=settings.openai_timeout_seconds, usage_observer=self.usage_observer)
             self.provider = RealAIProvider(client, transcription_model=settings.real_ai_transcription_model,
-                                           verifier_client=verifier, speech=speech)
+                                           verifier_client=verifier, speech=speech,
+                                           combined_turn=settings.real_ai_combined_turn_enabled)
 
     @property
     def needs_http_pool(self):
@@ -136,13 +137,14 @@ class RealAIRuntime:
                     "conversation": enabled and self.settings.real_ai_conversation_enabled,
                     "writing": all_features and self.settings.real_ai_writing_enabled,
                     "speech": all_features and self.settings.real_ai_speech_enabled}
-        if features["conversation"] or features["writing"]:
-            try:
-                self.governor.check_budget(required_calls=2)
-            except APIError as error:
-                features["conversation"] = features["writing"] = False
-                if not any(features.values()):
-                    reason = error.code
+        for feature, calls in (("conversation", getattr(self.provider, "conversation_calls", 2)), ("writing", 2)):
+            if features[feature]:
+                try:
+                    self.governor.check_budget(required_calls=calls)
+                except APIError as error:
+                    features[feature] = False
+                    if not any(features.values()):
+                        reason = error.code
         if enabled and not any(features.values()) and reason == "READY":
             reason = "LIVE_AI_DISABLED"
         return {"contract": "real-v2", "mode": "real", "enabled": any(features.values()),

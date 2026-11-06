@@ -66,6 +66,8 @@ services:
         value: /var/data/memy/approval.json
       - key: AI_BUDGET_POLICY_PATH
         value: /var/data/memy/budget-policy.json
+      - key: AI_PILOT_COHORT_PATH
+        value: /var/data/memy/pilot-cohort.json
       - key: AI_USAGE_LEDGER_PATH
         value: /var/data/memy/ledger.sqlite3
       - key: REAL_AI_USAGE_LOG_PATH

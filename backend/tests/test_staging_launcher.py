@@ -128,6 +128,36 @@ def test_wrong_project_cannot_start_staging(staging, monkeypatch):
         staging_configuration()
 
 
+def test_paid_staging_requires_reviewed_private_cohort_without_creating_history(staging, monkeypatch):
+    from uuid import uuid4
+
+    historical_state(staging)
+    monkeypatch.setenv("STAGING_BOOTSTRAP_AI_OFF", "false")
+    monkeypatch.setenv("STAGING_ENABLE_REAL_AI", "true")
+    monkeypatch.setenv("REAL_AI_ENABLED", "true")
+    with pytest.raises(StateError, match="PILOT_COHORT_REQUIRED"):
+        staging_configuration()
+    cohort = staging / "cohort.json"
+    write_new(cohort, b'{"version":1,"approved_by":"offline-review","user_ids":[]}')
+    monkeypatch.setenv("AI_PILOT_COHORT_PATH", str(cohort))
+    with pytest.raises(StateError, match="PILOT_COHORT_UNAVAILABLE"):
+        staging_configuration()
+    cohort.write_text(json.dumps({"version": 1, "approved_by": "offline-review", "user_ids": [str(uuid4())]}))
+    approval, policy = staging / "approval.json", staging / "policy.json"
+    write_new(approval, b"{}")
+    write_new(policy, b"{}")
+    monkeypatch.setenv("LIVE_AI_APPROVAL_PATH", str(approval))
+    monkeypatch.setenv("AI_BUDGET_POLICY_PATH", str(policy))
+    monkeypatch.setenv("REAL_AI_SPEECH_ENABLED", "false")
+    settings, _ = staging_configuration()
+    assert settings.real_ai_enabled is True and settings.ai_pilot_cohort_path == cohort
+    con = sqlite3.connect(staging / "ledger.sqlite3")
+    try:
+        assert con.execute("SELECT count(*) FROM reservations").fetchone() == (1,)
+    finally:
+        con.close()
+
+
 @pytest.mark.parametrize("key,value", [
     ("RENDER", "false"), ("RENDER_EXTERNAL_HOSTNAME", "wrong.example.com"),
     ("CORS_ORIGINS", '["http://localhost:5173"]'), ("CORS_ORIGINS", '["*"]'),

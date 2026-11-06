@@ -51,9 +51,15 @@ class Settings(BaseSettings):
     ai_usage_ledger_path: Path = BACKEND_DIR / ".private" / "ai-usage.sqlite3"
     # Optional audited cumulative accounting policy. No policy grants spending.
     ai_budget_policy_path: Path | None = None
+    # Server-only closed-cohort admission. Optional for existing local setups;
+    # staging requires a reviewed private list before enabling paid AI.
+    ai_pilot_cohort_path: Path | None = None
     openai_timeout_seconds: float = Field(default=30, gt=0, le=60)
     # v2 is a separate, explicit real-provider contract. Defaults make no paid calls.
     real_ai_enabled: bool = False
+    # Opt-in latency path: extract source-grounded candidates and draft the
+    # interviewer response in one bounded, validated provider request.
+    real_ai_combined_turn_enabled: bool = False
     # A reversible server policy: only explicitly typed conversation may spend.
     # The normal live gate, private approval and cumulative ledger still apply.
     real_ai_text_only: bool = False

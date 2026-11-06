@@ -85,6 +85,17 @@ rather than consuming the last extraction slot before its reply can run.
 This is a single-host governor using one persistent ledger, not an independent
 budget per application worker or tester computer.
 
+## Closed pilot admission
+
+For a remote five-user pilot, per-user spending limits also need an explicit
+closed-cohort admission list. `AI_PILOT_COHORT_PATH` contains only 1–5 unique
+canonical account UUIDs in a private reviewed server file. Staging requires it
+before enabling live AI. It grants no funds and does not change Auth/RLS.
+Saved-data/PDF/free audio reads remain available to their owner even outside the
+list. See [pilot operations](five-user-pilot-operations.md) and
+[recovery contract](pilot-api-recovery-contract.md). No real list is created by
+these source changes.
+
 ## Private policy format
 
 The JSON object has exactly these fields (integers are USD millionths):

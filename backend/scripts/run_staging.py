@@ -111,6 +111,15 @@ def staging_configuration():
     if requested and not real_enabled:
         raise StateError("EXPLICIT_AI_ENABLE_REQUIRED")
     if real_enabled:
+        from app.services.pilot_cohort import load_cohort
+
+        cohort = settings.ai_pilot_cohort_path
+        if cohort is None:
+            raise StateError("PILOT_COHORT_REQUIRED")
+        try:
+            load_cohort(persistent_path(cohort, state))
+        except Exception:
+            raise StateError("PILOT_COHORT_UNAVAILABLE") from None
         persistent_path(settings.live_ai_approval_path, state)
         private_file(settings.live_ai_approval_path)
         # A copied/renewed approval alone is insufficient for the cumulative

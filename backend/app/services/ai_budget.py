@@ -5,7 +5,7 @@ legacy baseline and outstanding remote exposure before cumulative accounting is
 enabled. Public-rate estimates remain estimates, not provider invoices.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, ROUND_CEILING
 import hashlib
 import hmac
@@ -128,6 +128,75 @@ def load_policy(path):
             os.close(descriptor)
 
 
+CEILING_INCREASE_COLUMNS = (
+    "transition_id", "from_policy_id", "from_policy_digest", "to_policy_id", "to_policy_digest",
+    "from_core_digest", "to_core_digest", "from_global_budget_microusd",
+    "to_global_budget_microusd", "increase_microusd", "approved_by", "approved_at", "record_sha256",
+)
+
+
+def ceiling_increase_fingerprint(values):
+    return hashlib.sha256(json.dumps(list(values), ensure_ascii=True, separators=(",", ":"),
+                                     allow_nan=False).encode()).hexdigest()
+
+
+def ceiling_increase_schema(connection):
+    connection.execute("""CREATE TABLE IF NOT EXISTS budget_ceiling_increases (
+        transition_id TEXT PRIMARY KEY, from_policy_id TEXT NOT NULL, from_policy_digest TEXT NOT NULL,
+        to_policy_id TEXT NOT NULL UNIQUE, to_policy_digest TEXT NOT NULL,
+        from_core_digest TEXT NOT NULL UNIQUE, to_core_digest TEXT NOT NULL UNIQUE,
+        from_global_budget_microusd INTEGER NOT NULL, to_global_budget_microusd INTEGER NOT NULL,
+        increase_microusd INTEGER NOT NULL, approved_by TEXT NOT NULL, approved_at REAL NOT NULL,
+        record_sha256 TEXT NOT NULL
+    )""")
+    for operation in ("UPDATE", "DELETE"):
+        connection.execute(f"""CREATE TRIGGER IF NOT EXISTS budget_ceiling_no_{operation.lower()}
+            BEFORE {operation} ON budget_ceiling_increases BEGIN
+            SELECT RAISE(ABORT, 'Budget ceiling audit is append-only'); END""")
+
+
+def validate_ceiling_chain(connection, policy):
+    """Only explicit, contiguous administrator-recorded increases can vary a cap.
+
+    Recompute every endpoint using this policy's original baseline, namespace
+    and remote hold. An audit record cannot authorize a rebase or a refund.
+    The selected policy still uses its OWN ceiling, including an old policy.
+    """
+    records = connection.execute("SELECT " + ",".join(CEILING_INCREASE_COLUMNS)
+        + " FROM budget_ceiling_increases ORDER BY from_global_budget_microusd LIMIT 1001").fetchall()
+    if len(records) > 1000:
+        raise unavailable()
+    existing = {row[0]: row for row in connection.execute("SELECT * FROM budget_policies")}
+    allowed = {policy.accounting_core_digest} if not records else set()
+    previous_cap, previous_time = None, None
+    for row in records:
+        (identity, old_id, old_digest, new_id, new_digest, old_core, new_core,
+         old_cap, new_cap, increase, reviewer, stamp, fingerprint) = row
+        if (not all(isinstance(v, str) and _ID.fullmatch(v) for v in (identity, old_id, new_id))
+            or old_id == new_id
+            or not all(isinstance(v, str) and _HEX.fullmatch(v)
+                       for v in (old_digest, new_digest, old_core, new_core, fingerprint))
+            or any(type(v) is not int or not 1 <= v <= MAX_INTEGER for v in (old_cap, new_cap, increase))
+            or new_cap - old_cap != increase
+            or not isinstance(reviewer, str) or not 1 <= len(reviewer) <= 120
+            or reviewer != reviewer.strip() or any(ord(c) < 32 for c in reviewer)
+            or type(stamp) not in (int, float) or not math.isfinite(stamp) or stamp <= 0
+            or (previous_cap is not None and old_cap != previous_cap)
+            or (previous_time is not None and stamp < previous_time)
+            or ceiling_increase_fingerprint(row[:-1]) != fingerprint
+            or replace(policy, global_budget_microusd=old_cap).accounting_core_digest != old_core
+            or replace(policy, global_budget_microusd=new_cap).accounting_core_digest != new_core
+            or existing.get(old_id) != (old_id, old_digest, policy.namespace_digest, old_core)
+            or existing.get(new_id) != (new_id, new_digest, policy.namespace_digest, new_core)):
+            raise unavailable()
+        allowed.update((old_core, new_core))
+        previous_cap, previous_time = new_cap, stamp
+    if policy.accounting_core_digest not in allowed or any(row[3] not in allowed for row in existing.values()):
+        raise unavailable()
+    return {"maximum_ceiling_microusd": previous_cap or policy.global_budget_microusd,
+            "transition_count": len(records)}
+
+
 def ensure_schema(connection, policy):
     connection.execute("""CREATE TABLE IF NOT EXISTS budget_policies (
         policy_id TEXT PRIMARY KEY, digest TEXT NOT NULL, subject_namespace_digest TEXT NOT NULL,
@@ -147,15 +216,14 @@ def ensure_schema(connection, policy):
         accounted_microusd INTEGER NOT NULL, evidence_digest TEXT NOT NULL,
         reviewed_by TEXT NOT NULL, reviewed_at REAL NOT NULL, reason TEXT NOT NULL
     )""")
+    ceiling_increase_schema(connection)
     old = connection.execute("SELECT digest FROM budget_policies WHERE policy_id=?", (policy.policy_id,)).fetchone()
     if old is not None and old[0] != policy.digest:
         raise unavailable()
     if connection.execute("SELECT 1 FROM budget_policies WHERE subject_namespace_digest<>? LIMIT 1",
                           (policy.namespace_digest,)).fetchone():
         raise unavailable()  # Changing the pseudonym namespace must never reset user limits.
-    if connection.execute("SELECT 1 FROM budget_policies WHERE accounting_core_digest<>? LIMIT 1",
-                          (policy.accounting_core_digest,)).fetchone():
-        raise unavailable()  # New policy IDs cannot rebase usage or release remote holds.
+    validate_ceiling_chain(connection, policy)
     connection.execute("INSERT OR IGNORE INTO budget_policies VALUES (?,?,?,?)",
                        (policy.policy_id, policy.digest, policy.namespace_digest, policy.accounting_core_digest))
 

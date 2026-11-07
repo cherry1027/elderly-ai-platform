@@ -1,4 +1,4 @@
-import { useState, type PropsWithChildren, type ReactNode } from 'react';
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type PropsWithChildren, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import type { StoryEdit } from '../api/story-drafts';
 import { useApiBackoff } from '../api/ApiBackoff';
@@ -95,32 +95,58 @@ export interface MemoriesContentProps {
   onShareMemory(): void;
 }
 export function MemoriesContent(props: MemoriesContentProps) {
-  const { language, memories, blocked, onReview, onShareMemory } = props;
+  const { language, storyLanguage, memories, corrections, blocked, busy, onShareMemory } = props;
   const t = realCopy[language], copy = storyContentCopy[language];
   const [reviewedOpen, setReviewedOpen] = useState(() => !memories.some(memory => memory.status === 'pending'));
-  const pending = memories.filter(memory => memory.status === 'pending');
-  const reviewed = memories.filter(memory => memory.status !== 'pending');
-  const review = (memory: RealMemory, status: 'confirmed' | 'rejected') => {
-    // Opening the destination group is presentation only. The card stays pending
-    // until the owning controller receives a verified successful review result.
-    setReviewedOpen(true); onReview(memory, status);
-  };
+  const { pending, reviewed, byId } = useMemo(() => {
+    const pending: RealMemory[] = [], reviewed: RealMemory[] = [], byId = new Map<string, RealMemory>();
+    for (const memory of memories) { byId.set(memory.id, memory); (memory.status === 'pending' ? pending : reviewed).push(memory); }
+    return { pending, reviewed, byId };
+  }, [memories]);
+  // Presentation-only event bridges let unchanged cards skip correction
+  // keystrokes. Always resolve the current controller and exact owned row.
+  const latest = useRef<(MemoriesContentProps & { byId: Map<string, RealMemory> }) | null>({ ...props, byId });
+  useLayoutEffect(() => { latest.current = { ...props, byId }; });
+  useLayoutEffect(() => () => { latest.current = null; }, []);
+  const beginCorrection = useCallback((memory: RealMemory) => {
+    const current = latest.current;
+    if (!current || current.blocked || current.byId.get(memory.id) !== memory) return;
+    current.onBeginCorrection?.(memory);
+  }, []);
+  const correct = useCallback((memory: RealMemory, value: string) => {
+    const current = latest.current;
+    if (!current || current.blocked || current.busy || current.byId.get(memory.id) !== memory) return;
+    current.onCorrection(memory.id, value);
+  }, []);
+  const review = useCallback((memory: RealMemory, status: 'confirmed' | 'rejected') => {
+    const current = latest.current;
+    if (!current || current.blocked || current.byId.get(memory.id) !== memory) return;
+    // The card stays pending until the controller verifies the saved result.
+    setReviewedOpen(true); current.onReview(memory, status);
+  }, []);
+  const card = (memory: RealMemory) => <MemoryCard key={memory.id} language={language} storyLanguage={storyLanguage}
+    memory={memory} correction={corrections[memory.id] ?? ''} blocked={blocked} busy={busy}
+    onBeginCorrection={beginCorrection} onCorrection={correct} onReview={review} />;
   return <View style={styles.section}>
     {!!pending.length && <Note language={language}>{t.reviewNotice}</Note>}
     {!memories.length && <><Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.heading}>{copy.noMemories}</Text><Note language={language}>{t.emptyMemories}</Note>
       <Button language={language} label={copy.shareMemory} onPress={onShareMemory} disabled={blocked} primary /></>}
     {!!pending.length && <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.heading}>{t.pendingStatus}</Text>}
-    {pending.map(memory => <MemoryCard key={memory.id} {...props} memory={memory} onReview={review} />)}
+    {pending.map(card)}
     {!!memories.length && !pending.length && <Note language={language}>{copy.allReviewed}</Note>}
     {!!reviewed.length && <Disclosure language={language} label={copy.reviewed} open={reviewedOpen} onChange={setReviewedOpen}>
-      {reviewed.map(memory => <MemoryCard key={memory.id} {...props} memory={memory} onReview={review} />)}
+      {reviewed.map(card)}
     </Disclosure>}
   </View>;
 }
-function MemoryCard({ language, storyLanguage, memory, corrections, blocked, busy, onBeginCorrection, onCorrection, onReview }: MemoriesContentProps & { memory: RealMemory }) {
+interface MemoryCardProps {
+  language: Language; storyLanguage: Language; memory: RealMemory; correction: string; blocked: boolean; busy: boolean;
+  onBeginCorrection(memory: RealMemory): void; onCorrection(memory: RealMemory, value: string): void;
+  onReview(memory: RealMemory, status: 'confirmed' | 'rejected'): void;
+}
+const MemoryCard = memo(function MemoryCard({ language, storyLanguage, memory, correction, blocked, busy, onBeginCorrection, onCorrection, onReview }: MemoryCardProps) {
   const t = realCopy[language], copy = storyContentCopy[language];
   const [correcting, setCorrecting] = useState(false);
-  const correction = corrections[memory.id] ?? '';
   const [changeFocused, setChangeFocused] = useState(false);
   const { width, fontScale } = useWindowDimensions();
   const roomyActions = fontScale >= 1.3 || width < 350;
@@ -145,7 +171,7 @@ function MemoryCard({ language, storyLanguage, memory, corrections, blocked, bus
       style={[styles.section, !correcting && styles.hidden]}>
       <TextInput accessibilityLabel={t.correct} accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling
         placeholder={t.correct} value={correction} multiline maxLength={1000} editable={!blocked}
-        style={styles.input} onChangeText={value => { if (!busy) onCorrection(memory.id, value); }} />
+        style={styles.input} onChangeText={value => { if (!busy) onCorrection(memory, value); }} />
       <Button language={language} label={copy.saveCorrection} onPress={() => onReview(memory, 'confirmed')}
         disabled={blocked || !correction.trim()} primary />
     </View>
@@ -171,7 +197,23 @@ function MemoryCard({ language, storyLanguage, memory, corrections, blocked, bus
       </>}
     </Disclosure>
   </View>;
-}
+});
+
+const DraftSources = memo(function DraftSources({ sources, storyLanguage }: { sources: RealDraft['source_memories']; storyLanguage: Language }) {
+  return <>{sources.map(source => <View key={source.memory_id} style={styles.source}>
+    <Text accessibilityLanguage={accessibilityLanguages[storyLanguage]} allowFontScaling style={styles.body}>{source.corrected_value ?? source.value}</Text>
+    <Text accessibilityLanguage={accessibilityLanguages[storyLanguage]} allowFontScaling selectable style={styles.quote}>{source.evidence}</Text>
+  </View>)}</>;
+});
+const SavedEditHistory = memo(function SavedEditHistory({ history, language, storyLanguage }: { history: StoryEdit[] | null; language: Language; storyLanguage: Language }) {
+  const t = realCopy[language];
+  return <>{!history?.length && <Note language={language}>{t.noHistory}</Note>}
+    {history?.map(item => <View key={item.id} style={styles.source}>
+      <Note language={language}>{t.revision} {item.revision}</Note>
+      <Text accessibilityLanguage={accessibilityLanguages[storyLanguage]} allowFontScaling selectable style={styles.body}>{item.content}</Text>
+    </View>)}
+  </>;
+});
 
 export interface AutobiographyContentProps {
   language: Language; storyLanguage: Language; draft: RealDraft | null; drafts: RealDraft[]; memories: RealMemory[];
@@ -226,10 +268,7 @@ export function AutobiographyContent(props: AutobiographyContentProps) {
         <Note language={language}>{t.version} {draft.version} · {t.revision} {draft.revision}</Note>
         <Note language={language}>{t.modelReview}</Note>
         <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.heading}>{t.sources}</Text>
-        {draft.source_memories.map(source => <View key={source.memory_id} style={styles.source}>
-          <Text accessibilityLanguage={accessibilityLanguages[storyLanguage]} allowFontScaling style={styles.body}>{source.corrected_value ?? source.value}</Text>
-          <Text accessibilityLanguage={accessibilityLanguages[storyLanguage]} allowFontScaling selectable style={styles.quote}>{source.evidence}</Text>
-        </View>)}
+        <DraftSources sources={draft.source_memories} storyLanguage={storyLanguage} />
       </Disclosure>
       <ReadSection language={language} label={t.historySection} loaded={history !== null} busy={historyLoading ?? busy}
         disabled={blocked || editor !== null} onLoad={onLoadHistory} preview={drafts.length > 1 ? <View style={styles.section}>
@@ -237,11 +276,7 @@ export function AutobiographyContent(props: AutobiographyContentProps) {
             label={`${t.version} ${item.version} · ${t.revision} ${item.revision}`} disabled={blocked || editor !== null}
             onPress={() => onSelectDraft(item)} quiet />)}
         </View> : undefined}>
-        {!history?.length && <Note language={language}>{t.noHistory}</Note>}
-        {history?.map(item => <View key={item.id} style={styles.source}>
-          <Note language={language}>{t.revision} {item.revision}</Note>
-          <Text accessibilityLanguage={accessibilityLanguages[storyLanguage]} allowFontScaling selectable style={styles.body}>{item.content}</Text>
-        </View>)}
+        <SavedEditHistory history={history} language={language} storyLanguage={storyLanguage} />
       </ReadSection>
       <Disclosure language={language} label={copy.pdfDetails}><Note language={language}>{copy.pdfShort}</Note><Note language={language}>{t.pdfNotice}</Note></Disclosure>
       {!memoriesUnavailable && <Disclosure language={language} label={t.createVersion}>

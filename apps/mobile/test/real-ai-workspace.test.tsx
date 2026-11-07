@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
-import { nativeNodes } from './native-tree';
-import { getComponents } from './component-probe';
+import { nativeNodes, nativeRef } from './native-tree';
+import { getComponent, getComponents } from './component-probe';
+import { Screen } from '../src/components/Screen';
+import { ChatMessageHistory } from '../src/real-ai/ChatMessageHistory';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
 import { AccessibilityInfo, AppState, BackHandler, Keyboard, Platform, Pressable, type AppStateStatus } from 'react-native';
 import * as api from '../src/real-ai/api';
@@ -13,6 +15,16 @@ import { realDraft, realIds as ids, realMemory, realMessage, realTranscript } fr
 import { mediaPrivacy } from '../src/real-ai/media-privacy';
 import { leaveCopy } from '../src/navigation/useGuardedLeave';
 import { completeEdgeSwipe } from './edge-swipe-events';
+jest.mock('../src/components/Screen', () => {
+  const actual = jest.requireActual<typeof import('../src/components/Screen')>('../src/components/Screen');
+  const { observeComponent } = jest.requireActual<typeof import('./component-probe')>('./component-probe');
+  return { ...actual, Screen: observeComponent(actual.Screen) };
+});
+jest.mock('../src/real-ai/ChatMessageHistory', () => {
+  const actual = jest.requireActual<typeof import('../src/real-ai/ChatMessageHistory')>('../src/real-ai/ChatMessageHistory');
+  const { observeComponent } = jest.requireActual<typeof import('./component-probe')>('./component-probe');
+  return { ...actual, ChatMessageHistory: observeComponent(actual.ChatMessageHistory) };
+});
 jest.mock('../src/real-ai/api', () => ({ ...jest.requireActual('../src/real-ai/api'),
   hashRealText: jest.fn(), getRealCapabilities: jest.fn(), getRealTranscripts: jest.fn(), getRealMessages: jest.fn(), getRealMemories: jest.fn(),
   getRealDrafts: jest.fn(), transcribeRealRecording: jest.fn(), sendRealMessage: jest.fn(), sendRealTextMessage: jest.fn(), reviewRealMemory: jest.fn(),
@@ -224,7 +236,7 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     expect(api.transcribeRealRecording).toHaveBeenCalledWith(expect.objectContaining({ sessionId: ids.session }), clip, true, ids.key);
     expect(recorder.discard).toHaveBeenCalledWith(clip);
     expect(api.sendRealMessage).toHaveBeenCalledTimes(1);
-    expect(api.sendRealMessage).toHaveBeenCalledWith(expect.objectContaining({ sessionId: ids.session }), { source_transcript_id: ids.transcript }, ids.key);
+    expect(api.sendRealMessage).toHaveBeenCalledWith(expect.objectContaining({ sessionId: ids.session }), { source_transcript_id: ids.transcript }, ids.key, expect.any(Function));
     expect(screen.getByText(realMessage('assistant').text)).toBeOnTheScreen();
     expect(screen.queryByText(t.original)).toBeNull(); await press(t.moreActions); await press(t.yourWords);
     expect(screen.getByText(t.original)).toBeOnTheScreen(); expect(screen.getByText(t.recordingSaved)).toBeOnTheScreen();
@@ -281,16 +293,20 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     await press(t.speak); expect(api.createRealSpeech).toHaveBeenCalledTimes(1);
     expect(api.getRealSpeechAudio).toHaveBeenCalledWith(expect.anything(), metadata); expect(mockPlayback.play).toHaveBeenCalledTimes(1);
   });
-  it('requires an explicitly relabelled new-synthesis action after owned audio cache loss', async () => {
+  it('keeps a new speech attempt unresolved when its audio is unavailable and reconciles the original key before another Listen', async () => {
     jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant')]);
-    const metadata = { speech_id: ids.draft, assistant_message_id: ids.assistant, language: 'en' as const, media_type: 'audio/wav' as const,
-      audio_sha256: '0'.repeat(64), audio_size: 64, expires_at: '2099-10-29T12:00:00Z', status: 'ready' as const };
-    jest.mocked(api.createRealSpeech).mockResolvedValue(metadata); jest.mocked(api.getRealSpeechAudio).mockRejectedValueOnce(new api.RealAiError('not-found', 410));
+    const metadata = speechMetadata();
+    jest.mocked(api.createRealSpeech).mockResolvedValue(metadata);
+    jest.mocked(api.getRealSpeechAudio).mockRejectedValueOnce(new api.RealAiError('not-found', 410, false, 'SPEECH_EXPIRED'));
+    jest.mocked(api.findRealOperation).mockResolvedValue({ operation_id: ids.memory, project_id: ids.project, session_id: ids.session,
+      kind: 'speech', status: 'completed', created_at: project.created_at, updated_at: project.created_at, error_code: null, result: metadata });
     await render(<RealStoryWorkspace {...props} />); await ready(); await press(t.speak);
-    expect(api.createRealSpeech).toHaveBeenCalledTimes(1); expect(screen.getByText(t.renewSpeech)).toBeTruthy();
-    expect(mockPlayback.play).not.toHaveBeenCalled();
-    jest.mocked(api.getRealSpeechAudio).mockResolvedValueOnce(new Uint8Array(64)); await press(t.renewSpeech);
-    expect(api.createRealSpeech).toHaveBeenCalledTimes(2);
+    expect(api.createRealSpeech).toHaveBeenCalledTimes(1); expect(screen.getByText(t.uncertain)).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: t.check })).toBeEnabled();
+    expect(mockPlayback.play).not.toHaveBeenCalled(); expect(createRecordingId).toHaveBeenCalledTimes(1);
+    await press(t.check); expect(api.findRealOperation).toHaveBeenCalledWith(expect.anything(), 'speech', ids.key);
+    jest.mocked(api.getRealSpeechAudio).mockResolvedValueOnce(speechWave()); await press(t.speak);
+    expect(api.createRealSpeech).toHaveBeenCalledTimes(1); expect(mockPlayback.play).toHaveBeenCalledTimes(1);
   });
   it('retains a failed native cleanup lease and blocks capture until a deliberate cleanup retry succeeds', async () => {
     await render(<RealStoryWorkspace {...props} />); await ready(); await startVoice();
@@ -535,7 +551,7 @@ describe('native typed composer — synthetic UI only, no live provider or phone
     await fireEvent.changeText(screen.getByLabelText(t.input), original);
     await press(t.send); await press(t.send);
     expect(api.sendRealTextMessage).toHaveBeenCalledTimes(1);
-    expect(api.sendRealTextMessage).toHaveBeenCalledWith(expect.objectContaining({ language: 'en', sessionId: ids.session }), original, ids.key);
+    expect(api.sendRealTextMessage).toHaveBeenCalledWith(expect.objectContaining({ language: 'en', sessionId: ids.session }), original, ids.key, expect.any(Function));
     expect(screen.getByText(t.thinking)).toBeTruthy();
     await act(async () => result.resolve({
       user_message: realMessage('user', { id: ids.key, text: original, source_transcript_id: null, source_text_input_id: ids.key,
@@ -564,7 +580,7 @@ describe('native typed composer — synthetic UI only, no live provider or phone
   it('uses the story language for typed requests even when interface language differs', async () => {
     await render(<RealStoryWorkspace {...props} project={{ ...project, language: 'sv' }} />); await ready();
     await fireEvent.changeText(screen.getByLabelText(t.input), 'Jag minns Malmö.'); await press(t.send);
-    expect(api.sendRealTextMessage).toHaveBeenCalledWith(expect.objectContaining({ language: 'sv' }), 'Jag minns Malmö.', ids.key);
+    expect(api.sendRealTextMessage).toHaveBeenCalledWith(expect.objectContaining({ language: 'sv' }), 'Jag minns Malmö.', ids.key, expect.any(Function));
   });
 });
 
@@ -795,4 +811,266 @@ it('a captured Listen action cannot replay or generate speech for the previous s
   await act(async () => staleListen({} as never));
   expect(api.getPreparedRealSpeech).not.toHaveBeenCalled(); expect(api.createRealSpeech).not.toHaveBeenCalled();
   expect(api.getRealSpeechAudio).not.toHaveBeenCalled();
+});
+
+function speechWave() {
+  const bytes = new Uint8Array(64); bytes.set(new TextEncoder().encode('RIFF')); bytes.set(new TextEncoder().encode('WAVE'), 8); return bytes;
+}
+function speechMetadata(overrides: Partial<api.SpeechMetadata> = {}): api.SpeechMetadata {
+  return { speech_id: ids.draft, assistant_message_id: ids.assistant, language: 'en', media_type: 'audio/wav',
+    audio_sha256: '0'.repeat(64), audio_size: 64, expires_at: new Date(Date.now() + 60000).toISOString(), status: 'ready', ...overrides };
+}
+it.each(['en', 'sv'] as const)('one deliberate %s Listen replaces a known expired prepared clip once, with a visible allowance disclosure', async language => {
+  const copy = realCopy[language];
+  jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant', { language })]);
+  jest.mocked(api.getPreparedRealSpeech).mockRejectedValueOnce(new api.RealAiError('not-found', 410, false, 'SPEECH_EXPIRED'));
+  jest.mocked(api.createRealSpeech).mockResolvedValueOnce(speechMetadata({ language }));
+  jest.mocked(api.getRealSpeechAudio).mockResolvedValueOnce(speechWave());
+  await render(<RealStoryWorkspace {...props} language={language} project={{ ...project, language }} />); await ready();
+  expect(screen.getByText(copy.listenDisclosure)).toBeOnTheScreen(); await press(copy.speak);
+  expect(api.createRealSpeech).toHaveBeenCalledTimes(1); expect(api.getRealSpeechAudio).toHaveBeenCalledTimes(1);
+  expect(mockPlayback.play).toHaveBeenCalledTimes(1); expect(screen.queryByText(copy.voiceExpired)).toBeNull();
+  expect(api.sendRealMessage).not.toHaveBeenCalled();
+});
+it('one deliberate Listen replaces only a known expired free WAV read without retrying the old audio or changing the saved message', async () => {
+  jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant')]);
+  jest.mocked(api.getPreparedRealSpeech).mockResolvedValueOnce(speechMetadata());
+  jest.mocked(api.getRealSpeechAudio).mockRejectedValueOnce(new api.RealAiError('not-found', 410, false, 'SPEECH_EXPIRED')).mockResolvedValueOnce(speechWave());
+  jest.mocked(api.createRealSpeech).mockResolvedValueOnce(speechMetadata({ speech_id: ids.key }));
+  await render(<RealStoryWorkspace {...props} />); await ready(); await press(t.speak);
+  expect(api.createRealSpeech).toHaveBeenCalledTimes(1); expect(api.getRealSpeechAudio).toHaveBeenCalledTimes(2);
+  expect(mockPlayback.play).toHaveBeenCalledTimes(1); expect(screen.getByText(realMessage('assistant').text)).toBeOnTheScreen();
+  expect(screen.queryByText(t.voiceExpired)).toBeNull(); expect(createRecordingId).toHaveBeenCalledTimes(1);
+});
+it('a cached metadata deadline permits one fresh synthesis on the next deliberate Listen', async () => {
+  const now = Date.now();
+  jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant')]);
+  jest.mocked(api.createRealSpeech).mockResolvedValueOnce(speechMetadata({ expires_at: new Date(now + 1000).toISOString() }))
+    .mockResolvedValueOnce(speechMetadata({ speech_id: ids.key, expires_at: new Date(now + 60000).toISOString() }));
+  jest.mocked(api.getRealSpeechAudio).mockImplementation(async () => speechWave());
+  await render(<RealStoryWorkspace {...props} />); await ready(); await press(t.speak);
+  jest.spyOn(Date, 'now').mockReturnValue(now + 2000); await press(t.speak);
+  expect(api.createRealSpeech).toHaveBeenCalledTimes(2); expect(api.getPreparedRealSpeech).toHaveBeenCalledTimes(2);
+  expect(mockPlayback.play).toHaveBeenCalledTimes(2); expect(screen.queryByText(t.voiceExpired)).toBeNull();
+});
+it.each([
+  ['unknown 410', () => new api.RealAiError('not-found', 410)],
+  ['authentication', () => new api.RealAiError('authentication', 401)],
+  ['cancellation', () => new api.RealAiError('cancelled')],
+  ['upstream failure', () => new api.RealAiError('unavailable', 503)],
+  ['unproven free read', () => new api.RealAiError('not-found', 410, true, 'SPEECH_EXPIRED')],
+  ['operation header', () => new api.RealAiError('not-found', 410, false, 'SPEECH_EXPIRED', undefined, ids.memory)],
+  ['check-saved hint', () => new api.RealAiError('not-found', 410, false, 'SPEECH_EXPIRED', undefined, undefined, 'check-saved')],
+  ['sign-in hint', () => new api.RealAiError('authentication', 410, false, 'SPEECH_EXPIRED', undefined, undefined, 'sign-in')],
+  ['operator hint', () => new api.RealAiError('not-found', 410, false, 'SPEECH_EXPIRED', undefined, undefined, 'contact-operator')],
+] as const)('never synthesizes after %s from the prepared-audio read', async (_label, failure) => {
+  jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant')]);
+  jest.mocked(api.getPreparedRealSpeech).mockRejectedValueOnce(failure());
+  await render(<RealStoryWorkspace {...props} />); await ready(); await press(t.speak);
+  expect(api.createRealSpeech).not.toHaveBeenCalled(); expect(mockPlayback.play).not.toHaveBeenCalled();
+});
+it('an unknown free WAV 410 cannot authorize a synthesis', async () => {
+  jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant')]);
+  jest.mocked(api.getPreparedRealSpeech).mockResolvedValueOnce(speechMetadata());
+  jest.mocked(api.getRealSpeechAudio).mockRejectedValueOnce(new api.RealAiError('not-found', 410));
+  await render(<RealStoryWorkspace {...props} />); await ready(); await press(t.speak);
+  expect(api.createRealSpeech).not.toHaveBeenCalled(); expect(mockPlayback.play).not.toHaveBeenCalled();
+});
+it('a speech POST 410 without an operation header preserves its original key and never starts a second paid attempt', async () => {
+  jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant')]);
+  jest.mocked(api.createRealSpeech).mockRejectedValueOnce(new api.RealAiError('not-found', 410, false, 'SPEECH_EXPIRED'));
+  jest.mocked(api.findRealOperation).mockResolvedValue({ operation_id: ids.memory, project_id: ids.project, session_id: ids.session,
+    kind: 'speech', status: 'in_progress', created_at: project.created_at, updated_at: project.created_at, error_code: null, result: null });
+  await render(<RealStoryWorkspace {...props} />); await ready(); await press(t.speak);
+  expect(screen.getByText(t.uncertain)).toBeOnTheScreen(); expect(api.createRealSpeech).toHaveBeenCalledTimes(1);
+  expect(api.getRealSpeechAudio).not.toHaveBeenCalled(); expect(createRecordingId).toHaveBeenCalledTimes(1);
+  await press(t.check); expect(api.findRealOperation).toHaveBeenCalledWith(expect.anything(), 'speech', ids.key);
+  expect(api.createRealSpeech).toHaveBeenCalledTimes(1); expect(createRecordingId).toHaveBeenCalledTimes(1);
+});
+it('known expired audio never opens a paid attempt when speech is paused', async () => {
+  jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant')]);
+  jest.mocked(api.getRealCapabilities).mockResolvedValue({ contract: 'real-v2', mode: 'real', enabled: true,
+    transcription: true, conversation: true, writing: true, speech: false, reason: 'READY' });
+  jest.mocked(api.getPreparedRealSpeech).mockRejectedValueOnce(new api.RealAiError('not-found', 410, false, 'SPEECH_EXPIRED'));
+  await render(<RealStoryWorkspace {...props} />); await ready(); await press(t.speak);
+  expect(api.createRealSpeech).not.toHaveBeenCalled(); expect(screen.getByRole('button', { name: t.renewSpeech })).toBeDisabled();
+});
+it.each(['background', 'owner replacement'] as const)('late known expiry after %s never dispatches a paid preparation', async mode => {
+  jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant')]);
+  const read = deferred<api.SpeechMetadata>(); jest.mocked(api.getPreparedRealSpeech).mockReturnValueOnce(read.promise);
+  const view = await render(<RealStoryWorkspace {...props} />); await ready(); await press(t.speak);
+  if (mode === 'background') await emit('background');
+  else await view.rerender(<RealStoryWorkspace {...props} user={{ ...user, id: '80000000-0000-4000-8000-000000000002' }} />);
+  await act(async () => read.reject(new api.RealAiError('not-found', 410, false, 'SPEECH_EXPIRED')));
+  expect(api.createRealSpeech).not.toHaveBeenCalled(); expect(mockPlayback.play).not.toHaveBeenCalled();
+});
+
+it('local metadata expiry rechecks free owned metadata and reuses a clip already renewed elsewhere', async () => {
+  const now = Date.now(), old = speechMetadata({ expires_at: new Date(now + 1000).toISOString() });
+  jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant')]);
+  jest.mocked(api.getPreparedRealSpeech).mockResolvedValueOnce(old).mockResolvedValueOnce(speechMetadata({ speech_id: ids.key }));
+  jest.mocked(api.getRealSpeechAudio).mockImplementation(async () => speechWave());
+  await render(<RealStoryWorkspace {...props} />); await ready(); await press(t.speak);
+  jest.spyOn(Date, 'now').mockReturnValue(now + 2000); await press(t.speak);
+  expect(api.getPreparedRealSpeech).toHaveBeenCalledTimes(2); expect(api.createRealSpeech).not.toHaveBeenCalled();
+  expect(mockPlayback.play).toHaveBeenCalledTimes(2);
+});
+
+it.each(['available', 'expired'] as const)('a confirmed budget block still permits free %s-audio inspection but never paid preparation', async mode => {
+  jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant')]);
+  jest.mocked(api.getRealMemories).mockRejectedValueOnce(new api.RealAiError('unavailable', 503, false, 'AI_GLOBAL_BUDGET_EXHAUSTED'));
+  if (mode === 'available') {
+    jest.mocked(api.getPreparedRealSpeech).mockResolvedValueOnce(speechMetadata());
+    jest.mocked(api.getRealSpeechAudio).mockResolvedValueOnce(speechWave());
+  } else jest.mocked(api.getPreparedRealSpeech).mockRejectedValueOnce(new api.RealAiError('not-found', 410, false, 'SPEECH_EXPIRED'));
+  await render(<RealStoryWorkspace {...props} />); await ready();
+  await fireEvent.press(screen.getByRole('tab', { name: t.memories }));
+  await waitFor(() => expect(screen.getAllByText(t.usageLimit).length).toBeGreaterThan(0));
+  await fireEvent.press(screen.getByRole('tab', { name: t.chat })); await press(t.speak);
+  expect(api.createRealSpeech).not.toHaveBeenCalled();
+  expect(mockPlayback.play).toHaveBeenCalledTimes(mode === 'available' ? 1 : 0);
+});
+
+it.each(['en', 'sv'] as const)('shows an admitted %s user outbox immediately, never invents AI text, and replaces it once with the verified turn', async language => {
+  const copy = realCopy[language], original = '  Exact words before the reply.\n';
+  const response = deferred<api.RealTurn>(); jest.mocked(api.sendRealTextMessage).mockReturnValueOnce(response.promise);
+  await render(<RealStoryWorkspace {...props} language={language} />); await ready();
+  await fireEvent.changeText(screen.getByLabelText(copy.input), original); await press(copy.send);
+  const outbox = screen.getByTestId('pending-typed-message');
+  expect(within(outbox).getByText(original)).toBeOnTheScreen(); expect(within(outbox).getByText(copy.sending)).toBeOnTheScreen();
+  expect(screen.getByLabelText(copy.input).props.value).toBe(''); expect(screen.getByLabelText(copy.input).props.editable).toBe(false);
+  expect(screen.queryByText(realMessage('assistant').text)).toBeNull(); expect(api.sendRealTextMessage).toHaveBeenCalledTimes(1);
+  await act(async () => response.resolve(typedRecoveryTurn(original)));
+  expect(screen.queryByTestId('pending-typed-message')).toBeNull(); expect(screen.getAllByText(original)).toHaveLength(1);
+  expect(screen.getByText(realMessage('assistant').text)).toBeOnTheScreen(); expect(api.createRealSpeech).not.toHaveBeenCalled();
+});
+it.each([false, true] as const)('removes the outbox and restores exact original words after a failure (uncertain=%s), without retrying', async uncertain => {
+  const original = '  Hold these exact words.\n';
+  jest.mocked(api.sendRealTextMessage).mockRejectedValueOnce(new api.RealAiError('unavailable', 503, uncertain, uncertain ? undefined : 'TEXT_CHAT_NOT_READY'));
+  await render(<RealStoryWorkspace {...props} />); await ready(); await fireEvent.changeText(screen.getByLabelText(t.input), original); await press(t.send);
+  expect(screen.queryByTestId('pending-typed-message')).toBeNull(); expect(screen.getByLabelText(t.input).props.value).toBe(original);
+  expect(screen.getByLabelText(t.input).props.editable).toBe(!uncertain);
+  if (uncertain) { expect(screen.getByRole('button', { name: t.check })).toBeEnabled(); await press(t.send); }
+  expect(api.sendRealTextMessage).toHaveBeenCalledTimes(1);
+});
+it.each(['background', 'owner replacement', 'authentication'] as const)('clears the outbox across %s and never restores a late reply or words', async mode => {
+  const response = deferred<api.RealTurn>(); jest.mocked(api.sendRealTextMessage).mockReturnValueOnce(response.promise);
+  const view = await render(<RealStoryWorkspace {...props} />); await ready();
+  await fireEvent.changeText(screen.getByLabelText(t.input), 'Private pending words'); await press(t.send);
+  expect(screen.getByTestId('pending-typed-message')).toBeOnTheScreen();
+  if (mode === 'background') await emit('background');
+  else if (mode === 'owner replacement') await view.rerender(<RealStoryWorkspace {...props} user={{ ...user, id: '80000000-0000-4000-8000-000000000002' }} />);
+  else await act(async () => response.reject(new api.RealAiError('authentication', 401)));
+  if (mode !== 'authentication') await act(async () => response.resolve(typedRecoveryTurn('Private pending words')));
+  expect(screen.queryByTestId('pending-typed-message')).toBeNull(); expect(screen.queryByText('Private pending words')).toBeNull();
+  expect(screen.queryByText(realMessage('assistant').text)).toBeNull(); expect(screen.queryByRole('button', { name: t.viewLatestReply })).toBeNull();
+});
+it('View latest reply is only offered after a verified reply and measured layout; it scrolls only on request without animation or focus theft', async () => {
+  const response = deferred<api.RealTurn>(); jest.mocked(api.sendRealTextMessage).mockReturnValueOnce(response.promise);
+  await render(<RealStoryWorkspace {...props} />); await ready();
+  const scroll = nativeRef(getComponent(Screen).props.scrollViewRef), scrollTo = jest.spyOn(scroll, 'scrollTo'); scrollTo.mockClear();
+  const focusScroll = jest.spyOn(scroll, 'scrollResponderScrollNativeHandleToKeyboard');
+  expect(screen.queryByRole('button', { name: t.viewLatestReply })).toBeNull();
+  await fireEvent.changeText(screen.getByLabelText(t.input), 'One new memory'); await press(t.send);
+  expect(screen.queryByRole('button', { name: t.viewLatestReply })).toBeNull();
+  await act(async () => response.resolve(typedRecoveryTurn('One new memory')));
+  expect(scrollTo).not.toHaveBeenCalled(); expect(screen.queryByRole('button', { name: t.viewLatestReply })).toBeNull();
+  await act(async () => getComponent(Screen).props.onContentLayout!({ nativeEvent: { layout: { x: 0, y: 24, width: 320, height: 1000 } } } as never));
+  await fireEvent(screen.getByTestId('real-workspace-layout'), 'layout', { nativeEvent: { layout: { y: 16 } } });
+  await fireEvent(screen.getByTestId('real-ai-chat-thread'), 'layout', { nativeEvent: { layout: { y: 200 } } });
+  await act(async () => getComponent(ChatMessageHistory).props.onMessageLayout!(ids.assistant, 600));
+  expect(scrollTo).not.toHaveBeenCalled();
+  await press(t.viewLatestReply);
+  expect(scrollTo).toHaveBeenCalledWith({ y: 840, animated: false }); expect(focusScroll).not.toHaveBeenCalled();
+  expect(screen.queryByRole('button', { name: t.viewLatestReply })).toBeNull(); expect(api.sendRealTextMessage).toHaveBeenCalledTimes(1);
+});
+it('an old View latest reply callback cannot jump after a different send was admitted or after background clearing', async () => {
+  await render(<RealStoryWorkspace {...props} />); await ready();
+  await fireEvent.changeText(screen.getByLabelText(t.input), 'First memory'); await press(t.send);
+  await act(async () => getComponent(ChatMessageHistory).props.onMessageLayout!(ids.assistant, 500));
+  const staleJump = getComponents(Pressable).find(item => item.props.accessibilityLabel === t.viewLatestReply)!.props.onPress!;
+  const scrollTo = jest.spyOn(nativeRef(getComponent(Screen).props.scrollViewRef), 'scrollTo'); scrollTo.mockClear();
+  const response = deferred<api.RealTurn>(); jest.mocked(api.sendRealTextMessage).mockReturnValueOnce(response.promise);
+  await fireEvent.changeText(screen.getByLabelText(t.input), 'Second memory'); await press(t.send);
+  await act(async () => staleJump({} as never)); expect(scrollTo).not.toHaveBeenCalled();
+  await emit('background'); await act(async () => staleJump({} as never)); expect(scrollTo).not.toHaveBeenCalled();
+  await act(async () => response.resolve(typedRecoveryTurn('Second memory')));
+});
+it('shows the actual operation label while preparing speech and checking an uncertain result', async () => {
+  jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant')]);
+  const prepared = deferred<api.SpeechMetadata>(); jest.mocked(api.getPreparedRealSpeech).mockReturnValueOnce(prepared.promise);
+  await render(<RealStoryWorkspace {...props} />); await ready(); await press(t.speak);
+  expect(screen.getByText(t.preparingVoice)).toBeOnTheScreen(); expect(screen.queryByText(t.busy)).toBeNull();
+  await act(async () => prepared.reject(new api.RealAiError('unavailable', 503)));
+  jest.mocked(api.sendRealTextMessage).mockRejectedValueOnce(new api.RealAiError('network', undefined, true));
+  await fireEvent.changeText(screen.getByLabelText(t.input), 'Uncertain words'); await press(t.send);
+  const state = deferred<api.RealOperation>(); jest.mocked(api.findRealOperation).mockReturnValueOnce(state.promise);
+  await press(t.check); expect(screen.getByText(t.checkingSaved)).toBeOnTheScreen();
+  await act(async () => state.resolve({ operation_id: ids.key, project_id: ids.project, session_id: ids.session, kind: 'conversation',
+    status: 'in_progress', created_at: project.created_at, updated_at: project.created_at, error_code: null, result: null }));
+  expect(api.sendRealTextMessage).toHaveBeenCalledTimes(1);
+});
+
+it('uses truthful story and PDF waiting labels only while those explicit operations are pending', async () => {
+  jest.mocked(api.getRealMemories).mockResolvedValue([realMemory({ status: 'confirmed' })]);
+  const generation = deferred<api.RealDraft>(); jest.mocked(api.generateRealDraft).mockReturnValueOnce(generation.promise);
+  await render(<RealStoryWorkspace {...props} initialTab="book" />); await ready('book');
+  await fireEvent.press(screen.getByRole('checkbox', { name: t.generationConsent })); await press(t.generate);
+  expect(screen.getByText(t.creatingStory)).toBeOnTheScreen(); expect(screen.queryByText(t.bookCreated)).toBeNull();
+  await act(async () => generation.resolve(realDraft()));
+  const pdf = deferred<Uint8Array>(); jest.mocked(api.exportRealDraft).mockReturnValueOnce(pdf.promise); await press(t.export);
+  expect(screen.getByText(t.preparingPdf)).toBeOnTheScreen(); expect(mockPdfStore.share).not.toHaveBeenCalled();
+  await act(async () => pdf.resolve(new TextEncoder().encode('%PDF-1.4\nsynthetic\n%%EOF')));
+  expect(api.generateRealDraft).toHaveBeenCalledTimes(1); expect(api.exportRealDraft).toHaveBeenCalledTimes(1);
+});
+
+
+it.each(['en', 'sv'] as const)('shows a %s streamed reply as an unsaved preview, with no Listen or memory action until atomic completion', async language => {
+  const copy = realCopy[language], original = 'My exact typed memory';
+  const response = deferred<api.RealTurn>();
+  let progress: NonNullable<Parameters<typeof api.sendRealTextMessage>[3]>;
+  jest.mocked(api.sendRealTextMessage).mockImplementationOnce((_scope, _original, _key, onProgress) => { progress = onProgress!; return response.promise; });
+  await render(<RealStoryWorkspace {...props} language={language} />); await ready();
+  await fireEvent.changeText(screen.getByLabelText(copy.input), original); await press(copy.send);
+  await act(async () => { progress!({ type: 'operation', operation_id: ids.key, project_id: ids.project, session_id: ids.session });
+    progress!({ type: 'reply', text: realMessage('assistant').text }); });
+  const preview = screen.getByTestId('live-reply-preview');
+  expect(within(preview).getByText(copy.replyPreviewTitle)).toBeOnTheScreen();
+  expect(within(preview).getByText(copy.replyFinishing)).toBeOnTheScreen();
+  expect(screen.queryByTestId(`saved-message-${realMessage('assistant').id}`)).toBeNull();
+  expect(screen.queryByRole('button', { name: copy.speak })).toBeNull(); expect(api.createRealSpeech).not.toHaveBeenCalled();
+  await act(async () => progress!({ type: 'saving' }));
+  expect(within(screen.getByTestId('live-reply-preview')).getByText(copy.replySaving)).toBeOnTheScreen();
+  await act(async () => response.resolve(typedRecoveryTurn(original)));
+  expect(screen.queryByTestId('live-reply-preview')).toBeNull();
+  expect(screen.getByTestId(`saved-message-${realMessage('assistant').id}`)).toBeOnTheScreen();
+  expect(api.sendRealTextMessage).toHaveBeenCalledTimes(1);
+});
+
+it('drops an early reply on uncertain failure and reconciles by its original operation without a paid resend', async () => {
+  const response = deferred<api.RealTurn>(); let progress: NonNullable<Parameters<typeof api.sendRealTextMessage>[3]>;
+  jest.mocked(api.sendRealTextMessage).mockImplementationOnce((_scope, _original, _key, onProgress) => { progress = onProgress!; return response.promise; });
+  await render(<RealStoryWorkspace {...props} />); await ready();
+  await fireEvent.changeText(screen.getByLabelText(t.input), 'Uncertain original'); await press(t.send);
+  await act(async () => { progress!({ type: 'operation', operation_id: ids.key, project_id: ids.project, session_id: ids.session });
+    progress!({ type: 'reply', text: 'A preview that is not saved yet.' }); });
+  await act(async () => response.reject(new api.RealAiError('timeout', 504, true, 'AI_PROVIDER_TIMEOUT', undefined, ids.key, 'check-saved')));
+  expect(screen.queryByTestId('live-reply-preview')).toBeNull();
+  expect(screen.getByLabelText(t.input).props.editable).toBe(false);
+  expect(screen.getByLabelText(t.input).props.value).toBe('Uncertain original');
+  await press(t.check); expect(api.getRealOperation).toHaveBeenCalledWith(expect.anything(), ids.key, true);
+  expect(api.findRealOperation).not.toHaveBeenCalled(); expect(api.sendRealTextMessage).toHaveBeenCalledTimes(1);
+});
+
+it('never restores an early reply through a captured callback after backgrounding', async () => {
+  const response = deferred<api.RealTurn>(); let progress: NonNullable<Parameters<typeof api.sendRealTextMessage>[3]>;
+  jest.mocked(api.sendRealTextMessage).mockImplementationOnce((_scope, _original, _key, onProgress) => { progress = onProgress!; return response.promise; });
+  await render(<RealStoryWorkspace {...props} />); await ready();
+  await fireEvent.changeText(screen.getByLabelText(t.input), 'Private pending original'); await press(t.send);
+  await act(async () => progress!({ type: 'operation', operation_id: ids.key, project_id: ids.project, session_id: ids.session }));
+  await emit('background');
+  expect(() => progress!({ type: 'reply', text: 'Late private preview' })).toThrow();
+  await act(async () => response.resolve(typedRecoveryTurn('Private pending original')));
+  expect(screen.queryByTestId('live-reply-preview')).toBeNull(); expect(screen.queryByText('Late private preview')).toBeNull();
+  expect(screen.queryByText('Private pending original')).toBeNull(); expect(api.sendRealTextMessage).toHaveBeenCalledTimes(1);
 });

@@ -9,7 +9,13 @@ function sourceFiles(directory: string): string[] {
     return item.isDirectory() ? sourceFiles(full) : /\.tsx?$/.test(item.name) ? [full] : [];
   });
 }
-const sources = sourceFiles(path.join(appRoot, 'src'));
+const allSources = sourceFiles(path.join(appRoot, 'src'));
+const explicitWebHelpers = new Set(['src/web-staging.ts', 'src/auth/web-password-setup.ts', 'src/audio/browser-recordings.ts']
+  .map(file => path.join(appRoot, file)));
+const webSources = allSources.filter(file => /\.web\.tsx?$/.test(file) || explicitWebHelpers.has(file));
+// Native guards remain unchanged; only these separately reviewed web adapters
+// may use browser APIs. New ordinary native files cannot inherit this exception.
+const sources = allSources.filter(file => !webSources.includes(file));
 const source = sources.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
 const authSources = sources.filter((file) => file.startsWith(path.join(appRoot, 'src/auth') + path.sep));
 const authSource = authSources.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
@@ -52,6 +58,14 @@ describe('development-only mobile application boundaries', () => {
     expect(source.replaceAll('process.env.NODE_ENV', "'runtime-mode'"))
       .not.toMatch(/process\.env|import\.meta/);
     expect(browserStateReferences(source)).toEqual([]);
+  });
+
+  it('confines browser adapters to RAM and keeps provider/server credentials out', () => {
+    const webSource = webSources.map(file => fs.readFileSync(file, 'utf8')).join('\n');
+    expect(webSources.length).toBeGreaterThan(0);
+    expect(browserStateReferences(webSource)).not.toContain('localStorage');
+    expect(browserStateReferences(webSource)).not.toContain('sessionStorage');
+    expect(webSource).not.toMatch(/document\.cookie|process\.env|import\.meta|OPENAI_API_KEY|SUPABASE_SERVICE_ROLE|sb_secret_|sk-proj-/);
   });
 
   it.each(['window.location', 'document.cookie', 'localStorage.getItem("key")', 'sessionStorage.clear()',
@@ -100,7 +114,7 @@ describe('development-only mobile application boundaries', () => {
       recordAudioAndroid: true, enableBackgroundRecording: false, enableBackgroundPlayback: false,
       microphonePermission: expect.any(String),
     })]]);
-    expect(config.platforms).toEqual(['android', 'ios']);
+    expect(config.platforms).toEqual(['android', 'ios', 'web']);
     expect(config.extra).toBeUndefined();
     expect(config.updates).toBeUndefined();
   });

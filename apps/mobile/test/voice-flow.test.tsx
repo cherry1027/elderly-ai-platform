@@ -92,7 +92,7 @@ describe('voice consent and automatic chaining — synthetic transports only', (
     await act(async () => finishTranscript(transcript));
     await waitFor(() => expect(api.sendRealMessage).toHaveBeenCalledTimes(1));
     expect(screen.getAllByText(transcript.text).length).toBeGreaterThan(0); expect(screen.getByText(t.thinking)).toBeOnTheScreen();
-    expect(api.sendRealMessage).toHaveBeenCalledWith(expect.objectContaining({ projectId: ids.project, sessionId: ids.session }), { source_transcript_id: transcript.transcript_id }, expect.any(String));
+    expect(api.sendRealMessage).toHaveBeenCalledWith(expect.objectContaining({ projectId: ids.project, sessionId: ids.session }), { source_transcript_id: transcript.transcript_id }, expect.any(String), expect.any(Function));
     expect(jest.mocked(api.sendRealMessage).mock.calls[0][2]).not.toBe(jest.mocked(api.transcribeRealRecording).mock.calls[0][3]);
     await act(async () => finishReply(turn));
     expect(screen.getByText(turn.message.text)).toBeOnTheScreen(); expect(api.createRealSpeech).not.toHaveBeenCalled();

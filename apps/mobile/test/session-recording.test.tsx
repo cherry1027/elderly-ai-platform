@@ -7,7 +7,7 @@ import { RecordingPanel } from '../src/audio/RecordingPanel';
 import { audioCopy } from '../src/audio/audio-copy';
 import { createNativeRecorder, createRecordingId, RecordingFailure, type RecordingDriver } from '../src/audio/native-recorder';
 import { AudioTranscriptError, listSessionTranscripts, uploadSessionRecording,
-  SIMULATED_TRANSCRIPT_NOTICE, type AudioTranscript } from '../src/api/audio-transcripts';
+  SIMULATED_TRANSCRIPT_NOTICE, type AudioTranscript, type AudioRecording } from '../src/api/audio-transcripts';
 import { StoryProjectsError } from '../src/api/story-projects';
 import { readStoryPreviewEnabled } from '../src/development/story-preview-config';
 
@@ -93,7 +93,7 @@ async function consentAndUpload() {
 }
 beforeEach(() => {
   driver = { requestPermission: jest.fn(async () => true), start: jest.fn(async () => {}),
-    stop: jest.fn(async () => file), discard: jest.fn(async (_recording: typeof file) => {}), dispose: jest.fn(async () => {}),
+    stop: jest.fn(async () => file), discard: jest.fn(async (_recording: AudioRecording) => {}), dispose: jest.fn(async () => {}),
     getStatus: jest.fn(() => ({ durationMs: 5000, isRecording: true, interrupted: false })) };
   jest.mocked(createNativeRecorder).mockReset().mockReturnValue(driver);
   jest.mocked(createRecordingId).mockReset().mockReturnValue('40000000-0000-4000-8000-000000000001');

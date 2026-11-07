@@ -7,8 +7,8 @@ import {
 
 export interface AudioRecording {
   uri: string;
-  name: 'recording.m4a';
-  type: 'audio/mp4';
+  name: 'recording.m4a' | 'recording.webm';
+  type: 'audio/mp4' | 'audio/webm';
   size: number;
   durationMs: number;
 }

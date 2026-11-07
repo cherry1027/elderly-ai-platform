@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Validated client-safe static web staging configuration
+apps/mobile/staging.web.client.local.json
+apps/mobile/.verification/

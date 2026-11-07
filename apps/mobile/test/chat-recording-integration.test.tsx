@@ -4,7 +4,7 @@ import { createNativeRecorder, createRecordingId, type RecordingDriver } from '.
 import { audioCopy } from '../src/audio/audio-copy';
 import { transcriptConversationCopy as copy } from '../src/conversation/conversation-copy';
 import { ConversationActionsProvider } from '../src/conversation/ConversationActions';
-import { listSessionTranscripts, uploadSessionRecording, SIMULATED_TRANSCRIPT_NOTICE, type AudioTranscript } from '../src/api/audio-transcripts';
+import { listSessionTranscripts, uploadSessionRecording, SIMULATED_TRANSCRIPT_NOTICE, type AudioTranscript, type AudioRecording } from '../src/api/audio-transcripts';
 import { listConversationMessages, processTranscript, type ConversationMessage, type ConversationTurn } from '../src/api/conversation-messages';
 import { readStoryPreviewEnabled } from '../src/development/story-preview-config';
 import * as Crypto from 'expo-crypto';
@@ -47,7 +47,7 @@ async function record(language: 'en' | 'sv') {
 }
 beforeEach(() => {
   driver = { requestPermission: jest.fn(async () => true), start: jest.fn(async () => {}), stop: jest.fn(async () => file),
-    discard: jest.fn(async (_recording: typeof file) => {}), dispose: jest.fn(async () => {}),
+    discard: jest.fn(async (_recording: AudioRecording) => {}), dispose: jest.fn(async () => {}),
     getStatus: jest.fn(() => ({ isRecording: true, interrupted: false, durationMs: 5000 })) };
   jest.mocked(createNativeRecorder).mockReset().mockReturnValue(driver);
   jest.mocked(createRecordingId).mockReset().mockReturnValue(uploadKey);

@@ -19,7 +19,7 @@ import { createRealSpeech, downloadRealExport, editRealDraft, exportRealDraft, f
   getRealDraft, getRealDrafts, getRealMemories, getRealMessages, getRealOperation, getRealSpeechAudio, getPreparedRealSpeech, getRealTranscripts,
   RealAiError, decodeRealTextTurn, hashRealText, reviewRealMemory, sendRealMessage, sendRealTextMessage, transcribeRealRecording,
   type RealCapabilities, type RealDraft, type RealExport, type RealMemory, type RealMessage, type RealScope, type RealTranscript, type RealTurn,
-  type SpeechMetadata } from './api';
+  type SpeechMetadata, type RealConversationProgress } from './api';
 import type { RealAiConfig } from './config';
 import { realCopy } from './copy';
 import { createRealPlayback, type RealPlayback } from './native-playback';
@@ -27,6 +27,7 @@ import { mediaPrivacy } from './media-privacy';
 import { MemoriesContent, AutobiographyContent } from './StoryContent';
 import { ChatMessageHistory } from './ChatMessageHistory';
 import { SpeechBytesCache } from './speech-bytes-cache';
+import { OriginalWordsEvidence } from './OriginalWordsEvidence';
 
 interface Props {
   language: Language; user: AuthUser; project: StoryProject; config: RealAiConfig;
@@ -34,12 +35,18 @@ interface Props {
   initialTab?: 'chat' | 'memories' | 'book'; initialDraftId?: string; onAuthenticationFailure?(): void; onStoryDetails?(): void;
 }
 type Pending = { key: string; operationId?: string; assistantId?: string; inputType?: 'typed'; textDigest?: string; voice?: true; voiceTranscriptId?: string; kind: 'transcription' | 'conversation' | 'generation' | 'speech' };
+type Activity = 'speech' | 'story' | 'pdf' | 'checking' | 'saving';
+type TypedOutbox = { key: string; text: string };
 type Resource = 'transcripts' | 'messages' | 'memories' | 'drafts' | 'history' | 'exports';
 type Pages = Record<Resource, number | null>;
 type ReadState = { loaded: boolean; loading: boolean; error: string };
 const emptyReads = (): Record<Resource, ReadState> => Object.fromEntries(
   ['transcripts', 'messages', 'memories', 'drafts', 'history', 'exports'].map(name => [name, { loaded: false, loading: false, error: '' }]),
 ) as Record<Resource, ReadState>;
+function knownFreeSpeechExpiry(error: unknown): error is RealAiError {
+  return error instanceof RealAiError && error.kind === 'not-found' && error.status === 410 && error.code === 'SPEECH_EXPIRED' &&
+    !error.mayHaveWritten && !error.operationId && error.recovery === undefined;
+}
 const emptyPages = (): Pages => ({ transcripts: null, messages: null, memories: null, drafts: null, history: null, exports: null });
 function appendUnique<T>(before: T[], added: T[], key: (value: T) => string): T[] {
   const ids = new Set(before.map(key)); return [...before, ...added.filter(item => !ids.has(key(item)))];
@@ -126,6 +133,11 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const [pages, setPages] = useState<Pages>(emptyPages), [usageBlocked, setUsageBlocked] = useState(false);
   const [serviceBlocked, setServiceBlocked] = useState(false);
   const [textDraft, setTextDraft] = useState(''), [textSending, setTextSending] = useState(false);
+  const [outbox, setOutbox] = useState<TypedOutbox | null>(null), [activity, setActivity] = useState<Activity | null>(null);
+  const [replyPreview, setReplyPreview] = useState<{ text: string; saving: boolean } | null>(null);
+  const [latestReplyId, setLatestReplyId] = useState<string | null>(null), [replyAnchor, setReplyAnchor] = useState<{ id: string; y: number } | null>(null);
+  const latestReply = useRef<string | null>(null), replyLayouts = useRef(new Map<string, number>());
+  const scrollOffsets = useRef({ body: 0, workspace: 0, thread: 0 });
   const mediaBlocked = useSyncExternalStore(mediaPrivacy.subscribe, mediaPrivacy.isBlocked, () => true);
   const mounted = useRef(false), active = useRef(false), epoch = useRef(0), locked = useRef(false);
   const controller = useRef<AbortController | null>(null), recorder = useRef<RecordingDriver | null>(null);
@@ -145,6 +157,26 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   useLayoutEffect(() => { latest.current = { onBack, onSignOut, privacy, onAuthenticationFailure, onStoryDetails }; voiceContext.current = { capabilities, usageBlocked, sessionId };
     currentSection.current = tab; chosenDraft.current = selected; currentDraft.current = draft; });
 
+  function clearLatestReply() { latestReply.current = null; setLatestReplyId(null); setReplyAnchor(null); }
+  function presentReply(message: RealMessage) {
+    latestReply.current = message.id; setLatestReplyId(message.id);
+    const y = replyLayouts.current.get(message.id); setReplyAnchor(y === undefined ? null : { id: message.id, y });
+  }
+  const recordMessageLayout = useCallback((id: string, y: number) => {
+    if (!mounted.current || !active.current || !Number.isFinite(y) || y < 0) return;
+    if (!replyLayouts.current.has(id) && replyLayouts.current.size >= 1000) replyLayouts.current.delete(replyLayouts.current.keys().next().value!);
+    replyLayouts.current.set(id, y);
+    if (latestReply.current === id) setReplyAnchor(before => before?.id === id && before.y === y ? before : { id, y });
+  }, []);
+  function viewLatestReply() {
+    const id = latestReply.current, y = id ? replyLayouts.current.get(id) : undefined;
+    if (!mounted.current || !active.current || currentSection.current !== 'chat' || !id || y === undefined ||
+      !messages.some(message => message.id === id && message.role === 'assistant' && message.session_id === sessionId && message.project_id === project.id) || !contentScroll.current) return;
+    const offset = scrollOffsets.current, target = offset.body + offset.workspace + offset.thread + y;
+    if (!Number.isFinite(target)) return;
+    contentScroll.current.scrollTo({ y: Math.max(0, target), animated: false });
+    clearLatestReply();
+  }
   const releasePdf = () => { if (pdfStore.current) latest.current.privacy.release(pdfStore.current); pdfStore.current = null; };
   const cleanupAudio = () => {
     speechBytes.clear();
@@ -166,6 +198,8 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     readJobs.current.clear();
   }
   const clearPrivate = () => {
+    setReplyPreview(null);
+    setOutbox(null); setActivity(null); clearLatestReply(); replyLayouts.current.clear();
     cancelReads(); bootstrap.current?.abort(); bootstrap.current = null; setOpening(false); setContinuationBusy(false);
     reads.current = emptyReads(); setReadStates(reads.current); historyCache.current.clear(); historyIdentity.current = '';
     setTranscripts([]); setMessages([]); setMemories([]); setDrafts([]); setHistory(null); setExports(null);
@@ -189,11 +223,11 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     : error instanceof RealAiError && error.code === 'TEXT_CHAT_NOT_READY' && !error.mayHaveWritten ? t.textNotReady : error instanceof StoryProjectsError
     ? error instanceof RealAiError && error.code === 'AI_USAGE_LIMIT' ? t.usageLimit : error.mayHaveWritten ? t.uncertain : error.kind === 'authentication' ? t.auth
       : error.kind === 'invalid-response' ? t.invalid : t.unavailable : t.audioFailure;
-  async function run(action: (signal: AbortSignal, check: () => void, beginOperation: (next: Pending) => void) => Promise<void>, operation?: Pending) {
+  async function run(action: (signal: AbortSignal, check: () => void, beginOperation: (next: Pending) => void) => Promise<void>, operation?: Pending, activityLabel: Activity | null = null) {
     if (!mounted.current || !active.current || authenticationBlocked.current || bootstrap.current || locked.current || (operation && pending.current)) return;
     // A late saved snapshot may never overwrite a newer mutation/recovery result.
     cancelReads(true);
-    locked.current = true; setBusy(true); setNotice('');
+    locked.current = true; setBusy(true); setActivity(activityLabel ?? (operation?.kind === 'generation' ? 'story' : null)); setNotice('');
     const stamp = epoch.current, abort = new AbortController(); controller.current = abort;
     let startedOperation = operation;
     if (startedOperation) pending.current = startedOperation;
@@ -233,7 +267,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       }
     } finally {
       if (controller.current === abort) controller.current = null;
-      if (epoch.current === stamp && mounted.current) { locked.current = false; setBusy(false); setVoiceReplySending(false); }
+      if (epoch.current === stamp && mounted.current) { locked.current = false; setBusy(false); setActivity(null); setVoiceReplySending(false); setReplyPreview(null); }
     }
   }
   async function refresh(signal: AbortSignal, check: () => void, id: string) {
@@ -337,7 +371,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       // This does not renew any allowance or send a paid request automatically.
       if (caps.enabled) setServiceBlocked(false);
       if (session.current && session.current !== id) {
-        speechBytes.clear(); speech.current.clear();
+        speechBytes.clear(); speech.current.clear(); setOutbox(null); clearLatestReply(); replyLayouts.current.clear();
         cancelReads(); reads.current = emptyReads(); setReadStates(reads.current); historyCache.current.clear();
         setTranscripts([]); setMessages([]); setMemories([]); setDrafts([]); setHistory(null); setExports(null); setPages(emptyPages());
       }
@@ -364,7 +398,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     updateRead('history', { loaded: !!cached, loading: false, error: '' });
   }, [draftIdentity]);
   useEffect(() => {
-    const ownedSpeechMetadata = speech.current, ownedHistoryCache = historyCache.current, ownedCorrectionBases = correctionBases.current;
+    const ownedSpeechMetadata = speech.current, ownedHistoryCache = historyCache.current, ownedCorrectionBases = correctionBases.current, ownedReplyLayouts = replyLayouts.current;
     mounted.current = true; active.current = AppState.currentState === 'active';
     if (active.current) open();
     const listener = AppState.addEventListener('change', state => {
@@ -383,7 +417,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
     return () => { mounted.current = false; active.current = false; epoch.current++; controller.current?.abort();
       cleanupAudio(); cancelReads(); bootstrap.current?.abort(); bootstrap.current = null; pending.current = null;
-      currentDraft.current = null; editingDraft.current = null; ownedCorrectionBases.clear(); ownedHistoryCache.clear(); ownedSpeechMetadata.clear(); listener.remove(); };
+      currentDraft.current = null; editingDraft.current = null; ownedCorrectionBases.clear(); ownedHistoryCache.clear(); ownedSpeechMetadata.clear(); latestReply.current = null; ownedReplyLayouts.clear(); listener.remove(); };
     // This component is keyed by verified owner/project/language. Configuration is fixed at entry.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -425,12 +459,12 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         const turn = completedTyped;
         setMessages(previous => appendUnique(previous, [turn.user_message, turn.message], item => item.id).sort((a, b) => a.sequence - b.sequence));
         // Review status is mutable; only the freshly fetched memory page is authoritative.
-        setTextDraft('');
+        setTextDraft(''); presentReply(turn.message);
       }
       // Only a verified failed operation permits another deliberate paid attempt.
       if (failedVoiceId) setSafeReplyId(failedVoiceId);
       setAmbiguousEdit(false); editingDraft.current = null; setEditor(null); setNotice(typedFailed ? t.textNotSent : t.checked);
-    });
+    }, undefined, 'checking');
   };
   const discardAudio = () => {
     if (!audio.current || !recorder.current || busy || unresolved) return;
@@ -439,13 +473,28 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     });
   };
   const replyAllowed = () => !!voiceContext.current.capabilities?.conversation && !voiceContext.current.usageBlocked && !serviceBlocked && !mediaPrivacy.isBlocked();
+  function receiveReplyProgress(key: string, check: () => void) {
+    return (event: RealConversationProgress) => {
+      check();
+      if (pending.current?.key !== key || pending.current.kind !== 'conversation') throw new RealAiError('cancelled');
+      if (event.type === 'operation') {
+        if (pending.current.operationId && pending.current.operationId !== event.operation_id) throw new RealAiError('invalid-response', undefined, true);
+        pending.current = { ...pending.current, operationId: event.operation_id };
+      } else if (event.type === 'reply') {
+        setReplyPreview({ text: event.text, saving: false });
+      } else if (event.type === 'saving') {
+        setReplyPreview(previous => previous ? { ...previous, saving: true } : null);
+      }
+    };
+  }
   async function voiceReply(signal: AbortSignal, check: () => void, transcript: RealTranscript, key: string) {
     check();
     pending.current = { key, kind: 'conversation', voiceTranscriptId: transcript.transcript_id };
-    setSafeReplyId(null); setVoiceReplySending(true);
-    const result = await sendRealMessage(scope(signal), { source_transcript_id: transcript.transcript_id }, key); check();
+    setSafeReplyId(null); clearLatestReply(); setVoiceReplySending(true);
+    const result = await sendRealMessage(scope(signal), { source_transcript_id: transcript.transcript_id }, key, receiveReplyProgress(key, check)); check();
+    setReplyPreview(null);
     setMessages(previous => appendUnique(previous, [result.user_message, result.message], item => item.id).sort((a, b) => a.sequence - b.sequence));
-    setMemories(previous => appendUnique(previous, result.memories, item => item.id)); setNotice(t.recordingSaved);
+    setMemories(previous => appendUnique(previous, result.memories, item => item.id)); presentReply(result.message); setNotice(t.recordingSaved);
   }
   async function transcribeAndReply(signal: AbortSignal, check: () => void, captured: AudioRecording, key: string) {
     check();
@@ -528,19 +577,23 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     void run((signal, check) => voiceReply(signal, check, transcript, key), { key, kind: 'conversation', voiceTranscriptId: transcript.transcript_id });
   };
   const sendText = () => {
-    if (authenticationBlocked.current || bootstrap.current || locked.current || !active.current || !capabilities?.conversation || unresolved || ambiguousEdit || recording || localRecording || usageBlocked || serviceBlocked || !textDraft.trim() || [...textDraft].length > 4000) return;
+    if (authenticationBlocked.current || bootstrap.current || locked.current || pending.current || !active.current || !capabilities?.conversation || unresolved || ambiguousEdit || recording || localRecording || usageBlocked || serviceBlocked || !textDraft.trim() || [...textDraft].length > 4000) return;
     const original = textDraft, key = createRecordingId();
-    setTextSending(true);
     void run(async (signal, check) => {
+      setTextSending(true); setOutbox({ key, text: original }); setTextDraft(''); clearLatestReply();
       try {
         const textDigest = await hashRealText(original); check();
         if (pending.current?.key !== key) throw new RealAiError('cancelled');
         pending.current = { ...pending.current, textDigest };
-        const result = await sendRealTextMessage(scope(signal), original, key); check();
+        const result = await sendRealTextMessage(scope(signal), original, key, receiveReplyProgress(key, check)); check();
+        setReplyPreview(null);
         setMessages(previous => appendUnique(previous, [result.user_message, result.message], item => item.id).sort((a, b) => a.sequence - b.sequence));
         setMemories(previous => appendUnique(previous, result.memories, item => item.id));
-        setTextDraft(''); setNotice(t.messageSent);
-      } finally { if (active.current && mounted.current && !signal.aborted) setTextSending(false); }
+        setTextDraft(''); presentReply(result.message); setNotice(t.messageSent);
+      } catch (error) {
+        if (active.current && mounted.current && !signal.aborted) setTextDraft(original);
+        throw error;
+      } finally { if (active.current && mounted.current && !signal.aborted) { setTextSending(false); setOutbox(null); } }
     }, { key, kind: 'conversation', inputType: 'typed' });
   };
   const speak = (message: RealMessage) => {
@@ -552,41 +605,59 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     void run(async (signal, check, beginOperation) => {
       if (playback.current) await playback.current.stop(); check(); setPlaying(false);
       const current = scope(signal);
-      // Replays use the same owned cached synthesis. Expiry never triggers an automatic paid synthesis.
-      if (cached && Date.parse(cached.expires_at) <= Date.now()) { setRenewSpeech(previous => new Set(previous).add(message.id)); setNotice(t.voiceExpired); return; }
-      let metadata = cached;
-      if (!metadata && !renewing) {
-        try { metadata = await getPreparedRealSpeech(current, message.id); check(); }
-        catch (error) {
-          check();
-          if (error instanceof RealAiError && error.status === 410) {
-            setRenewSpeech(previous => new Set(previous).add(message.id)); setNotice(t.voiceExpired); return;
-          }
-          if (!(error instanceof RealAiError && error.status === 404)) throw error;
+      let metadata = cached, bytes: Uint8Array | undefined, fromCache = false;
+      // One deliberate Listen may reuse owned audio or prepare one fresh clip.
+      // Only verified free-read expiry authorizes moving to preparation below.
+      try {
+        if (metadata && Date.parse(metadata.expires_at) <= Date.now()) {
+          speechBytes.get(metadata); speech.current.delete(message.id); metadata = undefined;
         }
-      }
-      if (!metadata) {
-        if (!capabilities?.speech || usageBlocked || serviceBlocked) { setNotice(t.serviceUnavailable); return; }
-        beginOperation({ key, kind: 'speech', assistantId: message.id });
-        metadata = await createRealSpeech(current, message.id, key); check();
-      }
-      speech.current.set(message.id, metadata);
-      setRenewSpeech(previous => { const next = new Set(previous); next.delete(message.id); return next; });
-      let bytes: Uint8Array, fromCache = false;
-      try {
-        const saved = speechBytes.get(metadata); fromCache = saved !== null;
-        bytes = saved ?? await getRealSpeechAudio(current, metadata);
-      }
-      catch (error) { check(); if (error instanceof RealAiError && error.status === 410) {
-        setRenewSpeech(previous => new Set(previous).add(message.id)); setNotice(t.voiceExpired); return;
-      } throw error; }
-      try {
+        if (!metadata && !renewing) {
+          try { metadata = await getPreparedRealSpeech(current, message.id); check(); }
+          catch (error) {
+            check();
+            if (!(error instanceof RealAiError && error.status === 404) && !knownFreeSpeechExpiry(error)) throw error;
+          }
+        }
+        if (metadata) {
+          try {
+            const saved = speechBytes.get(metadata); fromCache = saved !== null;
+            bytes = saved ?? await getRealSpeechAudio(current, metadata); check();
+          } catch (error) {
+            check();
+            if (!knownFreeSpeechExpiry(error)) throw error;
+            speech.current.delete(message.id); metadata = undefined;
+          }
+        }
+        if (!metadata) {
+          if (!capabilities?.speech || usageBlocked || serviceBlocked) {
+            setRenewSpeech(previous => new Set(previous).add(message.id));
+            setNotice(usageBlocked ? t.usageLimit : t.serviceUnavailable); return;
+          }
+          check(); beginOperation({ key, kind: 'speech', assistantId: message.id });
+          try {
+            metadata = await createRealSpeech(current, message.id, key); check();
+            speech.current.set(message.id, metadata);
+            bytes = await getRealSpeechAudio(current, metadata); check();
+          } catch (error) {
+            check();
+            // A paid attempt has already begun. Never start another synthesis
+            // or key, even when its result or newly prepared file is unavailable.
+            if (error instanceof RealAiError && error.status === 410) {
+              throw new RealAiError(error.kind, error.status, true, error.code, error.retry, error.operationId, 'check-saved');
+            }
+            throw error;
+          }
+        }
         check();
+        if (!bytes) throw new RealAiError('invalid-response');
+        speech.current.set(message.id, metadata);
+        setRenewSpeech(previous => { const next = new Set(previous); next.delete(message.id); return next; });
         if (!fromCache) speechBytes.put(metadata, bytes);
         playback.current ??= createRealPlayback();
         await playback.current.play(bytes, () => { if (mounted.current && active.current) setPlaying(false); }); check(); setPlaying(true);
-      } finally { bytes.fill(0); }
-    });
+      } finally { bytes?.fill(0); }
+    }, undefined, 'speech');
   };
   useLayoutEffect(() => { speakCurrent.current = speak; });
   const stopVoice = () => {
@@ -605,7 +676,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       correctionBases.current.delete(memory.id);
       setCorrections(previous => { const next = { ...previous }; delete next[memory.id]; return next; });
       setNotice(status === 'rejected' ? t.memoryLeftOut : correction ? t.correctionSaved : t.memoryConfirmed);
-    });
+    }, undefined, 'saving');
   };
   const generate = () => {
     if (!capabilities?.writing || !reads.current.memories.loaded || !generationConsent || unresolved || ambiguousEdit || usageBlocked || serviceBlocked || !memories.some(item => item.status === 'confirmed')) return;
@@ -619,7 +690,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     const before = editingDraft.current ?? draft, content = editor;
     void run(async (signal, check) => { const result = await editRealDraft(scope(signal), before, content); check();
       setDrafts(previous => previous.map(item => item.draft_id === result.draft_id ? result : item)); editingDraft.current = null; setEditor(null); setHistory(null); setNotice(t.saved);
-    });
+    }, undefined, 'saving');
   };
   const showHistory = () => { void loadResource('history', !!reads.current.history.error); };
   const sharePdf = () => {
@@ -651,7 +722,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
           updateRead('exports', { loading: false, error: failureMessage(error) });
         }
       } finally { latest.current.privacy.release(store); if (pdfStore.current === store) pdfStore.current = null; }
-    });
+    }, undefined, 'pdf');
   };
   const showExports = () => { void loadResource('exports', !!reads.current.exports.error); };
   const shareSavedPdf = (metadata: RealExport) => {
@@ -665,7 +736,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         latest.current.privacy.rememberReturn(user.id, project.id, metadata.draft_id);
         await store.share(handle); check(); await store.discard(handle); check();
       } finally { latest.current.privacy.release(store); if (pdfStore.current === store) pdfStore.current = null; }
-    });
+    }, undefined, 'pdf');
   };
   const loadMore = (resource: Resource) => {
     const offset = pages[resource]; if (offset === null || offset >= 1000 || busy) return;
@@ -685,7 +756,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const dirty = !!textDraft || !!localRecording || recording || (editor !== null && editor !== draft?.content) || Object.values(corrections).some(Boolean);
   const leave = useGuardedLeave({ language, dirty, uncertain: !!unresolved || ambiguousEdit || busy || continuationBusy,
     onDiscard: () => { epoch.current++; controller.current?.abort(); cancelReads(true); bootstrap.current?.abort(); bootstrap.current = null; setOpening(false); setContinuationBusy(false); cleanupAudio();
-      locked.current = false; setBusy(false); editingDraft.current = null; correctionBases.current.clear(); setEditor(null); setCorrections({}); setLocalRecording(null); setTextDraft(''); setTextSending(false);
+      locked.current = false; setBusy(false); editingDraft.current = null; correctionBases.current.clear(); setEditor(null); setCorrections({}); setLocalRecording(null); setTextDraft(''); setTextSending(false); setOutbox(null); setActivity(null); setReplyPreview(null); clearLatestReply();
       setRecording(false); voiceConsent.current = null; consentIntent.current = null; setConsentOpen(false); setVoiceReplySending(false); setSafeReplyId(null); setPlaying(false); },
     onCheckSavedResult: checkSaved, checkDisabled: busy || !sessionId });
   const navigate = (next: typeof tab, finishing = false) => {
@@ -707,6 +778,8 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const chatReady = readStates.messages.loaded && readStates.transcripts.loaded;
   const inputBlocked = busy || suspended || !!unresolved || ambiguousEdit || recording || !!localRecording || mediaBlocked || !chatReady;
   const actionDefaults = { language, disabled: blocked };
+  const busyLabel = activity === 'speech' ? t.preparingVoice : activity === 'story' ? t.creatingStory
+    : activity === 'pdf' ? t.preparingPdf : activity === 'checking' ? t.checkingSaved : activity === 'saving' ? t.savingChanges : t.busy;
   const note = (value: string) => <Text allowFontScaling accessibilityLanguage={locale} style={styles.note}>{value}</Text>;
   const checkbox = (label: string, checked: boolean, action: () => void, disabled: boolean) => <Pressable accessibilityRole="checkbox"
     accessibilityLabel={label} accessibilityState={{ checked, disabled }} disabled={disabled} onPress={action} style={styles.checkbox}>
@@ -724,6 +797,15 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     </>;
   }
   const composer = !suspended && tab === 'chat' && <View testID="conversation-composer" style={styles.composer}>
+    {replyPreview && <View testID="live-reply-preview" style={styles.replyPreview}>
+      <Text allowFontScaling accessibilityLanguage={locale} style={styles.speaker}>{t.replyPreviewTitle}</Text>
+      <Text allowFontScaling selectable accessibilityLanguage={accessibilityLanguages[project.language]} style={styles.body}>{replyPreview.text}</Text>
+      <Text allowFontScaling accessibilityLanguage={locale} accessibilityLiveRegion="polite" style={styles.note}>{replyPreview.saving ? t.replySaving : t.replyFinishing}</Text>
+    </View>}
+    {latestReplyId && replyAnchor?.id === latestReplyId && messages.some(message => message.id === latestReplyId) &&
+      <ActionButton language={language} label={t.viewLatestReply} onPress={viewLatestReply} disabled={blocked} />}
+    {(textSending || voiceReplySending) && !replyPreview && <Text allowFontScaling accessibilityLiveRegion="polite" style={styles.note}>{t.thinking}</Text>}
+    {busy && !localRecording && !textSending && !voiceReplySending && <Text allowFontScaling accessibilityLiveRegion="polite" style={styles.note}>{busyLabel}</Text>}
     {recording ? <>
       <Text allowFontScaling accessibilityLiveRegion="polite" style={styles.speaker}>{t.recording} · {Math.floor(duration / 1000)}s / 60s</Text>
       <ActionButton language={language} label={t.stop} onPress={stopCapture} disabled={busy} primary />
@@ -751,17 +833,14 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     {checkbox(t.generationConsent, generationConsent, () => setGenerationConsent(!generationConsent), blocked || editor !== null)}
     <ActionButton {...actionDefaults} label={t.generate} onPress={generate} disabled={blocked || usageBlocked || serviceBlocked || editor !== null || !generationConsent || !capabilities?.writing || !readStates.memories.loaded || !memories.some(item => item.status === 'confirmed')} primary />
   </>;
-  return <Screen scrollViewRef={contentScroll} working keyboardAware bottomKeyboardAware back={{ language, label: t.back, onPress: () => leave.requestLeave(() => latest.current.onBack()) }}
-    bottomControls={composer}><View style={styles.workspace}>
+  return <Screen scrollViewRef={contentScroll} onContentLayout={event => { scrollOffsets.current.body = event.nativeEvent.layout.y; }} working keyboardAware bottomKeyboardAware back={{ language, label: t.back, onPress: () => leave.requestLeave(() => latest.current.onBack()) }}
+    bottomControls={composer}><View style={styles.workspace} testID="real-workspace-layout" onLayout={event => { scrollOffsets.current.workspace = event.nativeEvent.layout.y; }}>
     <StoryDisclosure language={language} label={t.moreActions} compact
       heading={<StoryHeading title={project.title} language={language} storyLanguage={project.language} />}>
       {onStoryDetails && <AccountAction language={language} quiet label={t.storyDetails}
         onPress={() => leave.requestLeave(() => latest.current.onStoryDetails?.())} />}
       {tab === 'chat' && <StoryDisclosure language={language} label={t.yourWords}>
-          {messages.filter(message => message.role === 'user' && message.source_text_input_id).map(message => <View key={message.id}>
-            {note(t.originalTyped)}<Text allowFontScaling selectable style={styles.body}>{message.text}</Text></View>)}
-          {transcripts.map(source => <View key={source.transcript_id}>{note(t.original)}
-            <Text allowFontScaling selectable accessibilityLanguage={accessibilityLanguages[project.language]} style={styles.body}>{source.text}</Text></View>)}
+          <OriginalWordsEvidence messages={messages} transcripts={transcripts} language={language} storyLanguage={project.language} />
         </StoryDisclosure>}
       <StoryDisclosure language={language} label={t.privacy}>
         {note(t.textConsent)}{note(t.introduction)}{note(t.voice)}
@@ -784,17 +863,22 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       {capabilities && !capabilities.enabled && <AvailabilityNotice language={language} />}
       {tab === 'chat' && <>
         {readFeedback(['messages', 'transcripts'], t.loadingChat)}
-        <View style={styles.thread} testID="real-ai-chat-thread">
+        {note(t.listenDisclosure)}
+        <View style={styles.thread} testID="real-ai-chat-thread" onLayout={event => { scrollOffsets.current.thread = event.nativeEvent.layout.y; }}>
           {chatReady && !messages.length && !transcripts.length && note(t.noMessages)}
           <ChatMessageHistory messages={messages} language={language} storyLanguage={project.language} blocked={blocked}
-            renewSpeech={renewSpeech} speechBlocked={usageBlocked || serviceBlocked || !capabilities?.speech} onSpeak={onSpeak} />
+            renewSpeech={renewSpeech} speechBlocked={usageBlocked || serviceBlocked || !capabilities?.speech} onSpeak={onSpeak} onMessageLayout={recordMessageLayout} />
           {unplacedTranscripts.map(source => <View key={source.transcript_id} style={[styles.bubble, styles.userBubble]}>
             <Text allowFontScaling style={styles.speaker}>{t.you}</Text>{note(t.voiceMessage)}
             <Text allowFontScaling selectable accessibilityLanguage={accessibilityLanguages[project.language]} style={styles.body}>{source.text}</Text>
             {canReply(source) && <ActionButton {...actionDefaults} label={t.process} onPress={() => ask(source)}
               disabled={blocked || usageBlocked || serviceBlocked || !capabilities?.conversation} primary />}
           </View>)}
-          {(textSending || voiceReplySending) && <Text allowFontScaling accessibilityLiveRegion="polite" style={styles.note}>{t.thinking}</Text>}
+          {outbox && <View testID="pending-typed-message" style={[styles.bubble, styles.userBubble]}>
+            <Text allowFontScaling accessibilityLanguage={locale} style={styles.speaker}>{t.you}</Text>
+            <Text allowFontScaling selectable accessibilityLanguage={accessibilityLanguages[project.language]} style={styles.body}>{outbox.text}</Text>
+            <Text allowFontScaling accessibilityLiveRegion="polite" accessibilityLanguage={locale} style={styles.note}>{t.sending}</Text>
+          </View>}
         </View>
         {playing && <ActionButton language={language} label={t.stopVoice} onPress={stopVoice} primary />}
 
@@ -836,7 +920,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         </View>)}
       {(unresolved || ambiguousEdit) && <ActionButton language={language} label={t.check} onPress={checkSaved} disabled={busy || recording || !sessionId} primary />}
     </>}
-    {busy && !localRecording && !textSending && !voiceReplySending && <Text allowFontScaling accessibilityLiveRegion="polite" style={styles.note}>{t.busy}</Text>}
+    {busy && tab !== 'chat' && !localRecording && !textSending && !voiceReplySending && <Text allowFontScaling accessibilityLiveRegion="polite" style={styles.note}>{busyLabel}</Text>}
     {notice === t.auth && <AccountAction language={language} quiet label={t.signOut} onPress={() => leave.requestLeave(() => latest.current.onSignOut())} />}
     {consentOpen && <Modal visible transparent={false} animationType="none" onRequestClose={cancelConsent}>
       <Screen><View accessibilityViewIsModal style={styles.workspace}>
@@ -870,6 +954,7 @@ const styles = StyleSheet.create({
   assistantBubble: { alignSelf: 'flex-start', paddingHorizontal: 0 },
   speaker: { fontSize: 18, lineHeight: 27, fontWeight: '600', color: colors.forest }, body: { color: colors.ink, fontSize: 21, lineHeight: 33 },
   composer: { gap: 2 },
+  replyPreview: { gap: 8, padding: 14, marginBottom: 8, borderRadius: 16, backgroundColor: colors.selected },
   composerRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 4, padding: 8,
     backgroundColor: colors.paper, borderRadius: 18, borderWidth: 1, borderColor: colors.border },
   stackedComposer: { flexDirection: 'column', alignItems: 'stretch' },

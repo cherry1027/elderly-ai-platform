@@ -1,9 +1,8 @@
-import { File } from 'expo-file-system';
 import { fetch as nativeFetch } from 'expo/fetch';
 import { CryptoDigestAlgorithm, digest, digestStringAsync } from 'expo-crypto';
 import { apiBackoff, BackoffWaitError, parseRetryAdvice } from '../api/backoff';
 import type { AudioRecording } from '../api/audio-transcripts';
-import { validateRecording } from '../api/audio-transcripts';
+import { createRecordingUpload } from '../audio/recording-upload';
 import type { MemoryFact } from '../api/memory-review';
 import type { StoryEdit, StorySourceMemory } from '../api/story-drafts';
 import type { StoryExport } from '../api/story-exports';
@@ -198,19 +197,159 @@ function recoveryFor(code: string | undefined, header: string | null, status: nu
   if (known) return RECOVERY_STATUSES[code!] === status ? known : undefined;
   return code && ['contact-operator', 'sign-in', 'check-saved'].includes(header ?? '') ? header as RealRecovery : undefined;
 }
+export type RealConversationProgress =
+  | { type: 'operation'; operation_id: string; project_id: string; session_id: string }
+  | { type: 'reply'; text: string }
+  | { type: 'saving' };
+interface ConversationStream {
+  scope: RealScope;
+  onProgress(event: RealConversationProgress): void;
+}
+/** Only a validated stream error may preserve backend recovery advice. */
+class StreamTerminalFailure extends Error {
+  constructor(readonly failure: RealAiError) { super('Conversation requires recovery.'); }
+}
+const MAX_CONVERSATION_STREAM_BYTES = 2_000_000, MAX_CONVERSATION_EVENT_BYTES = 1_000_000;
+
+async function readConversationStream<T>(response: Response, stream: ConversationStream,
+  decode: (value: unknown, operationId?: string) => T, operationId: string | undefined, check: () => void,
+  register: (reader: ReadableStreamDefaultReader<Uint8Array>) => void, cancel: () => Promise<void>, release: () => void, interrupt: Promise<never>, settled: () => void,
+  failure: (status: number, code: string | undefined, recovery: string | null, retry: string | null) => RealAiError): Promise<T> {
+  if (!operationId || operationId !== operationId.toLowerCase() || !response.body?.getReader ||
+    !response.headers.get('cache-control')?.toLowerCase().includes('no-store')) invalid();
+  const reader = response.body!.getReader(); register(reader);
+  const expectedOperationId = operationId!;
+  const decoder = new TextDecoder('utf-8', { fatal: true }), encoder = new TextEncoder();
+  let totalBytes = 0, frameBytes = 0, lineParts: string[] = [], lineBytes = 0, data: string | null = null, frames = 0;
+  let haveOperation = false, preview: string | undefined, saving = false;
+  let terminal: { result: T } | { error: RealAiError } | null = null;
+  const notify = async (event: RealConversationProgress) => {
+    check(); await Promise.race([Promise.resolve(stream.onProgress(event)), interrupt]); check();
+  };
+  const frame = async (raw: string) => {
+    check();
+    if (++frames > 16 || terminal) invalid();
+    const value: unknown = JSON.parse(raw);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) invalid();
+    const kind = (value as Record<string, unknown>).type;
+    if (kind === 'operation') {
+      const v = row(value, ['type', 'operation_id', 'project_id', 'session_id']);
+      if (haveOperation || v.operation_id !== expectedOperationId) invalid();
+      owned(v, stream.scope); haveOperation = true;
+      await notify({ type: 'operation', operation_id: expectedOperationId, project_id: v.project_id as string, session_id: v.session_id as string });
+      return;
+    }
+    if (!haveOperation) invalid();
+    if (kind === 'reply') {
+      const v = row(value, ['type', 'text']);
+      if (preview !== undefined || saving || !text(v.text, 1000) || (v.text.match(/\?/g)?.length ?? 0) > 1) invalid();
+      preview = v.text as string; await notify({ type: 'reply', text: preview }); return;
+    }
+    if (kind === 'saving') {
+      row(value, ['type']); if (saving) invalid();
+      saving = true; await notify({ type: 'saving' }); return;
+    }
+    if (kind === 'completed') {
+      const v = row(value, ['type', 'result']), result = decode(v.result, operationId);
+      const reply = (result as unknown as RealTurn).message?.text;
+      if (!text(reply, 32_000) || (preview !== undefined && reply !== preview)) invalid();
+      terminal = { result }; settled(); return;
+    }
+    if (kind === 'error') {
+      const v = row(value, ['type', 'status', 'error', 'operation_id', 'recovery', 'retry_after']);
+      const body = row(v.error, ['code', 'message']);
+      if (v.operation_id !== operationId || !Number.isInteger(v.status) || (v.status as number) < 400 || (v.status as number) > 599 ||
+        typeof body.code !== 'string' || !/^[A-Z0-9_]{1,80}$/.test(body.code) || !text(body.message, 1000) ||
+        !(v.recovery === null || ['contact-operator', 'sign-in', 'wait', 'check-saved'].includes(v.recovery as string)) ||
+        !(v.retry_after === null || (typeof v.retry_after === 'string' && v.retry_after.length <= 64))) invalid();
+      terminal = { error: failure(v.status as number, SAFE_CODES.has(body.code as string) ? body.code as string : undefined,
+        v.recovery as string | null, v.retry_after as string | null) }; settled(); return;
+    }
+    invalid();
+  };
+  const line = async () => {
+    let value = lineParts.join(''); lineParts = []; lineBytes = 0;
+    if (value.endsWith('\r')) value = value.slice(0, -1);
+    if (value.includes('\r')) invalid();
+    if (!value) {
+      if (data === null) invalid();
+      const value = data!; data = null; frameBytes = 0;
+      await frame(value); return;
+    }
+    if (data !== null || !value.startsWith('data:')) invalid();
+    data = value.slice(5); if (data.startsWith(' ')) data = data.slice(1);
+    if (!data || encoder.encode(data).byteLength > MAX_CONVERSATION_EVENT_BYTES) invalid();
+  };
+  const accept = async (chunk: string) => {
+    const pieces = chunk.split('\n');
+    for (let index = 0; index < pieces.length; index++) {
+      check(); const part = pieces[index];
+      if (part) { lineParts.push(part); const bytes = encoder.encode(part).byteLength; lineBytes += bytes; frameBytes += bytes; }
+      if (lineBytes > MAX_CONVERSATION_EVENT_BYTES + 6 || frameBytes > MAX_CONVERSATION_EVENT_BYTES + 10) invalid();
+      if (index < pieces.length - 1) { frameBytes++; await line(); check(); if (terminal) return; }
+    }
+  };
+  try {
+    while (true) {
+      check(); const next = await Promise.race([reader.read(), interrupt]); check();
+      if (next.done) { await accept(decoder.decode()); check(); break; }
+      if (!(next.value instanceof Uint8Array)) invalid();
+      // Decode only through each raw newline. Once a verified terminal frame
+      // arrives, later bytes in this same native chunk are outside the protocol.
+      for (let offset = 0; offset < next.value.byteLength;) {
+        const newline = next.value.indexOf(10, offset), end = newline < 0 ? next.value.byteLength : newline + 1;
+        const bytes = next.value.subarray(offset, end); offset = end;
+        totalBytes += bytes.byteLength; if (totalBytes > MAX_CONVERSATION_STREAM_BYTES) invalid();
+        await accept(decoder.decode(bytes, { stream: true })); check(); if (terminal) break;
+      }
+      if (terminal) break;
+    }
+    if (!terminal) invalid();
+    // TypeScript cannot see the terminal assignment inside the frame closure.
+    const result = terminal as unknown as { result: T } | { error: RealAiError };
+    if ('error' in result) throw new StreamTerminalFailure(result.error);
+    return result.result;
+  } finally {
+    await cancel(); release();
+  }
+}
+
 /** Separate v2 transport: fixed relative paths only, owner-fenced tokens, no redirect or automatic retry. */
 async function execute<T>(options: ListStoryProjectsOptions, path: string, method: 'GET' | 'POST' | 'PATCH',
-  decode: (value: unknown) => T, body?: string | FormData, key?: string, binary?: 'pdf' | 'wav'): Promise<T> {
+  decode: (value: unknown, operationId?: string) => T, body?: string | FormData, key?: string, binary?: 'pdf' | 'wav', stream?: ConversationStream): Promise<T> {
   const origin = normalizeMobileApiBaseUrl(options.baseUrl), lease = apiBackoff.capture();
   if (key !== undefined) validateStoryProjectId(key);
   const timeout = options.timeoutMs ?? 60_000;
   if (!Number.isFinite(timeout) || timeout < 1 || timeout > 120_000) throw new RealAiError('configuration');
   const controller = new AbortController(); let dispatched = false, done = false;
   let interruption: 'cancelled' | 'timeout' | null = null;
+  let operationId: string | undefined, streamReader: ReadableStreamDefaultReader<Uint8Array> | undefined, streamCancellation: Promise<void> | undefined;
+  let readerReleased = false;
+  const releaseStream = () => {
+    if (!streamReader || readerReleased) return;
+    readerReleased = true;
+    try { streamReader.releaseLock(); } catch { /* Native cleanup is best effort after abort; the write stays uncertain. */ }
+  };
+  const cancelStream = () => {
+    if (!streamReader) return Promise.resolve();
+    if (!streamCancellation) {
+      const reader = streamReader;
+      // Publish the bounded cleanup promise before invoking native code. A
+      // broken native cancellation promise must not hold recovery open forever.
+      let resolveCleanup: () => void = () => {};
+      streamCancellation = new Promise<void>(resolve => { resolveCleanup = resolve; });
+      let finished = false;
+      const finish = () => { if (!finished) { finished = true; clearTimeout(deadline); resolveCleanup(); } };
+      const deadline = setTimeout(finish, 1000);
+      controller.abort();
+      try { void Promise.resolve(reader.cancel()).then(finish, finish); } catch { finish(); }
+    }
+    return streamCancellation;
+  };
   let reject: (error: unknown) => void = () => {};
   const interrupted = new Promise<never>((_, fail) => { reject = fail; });
-  const stop = (kind: 'cancelled' | 'timeout') => { if (done || interruption) return; interruption = kind; controller.abort(); reject(new RealAiError(kind, undefined, dispatched && method !== 'GET')); };
-  const check = () => { if (interruption || !lease.isCurrent()) throw new RealAiError(interruption ?? 'cancelled', undefined, dispatched && method !== 'GET'); };
+  const stop = (kind: 'cancelled' | 'timeout') => { if (done || interruption) return; interruption = kind; controller.abort(); void cancelStream(); reject(new RealAiError(kind, undefined, dispatched && method !== 'GET', undefined, undefined, operationId)); };
+  const check = () => { if (interruption || !lease.isCurrent()) throw new RealAiError(interruption ?? 'cancelled', undefined, dispatched && method !== 'GET', undefined, undefined, operationId); };
   const admission = () => { try { lease.assertReady(origin); } catch (error) {
     if (error instanceof BackoffWaitError) throw new RealAiError('unavailable', error.advice.code === 'RATE_LIMITED' ? 429 : 503, false, error.advice.code, error.advice);
     throw new RealAiError('cancelled');
@@ -218,60 +357,72 @@ async function execute<T>(options: ListStoryProjectsOptions, path: string, metho
   const abort = () => stop('cancelled'); options.signal?.addEventListener('abort', abort, { once: true });
   if (options.signal?.aborted) abort();
   const timer = setTimeout(() => stop('timeout'), timeout);
+  const responseError = (status: number, code: string | undefined, recoveryHeader: string | null, retryHeader: string | null) => {
+      const recovery = recoveryFor(code, recoveryHeader, status);
+      const admissionCode = code === 'API_BUSY' ? 'API_BUSY' : 'RATE_LIMITED';
+      const retry = recovery === 'wait' ? parseRetryAdvice(status,
+        admissionCode, retryHeader) : undefined;
+      if (retry) lease.record(origin, retry);
+      const kind = recovery === 'sign-in' || status === 401 ? 'authentication' : status === 403 ? 'forbidden' : status === 404 || status === 410 ? 'not-found'
+        : status === 409 ? 'conflict' : status === 422 || status === 400 || status === 413 || status === 415 ? 'validation'
+        : status === 408 || status === 504 ? 'timeout' : 'unavailable';
+      const provenNotDispatched = !!code && RECOVERY_STATUSES[code] === status &&
+        (NO_DISPATCH_CODES.has(code) || (recovery === 'wait' && !MAY_DISPATCH_CODES.has(code)));
+      const inconsistentRecoveryStatus = !!code && Object.hasOwn(RECOVERY_STATUSES, code) && RECOVERY_STATUSES[code] !== status;
+      return new RealAiError(kind, status, method !== 'GET' && (!!operationId || inconsistentRecoveryStatus ||
+        MAY_DISPATCH_CODES.has(code ?? '') || recovery === 'check-saved' ||
+        ['AI_OPERATION_IN_PROGRESS', 'AI_OPERATION_UNCERTAIN', 'AI_OPERATION_FAILED'].includes(code ?? '') ||
+        (status >= 500 && !provenNotDispatched && !(status === 503 && code === 'TEXT_CHAT_NOT_READY'))), code, retry, operationId, recovery);
+  };
   const operation = (async () => {
     check(); admission();
     const token = await options.getAccessToken().catch(() => null); check(); admission();
     if (!token || token.length > 16384 || !/^[A-Za-z0-9._~-]+$/.test(token) || /^sb_(publishable|secret)_/.test(token)) throw new RealAiError('authentication');
-    const request = options.request ?? (body instanceof FormData ? nativeFetch as typeof fetch : globalThis.fetch);
+    const request = options.request ?? (body instanceof FormData || stream ? nativeFetch as typeof fetch : globalThis.fetch);
     dispatched = true;
     let response: Response;
     try { response = await request(`${origin}/api/v2/${path}`, { method, headers: {
-      Authorization: `Bearer ${token}`, Accept: binary === 'pdf' ? 'application/pdf' : binary === 'wav' ? 'audio/wav' : 'application/json',
+      Authorization: `Bearer ${token}`, Accept: binary === 'pdf' ? 'application/pdf' : binary === 'wav' ? 'audio/wav' : stream ? 'text/event-stream' : 'application/json',
       ...(typeof body === 'string' ? { 'Content-Type': 'application/json' } : {}), ...(key ? { 'Idempotency-Key': key } : {}),
     }, ...(body !== undefined ? { body } : {}), credentials: 'omit', cache: 'no-store', redirect: 'error', signal: controller.signal }); }
     catch { check(); throw new RealAiError('network', undefined, method !== 'GET'); }
     check();
     const rawOperationId = response.headers.get('x-memy-operation-id');
-    const operationId = uuid(rawOperationId) ? rawOperationId : undefined;
+    operationId = uuid(rawOperationId) ? rawOperationId : undefined;
     if (!response.ok) {
       let code: string | undefined;
       try { const error = await response.json(); const raw = error?.error?.code;
         if (SAFE_CODES.has(raw)) code = raw;
       } catch { /* Never expose an upstream body. */ }
       check();
-      const recovery = recoveryFor(code, response.headers.get('x-memy-recovery'), response.status);
-      const admissionCode = code === 'API_BUSY' ? 'API_BUSY' : 'RATE_LIMITED';
-      const retry = recovery === 'wait' ? parseRetryAdvice(response.status,
-        admissionCode, response.headers.get('retry-after')) : undefined;
-      if (retry) lease.record(origin, retry);
-      const kind = recovery === 'sign-in' || response.status === 401 ? 'authentication' : response.status === 403 ? 'forbidden' : response.status === 404 || response.status === 410 ? 'not-found'
-        : response.status === 409 ? 'conflict' : response.status === 422 || response.status === 400 || response.status === 413 || response.status === 415 ? 'validation'
-        : response.status === 408 || response.status === 504 ? 'timeout' : 'unavailable';
-      const provenNotDispatched = !!code && RECOVERY_STATUSES[code] === response.status &&
-        (NO_DISPATCH_CODES.has(code) || (recovery === 'wait' && !MAY_DISPATCH_CODES.has(code)));
-      const inconsistentRecoveryStatus = !!code && Object.hasOwn(RECOVERY_STATUSES, code) && RECOVERY_STATUSES[code] !== response.status;
-      throw new RealAiError(kind, response.status, method !== 'GET' && (!!operationId || inconsistentRecoveryStatus ||
-        MAY_DISPATCH_CODES.has(code ?? '') || recovery === 'check-saved' ||
-        ['AI_OPERATION_IN_PROGRESS', 'AI_OPERATION_UNCERTAIN', 'AI_OPERATION_FAILED'].includes(code ?? '') ||
-        (response.status >= 500 && !provenNotDispatched && !(response.status === 503 && code === 'TEXT_CHAT_NOT_READY'))), code, retry, operationId, recovery);
+      throw responseError(response.status, code, response.headers.get('x-memy-recovery'), response.headers.get('retry-after'));
     }
     let value: unknown, privateBytes: Uint8Array | undefined;
     try {
       const maximum = binary === 'wav' ? 10_000_000 : binary === 'pdf' ? 2_000_000 : 2_000_000;
       const length = response.headers.get('content-length');
       if (length && (!/^\d+$/.test(length) || Number(length) > maximum)) invalid();
+      if (stream && response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() === 'text/event-stream') {
+        const result = await readConversationStream(response, stream, decode, operationId, check,
+          reader => { streamReader = reader; }, cancelStream, releaseStream, interrupted, () => clearTimeout(timer), responseError);
+        check(); return result;
+      }
       if (binary) {
         const bytes = new Uint8Array(await response.arrayBuffer()); privateBytes = bytes; check();
         if (!bytes.length || bytes.length > maximum || response.headers.get('content-type')?.split(';')[0].trim() !== (binary === 'pdf' ? 'application/pdf' : 'audio/wav') ||
           !response.headers.get('cache-control')?.toLowerCase().includes('no-store')) invalid();
         value = { bytes, headers: response.headers };
       } else { const raw = await response.text(); check(); if (raw.length > maximum) invalid(); value = JSON.parse(raw); }
-      const result = decode(value); check(); return result;
-    } catch (error) { privateBytes?.fill(0); check(); if (error instanceof RealAiError && method === 'GET') throw error;
+      const result = decode(value, operationId); check(); return result;
+    } catch (error) { privateBytes?.fill(0); if (stream) controller.abort(); check(); if (error instanceof StreamTerminalFailure) throw error.failure;
+      if (error instanceof RealAiError && method === 'GET') throw error;
       throw new RealAiError('invalid-response', undefined, method !== 'GET', undefined, undefined, operationId); }
   })();
   try { return await Promise.race([operation, interrupted]); }
-  finally { done = true; clearTimeout(timer); options.signal?.removeEventListener('abort', abort); }
+  finally {
+    done = true; clearTimeout(timer); options.signal?.removeEventListener('abort', abort);
+    if (streamReader && interruption) { await cancelStream(); releaseStream(); await operation.catch(() => {}); }
+  }
 }
 function scopePath(scope: RealScope, leaf: string) {
   validateStoryProjectId(scope.projectId); const id = validateStoryProjectId(scope.sessionId);
@@ -287,15 +438,8 @@ export function getRealTranscripts(scope: RealScope, offset = 0) {
   return execute(scope, scopePath(scope, `transcripts?${page(offset)}`), 'GET', value => list(value, v => decodeTranscript(v, scope), v => v.transcript_id));
 }
 export function transcribeRealRecording(scope: RealScope, recording: AudioRecording, consent: boolean, key: string) {
-  if (!consent) throw new RealAiError('validation'); validateRecording(recording); validateStoryProjectId(key);
-  const body = new FormData();
-  body.append('file', { name: 'recording.m4a', type: 'audio/mp4', bytes: async () => {
-    const file = new File(recording.uri);
-    if (!file.exists || file.size !== recording.size) throw new RealAiError('validation');
-    const bytes = await file.bytes(); if (!(bytes instanceof Uint8Array) || bytes.byteLength !== recording.size) throw new RealAiError('validation');
-    return bytes;
-  } } as unknown as Blob);
-  body.append('language', scope.language); body.append('consent', 'true');
+  if (!consent) throw new RealAiError('validation'); validateStoryProjectId(key);
+  const body = createRecordingUpload(recording, scope.language, () => { throw new RealAiError('validation'); });
   return execute(scope, scopePath(scope, 'transcribe'), 'POST', value => decodeTranscript(value, scope), body, key);
 }
 export function getRealMessages(scope: RealScope, offset = 0) {
@@ -304,20 +448,20 @@ export function getRealMessages(scope: RealScope, offset = 0) {
     if (new Set(items.map(v => v.sequence)).size !== items.length) invalid(); return items.sort((a, b) => a.sequence - b.sequence);
   });
 }
-export function sendRealMessage(scope: RealScope, input: { source_transcript_id: string }, key: string) {
-  validateStoryProjectId(input.source_transcript_id);
-  return execute(scope, scopePath(scope, 'messages'), 'POST', value => {
+export function sendRealMessage(scope: RealScope, input: { source_transcript_id: string }, key: string, onProgress?: (event: RealConversationProgress) => void) {
+  const sourceId = validateStoryProjectId(input.source_transcript_id), expectedScope = onProgress ? { ...scope } : scope;
+  return execute(expectedScope, scopePath(expectedScope, 'messages'), 'POST', value => {
     const v = row(value, ['user_message', 'message', 'memories', 'mode']);
     if (v.mode !== 'real') invalid();
-    const user = decodeMessage(v.user_message, scope), assistant = decodeMessage(v.message, scope);
-    const memories = list(v.memories, item => decodeMemory(item, scope), item => item.id);
+    const user = decodeMessage(v.user_message, expectedScope), assistant = decodeMessage(v.message, expectedScope);
+    const memories = list(v.memories, item => decodeMemory(item, expectedScope), item => item.id);
     if (user.role !== 'user' || assistant.role !== 'assistant' || assistant.sequence !== user.sequence + 1 ||
       assistant.id === user.id || assistant.source_transcript_id !== user.source_transcript_id ||
       memories.some(item => item.status !== 'pending' || item.source_message_id !== user.id) ||
-      user.source_transcript_id !== input.source_transcript_id) invalid();
+      user.source_transcript_id !== sourceId) invalid();
     if (user.source_text_input_id !== null || assistant.source_text_input_id !== null) invalid();
     return { user_message: user, message: assistant, memories, mode: 'real' as const };
-  }, JSON.stringify({ ...input, language: scope.language }), key);
+  }, JSON.stringify({ ...input, language: expectedScope.language }), key, undefined, onProgress ? { scope: expectedScope, onProgress } : undefined);
 }
 /** Native SHA-256 of exact UTF-8 wording; only its digest belongs in pending metadata. */
 export async function hashRealText(original: string): Promise<string> {
@@ -344,12 +488,13 @@ export function decodeRealTextTurn(value: unknown, scope: RealScope, original?: 
       (item.year !== null && !item.evidence.includes(String(item.year))))) invalid();
   return { user_message: user, message: assistant, memories, mode: 'real' };
 }
-export function sendRealTextMessage(scope: RealScope, original: string, key: string) {
+export function sendRealTextMessage(scope: RealScope, original: string, key: string, onProgress?: (event: RealConversationProgress) => void) {
   if (!text(original, 4000)) throw new RealAiError('validation');
   validateStoryProjectId(key);
-  return execute(scope, scopePath(scope, 'text-messages'), 'POST',
-    value => decodeRealTextTurn(value, scope, original),
-    JSON.stringify({ text: original, language: scope.language }), key);
+  const expectedScope = onProgress ? { ...scope } : scope;
+  return execute(expectedScope, scopePath(expectedScope, 'text-messages'), 'POST',
+    (value, operationId) => decodeRealTextTurn(value, expectedScope, original, operationId),
+    JSON.stringify({ text: original, language: expectedScope.language }), key, undefined, onProgress ? { scope: expectedScope, onProgress } : undefined);
 }
 export function getRealMemories(scope: RealScope, offset = 0) {
   return execute(scope, scopePath(scope, `memories?${page(offset)}`), 'GET', value => list(value, v => decodeMemory(v, scope), v => v.id));

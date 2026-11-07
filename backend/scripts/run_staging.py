@@ -27,6 +27,9 @@ from scripts.staging_state import (  # noqa: E402
 )
 
 DEVELOPMENT_SUPABASE = "https://edbkuunyeyxnyenmmqud.supabase.co"
+# Explicitly approved separate free pilot; no arbitrary project override.
+PILOT_SUPABASE = "https://mrfzmlckmvgxweiiugmr.supabase.co"
+APPROVED_STAGING_SUPABASE = frozenset({DEVELOPMENT_SUPABASE, PILOT_SUPABASE})
 # Render disk-backed services cannot extend their platform shutdown delay.
 # Leave time after cancelling in-flight requests for guarded failure recording
 # and local cleanup; an interrupted provider attempt retains its reservation.
@@ -94,7 +97,7 @@ def staging_configuration():
         raise StateError("EXACT_HTTPS_CORS_REQUIRED")
     origins = [https_origin(item) for item in origins]
     settings = Settings(_env_file=None)
-    if not settings.supabase_configured or str(settings.supabase_url).rstrip("/") != DEVELOPMENT_SUPABASE:
+    if not settings.supabase_configured or str(settings.supabase_url).rstrip("/") not in APPROVED_STAGING_SUPABASE:
         raise StateError("DEVELOPMENT_PROJECT_REQUIRED")
     ledger = persistent_path(state / "ledger.sqlite3", state)
     usage_log = persistent_path(state / "usage.jsonl", state)

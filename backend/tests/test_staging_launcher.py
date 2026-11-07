@@ -8,10 +8,11 @@ import sqlite3
 from fastapi.testclient import TestClient
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from scripts.monitor_staging import monitor
 from scripts.run_staging import (
-    DEVELOPMENT_SUPABASE, StateError, https_origin, main, prune_backups,
+    DEVELOPMENT_SUPABASE, PILOT_SUPABASE, StateError, https_origin, main, prune_backups,
     staging_app, staging_configuration,
 )
 from scripts.staging_state import APPLICATION_ID, create_backup, write_new
@@ -422,3 +423,30 @@ def test_nonbootstrap_paid_speech_still_requires_durable_encryption_key(staging,
     with pytest.raises(StateError, match="DURABLE_SPEECH_KEY_REQUIRED"):
         staging_configuration()
     assert not (staging / "speech.sqlite3").exists()
+
+
+@pytest.mark.parametrize("project_url", [DEVELOPMENT_SUPABASE, PILOT_SUPABASE])
+def test_both_exact_approved_projects_preserve_ai_off_bootstrap(staging, monkeypatch, project_url):
+    monkeypatch.setenv("SUPABASE_URL", project_url)
+    settings, options = staging_configuration()
+    assert str(settings.supabase_url).rstrip("/") == project_url
+    assert settings.real_ai_enabled is False
+    with TestClient(staging_app(settings, options), base_url="https://memy-stage.example.com") as client:
+        assert client.get("/health").status_code == 200
+        assert client.get("/api/v2/capabilities").json()["enabled"] is False
+    assert not (staging / "ledger.sqlite3").exists()
+
+
+@pytest.mark.parametrize("project_url", [
+    "https://different.supabase.co",
+    "https://mrfzmlckmvgxweiiugmr.supabase.co.evil.example",
+    "https://mrfzmlckmvgxweiiugmr.evil.example",
+    "https://mrfzmlckmvgxweiiugmr.supabase.co?project=unreviewed",
+])
+def test_project_pin_has_no_environment_override(staging, monkeypatch, project_url):
+    monkeypatch.setenv("SUPABASE_URL", project_url)
+    monkeypatch.setenv("STAGING_ALLOW_ANY_SUPABASE", "true")
+    with pytest.raises((StateError, ValidationError),
+                       match="DEVELOPMENT_PROJECT_REQUIRED|Supabase URL must be an origin"):
+        staging_configuration()
+    assert not (staging / "ledger.sqlite3").exists()

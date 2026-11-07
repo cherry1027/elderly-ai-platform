@@ -32,6 +32,7 @@ function publicHostSettings(config, html) {
 }
 function renderStaticBlueprint(settings) {
   return { services: [{ type: 'web', name: 'memy-pilot-web', runtime: 'static', rootDir: 'apps/mobile',
+    branch: 'codex/mobile-performance-20261106',
     buildCommand: 'npm ci --ignore-scripts --legacy-peer-deps && node scripts/export-web-staging.cjs',
     staticPublishPath: '.verification/web-staging', autoDeployTrigger: 'off',
     envVars: [

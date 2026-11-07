@@ -79,6 +79,7 @@ it('generates exact host CSP, HTTPS callback rewrites and disabled automatic dep
   expect(settings.routes[0]).toEqual({ type: 'rewrite', source: '/auth/callback', destination: '/index.html' });
   const blueprint = renderStaticBlueprint(settings); expect(blueprint.services[0].autoDeployTrigger).toBe('off');
   expect(blueprint.services[0].rootDir).toBe('apps/mobile');
+  expect(blueprint.services[0].branch).toBe('codex/mobile-performance-20261106');
   expect(blueprint.services[0].buildCommand).toContain('node scripts/export-web-staging.cjs');
   expect(JSON.stringify(blueprint)).not.toContain(config.publishableKey);
 });

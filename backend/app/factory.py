@@ -1,0 +1,143 @@
+"""Application factory without environment-dependent import-time startup."""
+
+from contextlib import AsyncExitStack, asynccontextmanager
+import asyncio
+
+import httpx
+from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api.health import router as health_router
+from app.api.readiness import router as readiness_router
+from app.api.story_projects import router as story_projects_router
+from app.api.audio import router as audio_router
+from app.api.conversations import router as conversations_router
+from app.api.story_drafts import router as story_drafts_router
+from app.api.exports import router as exports_router
+from app.api.real_ai import router as real_ai_router
+from app.core.config import Settings
+from app.core.api_safety import APISafetyMiddleware
+from app.core.errors import APIError, api_error_handler, validation_error_handler
+from app.core.request_limits import UserRateLimiter
+from app.services.transcription import DisabledTranscriptionProvider, TranscriptionProvider
+from app.services.conversation_provider import (
+    ConversationProvider, DisabledConversationProvider, MockConversationProvider,
+)
+from app.services.story_writer import DisabledStoryWriter, MockStoryWriter, StoryWriter
+from app.services.pdf_export import PdfRenderer, RealPdfRenderer
+from app.services.real_ai_runtime import RealAIRuntime
+from app.services.supabase import ReadinessProbe
+ERROR_JSON_CONTENT = {"application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}}
+API_GUARD_RESPONSES = {
+    408: {"content": ERROR_JSON_CONTENT, "description": "API request body timed out."},
+    413: {"content": ERROR_JSON_CONTENT, "description": "Request body exceeds its safe limit."},
+    429: {"content": ERROR_JSON_CONTENT, "description": "Authenticated user request allowance exceeded; retry after 60 seconds."},
+    500: {"content": ERROR_JSON_CONTENT, "description": "Sanitized unexpected API failure."},
+}
+
+
+def create_app(
+    settings: Settings | None = None,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+    transcription_provider: TranscriptionProvider | None = None,
+    conversation_provider: ConversationProvider | None = None,
+    story_writer: StoryWriter | None = None,
+    pdf_renderer: PdfRenderer | None = None,
+    real_ai_provider=None,
+) -> FastAPI:
+    config = settings if settings is not None else Settings()
+    if config.ai_provider_mode == "openai" or any(
+        getattr(provider, "mode", None) == "openai"
+        for provider in (transcription_provider, conversation_provider, story_writer)
+    ):
+        # Public SQL/Expo contracts explicitly say mock. Paid evaluation is a
+        # separate opt-in; do not persist real outputs under those false labels.
+        raise ValueError("OpenAI evaluation mode cannot start the mock-only public API.")
+
+    @asynccontextmanager
+    async def lifespan(application: FastAPI):
+        application.state.audio_slots = asyncio.Semaphore(2)
+        application.state.real_ai_slots = asyncio.Semaphore(2)
+        application.state.pdf_slots = asyncio.Semaphore(2)
+        application.state.pdf_tasks = set()
+        async with httpx.AsyncClient(
+            timeout=config.request_timeout_seconds,
+            follow_redirects=False,
+            trust_env=False,
+            transport=transport,
+            # Reuse an idle TLS connection between deliberate user actions;
+            # tokens stay request-scoped and every request still verifies Auth.
+            limits=httpx.Limits(keepalive_expiry=60),
+        ) as client, AsyncExitStack() as provider_resources:
+            application.state.http_client = client
+            application.state.readiness_probe = ReadinessProbe(config, client)
+            bind_provider_client = None
+            if getattr(application.state.real_ai, "needs_http_pool", False):
+                provider_client = await provider_resources.enter_async_context(httpx.AsyncClient(
+                    timeout=config.openai_timeout_seconds,
+                    follow_redirects=False,
+                    trust_env=False,
+                    limits=httpx.Limits(max_connections=8, max_keepalive_connections=4,
+                                       keepalive_expiry=60),
+                ))
+                bind_provider_client = application.state.real_ai.bind_http_client
+            if bind_provider_client is not None:
+                bind_provider_client(provider_client)
+            try:
+                yield
+            finally:
+                application.state.real_ai.cache.close()
+                if application.state.pdf_tasks:
+                    await asyncio.gather(*tuple(application.state.pdf_tasks), return_exceptions=True)
+                if bind_provider_client is not None:
+                    bind_provider_client(None)
+
+    application = FastAPI(
+        title="Memy AI Backend", version="0.8.1", lifespan=lifespan
+    )
+    application.state.settings = config
+    application.state.user_rate_limiter = UserRateLimiter(config.api_requests_per_minute)
+    application.state.transcription_provider = transcription_provider or DisabledTranscriptionProvider()
+    application.state.conversation_provider = conversation_provider or (
+        MockConversationProvider() if config.conversation_mode == "mock" else DisabledConversationProvider()
+    )
+    application.state.story_writer = story_writer or (
+        MockStoryWriter() if config.story_generation_mode == "mock" else DisabledStoryWriter()
+    )
+    application.state.pdf_renderer = pdf_renderer or PdfRenderer()
+    application.state.real_pdf_renderer = RealPdfRenderer()
+    application.state.real_ai = RealAIRuntime(config, provider=real_ai_provider)
+    application.add_exception_handler(APIError, api_error_handler)
+    application.add_exception_handler(RequestValidationError, validation_error_handler)
+
+    @application.middleware("http")
+    async def protect_user_responses(request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith(("/api/v1/", "/api/v2/")):
+            if response.headers.get("Cache-Control") != "private, no-store":
+                response.headers["Cache-Control"] = "no-store"
+        return response
+
+    application.add_middleware(APISafetyMiddleware, max_concurrent_requests=config.api_max_concurrent_requests)
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=config.cors_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "Accept-Language", "Idempotency-Key"],
+        expose_headers=["Retry-After", "Content-Disposition", "Content-Length", "X-Memy-Export-Id",
+                        "X-Memy-Draft-Version", "X-Memy-Draft-Revision", "X-Memy-Page-Count",
+                        "X-Memy-Operation-Id", "X-Memy-Speech-Id", "X-Memy-Audio-Sha256", "X-Memy-Recovery"],
+    )
+    application.include_router(health_router)
+    application.include_router(readiness_router)
+    application.include_router(story_projects_router, responses=API_GUARD_RESPONSES)
+    application.include_router(audio_router, responses=API_GUARD_RESPONSES)
+    application.include_router(conversations_router, responses=API_GUARD_RESPONSES)
+    application.include_router(story_drafts_router, responses=API_GUARD_RESPONSES)
+    application.include_router(exports_router, responses=API_GUARD_RESPONSES)
+    application.include_router(real_ai_router, responses=API_GUARD_RESPONSES)
+    return application
+

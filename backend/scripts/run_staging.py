@@ -173,7 +173,7 @@ class SecurityHeaders:
 
 
 def staging_app(settings, options):
-    from app.main import create_app
+    from app.factory import create_app
     from starlette.middleware.trustedhost import TrustedHostMiddleware
 
     app = create_app(settings)

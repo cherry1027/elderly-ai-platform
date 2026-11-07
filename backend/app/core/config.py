@@ -60,6 +60,8 @@ class Settings(BaseSettings):
     # Opt-in latency path: extract source-grounded candidates and draft the
     # interviewer response in one bounded, validated provider request.
     real_ai_combined_turn_enabled: bool = False
+    # Optional Accept:text/event-stream preview; final saved result is unchanged.
+    real_ai_stream_turn_enabled: bool = False
     # A reversible server policy: only explicitly typed conversation may spend.
     # The normal live gate, private approval and cumulative ledger still apply.
     real_ai_text_only: bool = False

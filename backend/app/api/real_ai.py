@@ -31,6 +31,8 @@ from app.services.real_ai_resources import RealAIGateway, validated, read_togeth
 from app.services.openai_client import DispatchTrace, ai_dispatch_trace
 from app.services.ai_controls import ai_budget_subject
 from app.services.pilot_cohort import require_pilot_member
+from app.services.real_ai_progress import emit_progress, turn_progress
+from app.services.real_ai_streaming import stream_turn_response
 
 router = APIRouter(prefix="/api/v2", tags=["Real AI (explicit opt-in)"], responses={
     code: {"content":{"application/json":{"schema":{"$ref":"#/components/schemas/ErrorResponse"}}}}
@@ -129,8 +131,13 @@ async def _execute(request, gateway, *, project_id, session_id, kind, key, finge
                 calls = (getattr(provider, "conversation_calls", 2) if kind == "conversation"
                          else 2 if kind == "generation" else 1)
                 governor.check_budget(required_calls=calls)
+            if kind == "conversation":
+                await emit_progress({"type": "operation", "operation_id": claim["operation_id"],
+                    "project_id": str(project_id), "session_id": str(session_id)})
             async with asyncio.timeout(120):
                 payload = await produce(provider)
+                if kind == "conversation":
+                    await emit_progress({"type": "saving"})
                 row = await gateway.complete(claim, payload, {
                     "mode": "real", "provider": "openai", "model": model, "version": 1,
                 })
@@ -215,25 +222,42 @@ async def transcripts(session_id: UUID, gateway: Gateway, limit: Limit = 50, off
     return await gateway.transcripts(session_id, limit, offset)
 
 
+async def verify_source_transcript(gateway, transcript_id, session_id, session):
+    """An owned original must match this session before a paid action begins."""
+    transcript = validated(RealTranscript, await gateway.one("real_transcripts", "transcript_id", transcript_id))
+    if transcript["session_id"] != str(session_id) or transcript["project_id"] != session["project_id"]:
+        raise APIError(404, "RESOURCE_NOT_FOUND", "The requested resource was not found.")
+    language_matches(transcript["language"], session)
+    return transcript
+
+
 @router.post("/story-sessions/{session_id}/messages", response_model=RealTurn)
 async def send_message(session_id: UUID, payload: RealMessageCreate, request: Request, gateway: Gateway, idempotency_key: Key):
+    if (request.headers.get("accept") == "text/event-stream"
+        and request.app.state.settings.real_ai_stream_turn_enabled
+        and request.app.state.settings.real_ai_combined_turn_enabled):
+        return await stream_turn_response(request,
+            lambda: _send_message(session_id, payload, request, gateway, idempotency_key))
+    return await _send_message(session_id, payload, request, gateway, idempotency_key)
+
+
+async def _send_message(session_id: UUID, payload: RealMessageCreate, request: Request, gateway: Gateway, idempotency_key: Key):
     require_pilot_member(request.app.state.settings, gateway.user.id)
     session = await gateway.get_owned_session(session_id, active=True)
     language_matches(payload.language, session)
     check_operation_policy(request, kind="conversation")
-    transcript = validated(RealTranscript, await gateway.one("real_transcripts", "transcript_id", payload.source_transcript_id))
-    if transcript["session_id"] != str(session_id) or transcript["project_id"] != session["project_id"]:
-        raise APIError(404, "RESOURCE_NOT_FOUND", "The requested resource was not found.")
-    language_matches(transcript["language"], session)
-    prior, recent = await read_together(
+    transcript, prior, recent = await read_together(
+        verify_source_transcript(gateway, payload.source_transcript_id, session_id, session),
         gateway.project_memories(UUID(session["project_id"])),
         gateway.messages(session_id, limit=12, recent=True),
     )
     while recent and sum(len(m["text"]) for m in recent) > 32_000:
         recent.pop(0)
     provider = require_provider(request, kind="conversation")
-    if hasattr(provider, "validate_turn_input"):
-        provider.validate_turn_input(transcript["text"], payload.language, prior, recent_messages=recent)
+    validate = getattr(provider, "validate_stream_turn_input", None) if turn_progress.get() else None
+    validate = validate or getattr(provider, "validate_turn_input", None)
+    if validate is not None:
+        validate(transcript["text"], payload.language, prior, recent_messages=recent)
 
     async def produce(provider):
         reply = await provider.respond(transcript["text"], payload.language, prior, recent_messages=recent)
@@ -254,14 +278,8 @@ async def messages(session_id: UUID, gateway: Gateway, limit: Limit = 50, offset
     return await gateway.messages(session_id, limit, offset)
 
 
-@router.post("/story-sessions/{session_id}/text-messages", response_model=RealTurn)
-async def send_text_message(session_id: UUID, payload: RealTextMessageCreate, request: Request,
-                            gateway: Gateway, idempotency_key: Key):
-    """One explicit typed turn; original wording persists with the completed reply."""
-    require_pilot_member(request.app.state.settings, gateway.user.id)
-    session = await gateway.get_owned_session(session_id, active=True)
-    language_matches(payload.language, session)
-    # An unapplied migration must fail before a provider claim or reservation.
+async def verify_text_chat_scope(gateway, session_id, session):
+    """Validate readiness alongside independent reads, before any paid claim."""
     try:
         scope = await gateway.rpc("check_real_text_chat_scope", {"p_session_id": str(session_id)})
     except APIError as error:
@@ -273,15 +291,42 @@ async def send_text_message(session_id: UUID, payload: RealTextMessageCreate, re
         or scope["language"] != session["language"] or type(scope["input_limit"]) is not int
         or scope["input_limit"] != 4000):
         raise APIError(503, "TEXT_CHAT_NOT_READY", "Text chat setup could not be verified. No AI request was made.")
-    prior, recent = await read_together(
+
+
+@router.post("/story-sessions/{session_id}/text-messages", response_model=RealTurn)
+async def send_text_message(session_id: UUID, payload: RealTextMessageCreate, request: Request,
+                            gateway: Gateway, idempotency_key: Key):
+    """One explicit typed turn; original wording persists with the completed reply."""
+    if (request.headers.get("accept") == "text/event-stream"
+        and request.app.state.settings.real_ai_stream_turn_enabled
+        and request.app.state.settings.real_ai_combined_turn_enabled):
+        return await stream_turn_response(request,
+            lambda: _send_text_message(session_id, payload, request, gateway, idempotency_key))
+    return await _send_text_message(session_id, payload, request, gateway, idempotency_key)
+
+
+async def _send_text_message(session_id: UUID, payload: RealTextMessageCreate, request: Request,
+                            gateway: Gateway, idempotency_key: Key):
+    """One explicit typed turn; original wording persists with the completed reply."""
+    require_pilot_member(request.app.state.settings, gateway.user.id)
+    session = await gateway.get_owned_session(session_id, active=True)
+    language_matches(payload.language, session)
+    check_operation_policy(request, kind="conversation", typed=True)
+    # All three are owned, read-only operations. Validate readiness inside its
+    # task so malformed scope cancels and joins the sibling reads immediately.
+    # No claim/reservation/dispatch occurs until every read has succeeded.
+    _, prior, recent = await read_together(
+        verify_text_chat_scope(gateway, session_id, session),
         gateway.project_memories(UUID(session["project_id"])),
         gateway.messages(session_id, limit=12, recent=True),
     )
     while recent and sum(len(message["text"]) for message in recent) > 32_000:
         recent.pop(0)
     provider = require_provider(request, kind="conversation", typed=True)
-    if hasattr(provider, "validate_turn_input"):
-        provider.validate_turn_input(payload.text, payload.language, prior, recent_messages=recent)
+    validate = getattr(provider, "validate_stream_turn_input", None) if turn_progress.get() else None
+    validate = validate or getattr(provider, "validate_turn_input", None)
+    if validate is not None:
+        validate(payload.text, payload.language, prior, recent_messages=recent)
 
     async def produce(provider):
         reply = await provider.respond(payload.text, payload.language, prior, recent_messages=recent)

@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "backend": {
+    "commit": "939f7dfac06d3688a3acc1f067d85874b0494078",
+    "patch_sha256": null,
+    "review": "pending"
+  },
+  "mobile": {
+    "commit": "f75078ac69bbd5e8ba751d51084210457c9a4198",
+    "patch_sha256": null,
+    "review": "pending"
+  },
+  "distribution": {
+    "kind": "undecided",
+    "api_origin": null
+  },
+  "testers": [
+    {
+      "slot": 1,
+      "user_id": null,
+      "account_ready": false,
+      "password_setup_verified": false,
+      "sign_in_verified": false,
+      "consent_recorded": false
+    },
+    {
+      "slot": 2,
+      "user_id": null,
+      "account_ready": false,
+      "password_setup_verified": false,
+      "sign_in_verified": false,
+      "consent_recorded": false
+    },
+    {
+      "slot": 3,
+      "user_id": null,
+      "account_ready": false,
+      "password_setup_verified": false,
+      "sign_in_verified": false,
+      "consent_recorded": false
+    },
+    {
+      "slot": 4,
+      "user_id": null,
+      "account_ready": false,
+      "password_setup_verified": false,
+      "sign_in_verified": false,
+      "consent_recorded": false
+    },
+    {
+      "slot": 5,
+      "user_id": null,
+      "account_ready": false,
+      "password_setup_verified": false,
+      "sign_in_verified": false,
+      "consent_recorded": false
+    },
+    {
+      "slot": 6,
+      "user_id": null,
+      "account_ready": false,
+      "password_setup_verified": false,
+      "sign_in_verified": false,
+      "consent_recorded": false
+    },
+    {
+      "slot": 7,
+      "user_id": null,
+      "account_ready": false,
+      "password_setup_verified": false,
+      "sign_in_verified": false,
+      "consent_recorded": false
+    }
+  ],
+  "checks": {
+    "backend_regressions": "pending",
+    "mobile_regressions": "pending",
+    "independent_review": "pending",
+    "ledger_reconciliation": "pending",
+    "budget_approval": "pending",
+    "user_and_global_limits": "pending",
+    "cohort_enforcement": "pending",
+    "secure_distribution": "pending",
+    "auth_callbacks": "pending",
+    "hosted_two_user_ownership": "pending",
+    "english_actual_device": "pending",
+    "swedish_actual_device": "pending",
+    "interruption_and_recovery": "pending",
+    "pdf_and_saved_history": "pending",
+    "backup_and_restore": "pending",
+    "off_host_backup_and_monitoring": "pending",
+    "privacy_and_cleanup": "pending",
+    "support_contact": "pending",
+    "founder_scope_approval": "pending"
+  }
+}

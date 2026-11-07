@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 
 from scripts.pilot_preflight import CHECKS, DEFAULT, PreflightError, assess, main
+from app.core.pilot_limits import MAX_PILOT_USERS
 from scripts.staging_state import StateError, create_backup
 from test_ai_budget_accounting import budget, user, reserve
 
@@ -173,3 +174,42 @@ def test_unrelated_valid_snapshot_is_not_current_ledger_backup_evidence(plan, bu
         connection.execute("UPDATE reservations SET model='other-model'")
     with pytest.raises(StateError, match="HISTORICAL_STATE_CHANGED"):
         assess(encoded(ready(plan)), ledger=other_ledger, backup=snapshot)
+
+
+def test_default_template_has_seven_pending_slots_without_private_accounts(plan):
+    assert len(plan["testers"]) == MAX_PILOT_USERS == 7
+    assert [tester["slot"] for tester in plan["testers"]] == list(range(1, 8))
+    assert all(tester["user_id"] is None for tester in plan["testers"])
+    assert all(state == "pending" for state in plan["checks"].values())
+
+
+def test_seven_ready_accounts_are_counted_without_authorization_or_identity_exposure(plan):
+    ready(plan, 7)
+    result = assess(encoded(plan))
+    assert result["cohort_limit"] == result["roster_slots"] == result["ready_accounts"] == 7
+    assert result["result"] == "NOT_READY"  # No financial evidence or release authority.
+    assert not result["accepted"] and not result["spending_authorized"]
+    assert all(tester["user_id"] not in json.dumps(result) for tester in plan["testers"])
+
+
+def test_eighth_roster_account_is_rejected_even_when_every_account_is_ready(plan):
+    ready(plan, 8)
+    with pytest.raises(PreflightError):
+        assess(encoded(plan))
+
+
+@pytest.mark.parametrize("slot", [0, 8, True])
+def test_invalid_seven_person_slot_fails_closed(plan, slot):
+    ready(plan, 7)
+    plan["testers"][-1]["slot"] = slot
+    with pytest.raises(PreflightError):
+        assess(encoded(plan))
+
+
+def test_incomplete_seventh_account_blocks_full_roster(plan):
+    ready(plan, 7)
+    plan["testers"][-1]["consent_recorded"] = False
+    result = assess(encoded(plan))
+    assert result["ready_accounts"] == 6
+    assert "incomplete_roster" in result["blockers"]
+    assert not result["release_authorized"]

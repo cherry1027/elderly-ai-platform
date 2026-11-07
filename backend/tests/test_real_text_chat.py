@@ -379,3 +379,80 @@ def test_completed_typed_replay_cannot_substitute_another_operation_source(text_
         row["user_message"]["id"] = row["user_message"]["source_text_input_id"] = row["message"]["source_text_input_id"] = other
         response = send(client, key=key)
     assert response.status_code == 503 and provider.calls == 1 and other not in response.text
+
+
+
+def test_typed_scope_and_both_context_reads_share_one_network_wave(text_harness):
+    app, gateway, provider = text_harness()
+    original_rpc = gateway.rpc
+    started, completed = set(), set()
+    ready = None
+    async def rendezvous(name):
+        nonlocal ready
+        if ready is None:
+            ready = asyncio.Event()
+        assert gateway.claim_count == provider.calls == 0
+        started.add(name)
+        if len(started) == 3:
+            ready.set()
+        await asyncio.wait_for(ready.wait(), 1)
+        completed.add(name)
+    async def scope(name, payload):
+        await rendezvous("scope")
+        return await original_rpc(name, payload)
+    async def context(name):
+        await rendezvous(name)
+        return []
+    gateway.rpc = scope
+    gateway.project_memories = lambda *args, **kwargs: context("memories")
+    gateway.messages = lambda *args, **kwargs: context("messages")
+    with TestClient(app) as client:
+        response = send(client)
+    assert response.status_code == 200
+    assert completed == started == {"scope", "memories", "messages"}
+    assert provider.calls == gateway.claim_count == 1
+
+
+@pytest.mark.parametrize("failure", ["scope", "memories", "messages"])
+def test_any_preflight_failure_cancels_and_joins_other_context_reads(failure, text_harness):
+    app, gateway, provider = text_harness()
+    started, cleaned = set(), set()
+    ready = None
+    async def read(name):
+        nonlocal ready
+        if ready is None:
+            ready = asyncio.Event()
+        started.add(name)
+        if len(started) == 3:
+            ready.set()
+        try:
+            await asyncio.wait_for(ready.wait(), 1)
+            if name == failure:
+                raise APIError(503, "SUPABASE_UNAVAILABLE", "Synthetic failure")
+            await asyncio.Future()
+        finally:
+            cleaned.add(name)
+    gateway.rpc = lambda *args, **kwargs: read("scope")
+    gateway.project_memories = lambda *args, **kwargs: read("memories")
+    gateway.messages = lambda *args, **kwargs: read("messages")
+    with TestClient(app) as client:
+        response = send(client)
+    assert response.status_code == 503
+    expected = "TEXT_CHAT_NOT_READY" if failure == "scope" else "SUPABASE_UNAVAILABLE"
+    assert response.json()["error"]["code"] == expected
+    assert started == cleaned == {"scope", "memories", "messages"}
+    assert gateway.claim_count == provider.calls == 0
+    assert not gateway.original_inputs
+
+
+def test_paused_text_policy_fails_before_context_reads(text_harness):
+    app, gateway, provider = text_harness()
+    app.state.settings.real_ai_conversation_enabled = False
+    async def unexpected(*args, **kwargs):
+        pytest.fail("Paused conversation must not fetch context")
+    gateway.rpc = gateway.project_memories = gateway.messages = unexpected
+    with TestClient(app) as client:
+        response = send(client)
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "LIVE_AI_DISABLED"
+    assert gateway.claim_count == provider.calls == 0

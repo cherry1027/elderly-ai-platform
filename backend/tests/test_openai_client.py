@@ -163,6 +163,14 @@ def test_network_failure_remains_reserved_and_safe(failure):
 @pytest.mark.parametrize("status,code,expected", [
     (429,"insufficient_quota","AI_PROVIDER_QUOTA_EXHAUSTED"),
     (429,"billing_hard_limit_reached","AI_PROVIDER_QUOTA_EXHAUSTED"),
+    (400,"credit_balance_exhausted","AI_PROVIDER_QUOTA_EXHAUSTED"),
+    (400,"organization_spend_limit_exceeded","AI_PROVIDER_QUOTA_EXHAUSTED"),
+    (400,"project_spend_limit_exceeded","AI_PROVIDER_QUOTA_EXHAUSTED"),
+    (400,"organization_usage_limit_exceeded","AI_PROVIDER_QUOTA_EXHAUSTED"),
+    (429,"credit_balance_exhausted","AI_PROVIDER_QUOTA_EXHAUSTED"),
+    (429,"organization_spend_limit_exceeded","AI_PROVIDER_QUOTA_EXHAUSTED"),
+    (429,"project_spend_limit_exceeded","AI_PROVIDER_QUOTA_EXHAUSTED"),
+    (429,"organization_usage_limit_exceeded","AI_PROVIDER_QUOTA_EXHAUSTED"),
     (429,"rate_limit_exceeded","AI_PROVIDER_RATE_LIMIT"),
     (429,"private-unrecognized-code","AI_PROVIDER_RATE_LIMIT"),
     (401,"invalid_api_key","AI_PROVIDER_AUTHENTICATION_FAILED"),
@@ -177,6 +185,14 @@ def test_provider_errors_distinguish_quota_from_rate_without_exposing_details(st
         structured(client(reject))
     assert error.value.code==expected and len(calls)==1
     assert KEY not in error.value.message and "private" not in error.value.message
+    if expected == "AI_PROVIDER_QUOTA_EXHAUSTED":
+        from starlette.requests import Request
+        from app.core.errors import api_error_handler
+        response = asyncio.run(api_error_handler(Request({"type":"http"}), error.value))
+        assert response.headers["X-Memy-Recovery"] == "contact-operator"
+        assert "Retry-After" not in response.headers
+        assert error.value.provider_diagnostics["provider_error_code"] == code
+        assert KEY not in response.body.decode()
 
 
 def test_oversized_or_duplicate_provider_error_body_does_not_override_classification():

@@ -54,7 +54,7 @@ class PreviewTests(unittest.TestCase):
         self.client = httpx.Client(transport=httpx.MockTransport(callback), trust_env=False)
         self.preview.client = self.client
 
-    def request(self, path="/", method="GET", headers=(), body=b"", host="127.0.0.1:8767"):
+    def request(self, path="/", method="GET", headers=(), body=b"", host="127.0.0.1:8767", output=None):
         header_list = list(headers)
         if host is not None:
             header_list.insert(0, ("Host", host))
@@ -68,7 +68,7 @@ class PreviewTests(unittest.TestCase):
         handler.connection = FakeConnection()
         handler.client_address = ("127.0.0.1", 12345)
         handler.server = self.preview
-        handler.rfile, handler.wfile = BytesIO(wire), BytesIO()
+        handler.rfile, handler.wfile = BytesIO(wire), output if output is not None else BytesIO()
         handler.close_connection = True
         handler.handle_one_request()
         status_line, _, rest = handler.wfile.getvalue().partition(b"\r\n")

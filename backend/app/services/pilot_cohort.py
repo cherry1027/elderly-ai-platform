@@ -12,6 +12,7 @@ import stat
 from uuid import UUID
 
 from app.core.errors import APIError
+from app.core.pilot_limits import MAX_PILOT_USERS
 from app.services.ai_controls import _private_parent, _private_file, _unique_object
 
 MAX_COHORT_BYTES = 4096
@@ -52,7 +53,7 @@ def load_cohort(path: Path) -> frozenset[UUID]:
                 or reviewer != reviewer.strip() or any(ord(c) < 32 for c in reviewer)):
             raise ValueError
         users = data["user_ids"]
-        if not isinstance(users, list) or not 1 <= len(users) <= 5:
+        if not isinstance(users, list) or not 1 <= len(users) <= MAX_PILOT_USERS:
             raise ValueError
         if any(not isinstance(user, str) or str(UUID(user)) != user for user in users):
             raise ValueError

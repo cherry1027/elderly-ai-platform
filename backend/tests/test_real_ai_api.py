@@ -318,3 +318,74 @@ def test_real_pdf_has_review_notice_and_preserves_legacy_renderer():
     assert "AI-assisterad" in actual and "simulerad" not in actual
     assert "simulerad" in old
     assert "Malmö" in actual
+
+
+
+def test_voice_source_and_both_context_reads_overlap_before_any_claim(harness):
+    import asyncio
+    app, gateway, provider = harness()
+    original_one = gateway.one
+    started = set()
+    ready = None
+    async def join(name):
+        nonlocal ready
+        if ready is None:
+            ready = asyncio.Event()
+        assert gateway.claim_count == provider.calls == 0
+        started.add(name)
+        if len(started) == 3:
+            ready.set()
+        await asyncio.wait_for(ready.wait(), 1)
+    async def source(*args):
+        await join("source")
+        return await original_one(*args)
+    async def context(name):
+        await join(name)
+        return []
+    gateway.one = source
+    gateway.project_memories = lambda *args, **kwargs: context("memories")
+    gateway.messages = lambda *args, **kwargs: context("messages")
+    with TestClient(app) as client:
+        response = client.post(f"/api/v2/story-sessions/{SESSION}/messages",
+            json={"source_transcript_id": str(TRANSCRIPT), "language": "en"},
+            headers={"Idempotency-Key": str(uuid4())})
+    assert response.status_code == 200 and started == {"source", "memories", "messages"}
+    assert gateway.claim_count == provider.calls == 1
+
+
+@pytest.mark.parametrize("field,value,status", [("project_id", str(OTHER), 404),
+    ("session_id", str(OTHER), 404), ("language", "sv", 422)])
+def test_wrong_voice_original_scope_cancels_and_joins_context_before_claim(field, value, status, harness):
+    import asyncio
+    app, gateway, provider = harness()
+    gateway.transcript[field] = value
+    original_one = gateway.one
+    started, cleaned = set(), set()
+    ready = None
+    async def source(*args):
+        nonlocal ready
+        if ready is None:
+            ready = asyncio.Event()
+        await asyncio.wait_for(ready.wait(), 1)
+        return await original_one(*args)
+    async def context(name):
+        nonlocal ready
+        if ready is None:
+            ready = asyncio.Event()
+        started.add(name)
+        if len(started) == 2:
+            ready.set()
+        try:
+            await asyncio.Future()
+        finally:
+            cleaned.add(name)
+    gateway.one = source
+    gateway.project_memories = lambda *args, **kwargs: context("memories")
+    gateway.messages = lambda *args, **kwargs: context("messages")
+    with TestClient(app) as client:
+        response = client.post(f"/api/v2/story-sessions/{SESSION}/messages",
+            json={"source_transcript_id": str(TRANSCRIPT), "language": "en"},
+            headers={"Idempotency-Key": str(uuid4())})
+    assert response.status_code == status
+    assert started == cleaned == {"memories", "messages"}
+    assert gateway.claim_count == provider.calls == 0

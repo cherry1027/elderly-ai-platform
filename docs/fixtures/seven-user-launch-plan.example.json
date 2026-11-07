@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "planned_people": 7,
+  "pilot_days": 7,
+  "budget_sek": {
+    "total_cap": 350,
+    "hosting_reserve": 100,
+    "ai_cap": 175,
+    "safety_reserve": 75,
+    "per_user_ai_cap": 25
+  },
+  "destinations": {
+    "supabase_project_ref": "edbkuunyeyxnyenmmqud",
+    "web_origin": null,
+    "api_origin": null,
+    "confirmation_redirect": null,
+    "recovery_redirect": null
+  },
+  "decisions": {
+    "tester_contacts_confirmed": false,
+    "password_setup_flow_verified": false,
+    "privacy_notice_and_retention_reviewed": false,
+    "support_contact_assigned": false,
+    "hosting_quote_with_tax_reviewed": false,
+    "fx_conversion_and_usd_caps_reviewed": false,
+    "existing_ledger_and_remote_hold_preserved": false,
+    "one_spending_host_chosen": false,
+    "local_and_wsl_paid_calls_stopped_for_cutover": false,
+    "encrypted_backup_restore_verified": false,
+    "hosted_capacity_and_streaming_verified": false,
+    "phone_journey_and_ownership_verified": false,
+    "runtime_approval_and_limits_verified": false,
+    "active_cohort_matches_verified_accounts": false
+  },
+  "active_slots": [
+    1,
+    2,
+    3,
+    4
+  ]
+}

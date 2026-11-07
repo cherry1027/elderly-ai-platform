@@ -65,6 +65,9 @@ def create_app(
             follow_redirects=False,
             trust_env=False,
             transport=transport,
+            # Reuse an idle TLS connection between deliberate user actions;
+            # tokens stay request-scoped and every request still verifies Auth.
+            limits=httpx.Limits(keepalive_expiry=60),
         ) as client, AsyncExitStack() as provider_resources:
             application.state.http_client = client
             application.state.readiness_probe = ReadinessProbe(config, client)

@@ -27,6 +27,11 @@ from scripts.staging_state import (  # noqa: E402
 )
 
 DEVELOPMENT_SUPABASE = "https://edbkuunyeyxnyenmmqud.supabase.co"
+# Render disk-backed services cannot extend their platform shutdown delay.
+# Leave time after cancelling in-flight requests for guarded failure recording
+# and local cleanup; an interrupted provider attempt retains its reservation.
+GRACEFUL_SHUTDOWN_SECONDS = 20
+BACKUP_THREAD_JOIN_SECONDS = 2
 
 
 def https_origin(value: str) -> str:
@@ -82,7 +87,7 @@ def staging_configuration():
         if os.environ.get("RENDER") != "true":
             raise StateError("RENDER_EDGE_REQUIRED")
         external = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "")
-        if external and https_origin("https://" + external) != origin:
+        if not external or https_origin("https://" + external) != origin:
             raise StateError("STAGING_HOST_MISMATCH")
     origins = json.loads(os.environ.get("CORS_ORIGINS", "[]"))
     if not isinstance(origins, list) or any(not isinstance(item, str) for item in origins):
@@ -266,11 +271,12 @@ def main(argv=None):
             import uvicorn
             uvicorn.run(app, host="0.0.0.0", port=port, workers=1, access_log=False,
                         proxy_headers=False, forwarded_allow_ips="", server_header=False,
-                        limit_concurrency=32, timeout_keep_alive=5, **tls)
+                        limit_concurrency=32, timeout_keep_alive=5,
+                        timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS, **tls)
         finally:
             stop.set()
             if thread:
-                thread.join(timeout=10)
+                thread.join(timeout=BACKUP_THREAD_JOIN_SECONDS)
         return 0
     except Exception:
         # Startup/provider/cache constructors may raise structured API errors.

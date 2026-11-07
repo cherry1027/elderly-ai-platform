@@ -42,19 +42,20 @@ def configure(app, path):
     app.state.settings = app.state.settings.model_copy(update={"ai_pilot_cohort_path": path})
 
 
-def test_private_cohort_accepts_one_to_five_and_never_grants_spending(cohort):
+@pytest.mark.parametrize("count", [1, 5, 6, 7])
+def test_private_cohort_accepts_one_to_seven_and_never_grants_spending(cohort, count):
     path, data, write = cohort
     assert load_cohort(path) == frozenset({OWNER})
     require_pilot_member(SimpleNamespace(ai_pilot_cohort_path=path), OWNER)
-    data["user_ids"] = [str(uuid4()) for _ in range(5)]
+    data["user_ids"] = [str(uuid4()) for _ in range(count)]
     write(data)
-    assert len(load_cohort(path)) == 5
+    assert len(load_cohort(path)) == count
     assert sorted(p.name for p in path.parent.iterdir()) == ["cohort.json"]
 
 
 @pytest.mark.parametrize("change", [
     {"user_ids": []}, {"user_ids": [str(OWNER), str(OWNER)]},
-    {"user_ids": [str(uuid4()) for _ in range(6)]},
+    {"user_ids": [str(uuid4()) for _ in range(8)]},
     {"user_ids": ["not-a-uuid"]}, {"user_ids": ["AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"]},
     {"user_ids": [None]}, {"user_ids": str(OWNER)},
     {"version": True}, {"version": 2}, {"approved_by": ""},
@@ -214,3 +215,30 @@ def test_owned_pdf_export_and_download_stay_free_with_broken_cohort_file(tmp_pat
     assert created.status_code == 201 and downloaded.status_code == 200
     assert downloaded.content == created.content and downloaded.content.startswith(b"%PDF-")
     assert checks == [] and ledger.read_bytes() == before
+
+
+def test_seventh_admitted_member_still_requires_owned_resources(cohort, text_harness):
+    path, data, write = cohort
+    data["user_ids"] = [str(uuid4()) for _ in range(6)] + [str(OWNER)]
+    write(data)
+    app, gateway, provider = text_harness()
+    configure(app, path)
+    gateway.owned = False
+    with TestClient(app) as client:
+        denied = send(client)
+    assert denied.status_code == 404
+    assert gateway.claim_count == provider.calls == 0
+
+
+def test_seven_person_admission_rejects_an_eighth_authenticated_identity(cohort):
+    path, data, write = cohort
+    ids = [uuid4() for _ in range(7)]
+    write({**data, "user_ids": [str(uid) for uid in ids]})
+    settings = SimpleNamespace(ai_pilot_cohort_path=path)
+    for uid in ids:
+        require_pilot_member(settings, uid)
+    with pytest.raises(APIError) as denied:
+        require_pilot_member(settings, uuid4())
+    assert denied.value.status_code == 403
+    assert denied.value.code == "AI_PILOT_ACCESS_DENIED"
+    assert sorted(p.name for p in path.parent.iterdir()) == ["cohort.json"]

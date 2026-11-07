@@ -52,3 +52,42 @@ No deployments, hosted Auth changes or schema changes are part of this pass.
   overlapping candidates, which remain subject to human review.
 - The existing US$5 window, expiry, cumulative history and US$0.75 remote hold
   remain unchanged. This is local testing, not external-pilot/device acceptance.
+
+## Optional early reply preview (7 November 2026)
+
+The reviewed progressive path uses the same configured text model, standard
+service tier, single combined provider call, global/per-user governor and atomic
+claim/complete/fail workflow. It does not generate a second, speculative answer.
+
+`REAL_AI_STREAM_TURN_ENABLED=true` additionally requires the combined-turn switch.
+An explicit `Accept: text/event-stream` on the existing typed or recorded-message
+POST opts in. Ordinary JSON callers and a disabled switch keep the original
+contract; the capabilities object and public OpenAPI JSON snapshot are unchanged.
+A completed idempotent replay can return JSON to that same request. The client
+accepts it without issuing a second POST.
+
+The provider returns the interviewer reply first and extracted candidates second.
+Only a complete, language-validated nested reply can be previewed. The interface
+labels it as not saved and offers no Listen, memory confirmation or story action
+for it. All extraction/source/conflict checks and atomic database completion are
+still required. The final decoded message must exactly match the preview.
+
+The bounded stream emits operation, optional reply, optional saving, then exactly
+one completed/error event. Operation IDs are tied to the requested owner-scoped
+project/session and immutable typed source. Errors before the first operation
+keep normal HTTP status/recovery headers. Errors after streaming begins carry
+sanitized status/code/recovery/original-operation metadata; they never authorize
+automatic retries. Disconnect/background/timeout clears provisional prose and
+preserves only the original operation reference for Check saved result.
+
+Provider, relay and client return at a validated terminal event rather than
+waiting for socket EOF. The server watches disconnects across ASGI versions and
+cancels/joins its worker. Model output, events and total response bytes remain
+bounded. No provider credentials, extraction JSON or internal instructions are
+sent as preview text. The local preview relay only admits this transport for the
+two exact authenticated conversation POST routes.
+
+These changes reduce time before a real reply becomes readable; they do not
+promise instantaneous completion or seven simultaneous provider workflows.
+Mocked regressions and JavaScript exports remain separate from real provider
+measurements, phone acceptance and the later hosted seven-user pilot.

@@ -160,6 +160,7 @@ def test_paid_staging_requires_reviewed_private_cohort_without_creating_history(
 
 @pytest.mark.parametrize("key,value", [
     ("RENDER", "false"), ("RENDER_EXTERNAL_HOSTNAME", "wrong.example.com"),
+    ("RENDER_EXTERNAL_HOSTNAME", ""),
     ("CORS_ORIGINS", '["http://localhost:5173"]'), ("CORS_ORIGINS", '["*"]'),
     ("STAGING_TLS_MODE", "insecure"), ("STAGING_ENABLE_REAL_AI", "1"),
 ])
@@ -231,3 +232,97 @@ def test_backup_pruning_only_removes_verified_managed_copies(staging):
     assert (backups / "20261103T000000000000Z").exists()
     assert (other / "keep").read_bytes() == b"not a managed snapshot"
     assert (staging / "ledger.sqlite3").exists()
+
+
+def test_staging_launch_is_single_worker_and_shutdown_is_bounded(staging, monkeypatch):
+    import uvicorn
+
+    recorded = {}
+    monkeypatch.setenv("WEB_CONCURRENCY", "7")
+    monkeypatch.setenv("PORT", "10000")
+    monkeypatch.setattr(uvicorn, "run", lambda app, **options: recorded.update(options))
+    assert main([]) == 0
+    assert recorded["workers"] == 1
+    assert recorded["host"] == "0.0.0.0" and recorded["port"] == 10000
+    assert recorded["proxy_headers"] is False and recorded["forwarded_allow_ips"] == ""
+    assert recorded["timeout_graceful_shutdown"] == 20
+    assert recorded["timeout_keep_alive"] == 5
+    assert not (staging / "ledger.sqlite3").exists()
+    assert not (staging / "backups").exists()
+
+
+def test_web_stream_recovery_headers_are_exposed_only_to_exact_origin(staging):
+    settings, options = staging_configuration()
+    with TestClient(staging_app(settings, options), base_url="https://memy-stage.example.com") as client:
+        accepted = client.get("/api/v2/capabilities", headers={"Origin": "https://memy-web.example.com"})
+        assert accepted.headers["Access-Control-Allow-Origin"] == "https://memy-web.example.com"
+        exposed = {part.strip().lower() for part in accepted.headers["Access-Control-Expose-Headers"].split(",")}
+        assert {"x-memy-operation-id", "x-memy-recovery"} <= exposed
+        assert "Access-Control-Allow-Credentials" not in accepted.headers
+        denied = client.get("/api/v2/capabilities", headers={"Origin": "https://unrelated.example.com"})
+        assert "Access-Control-Allow-Origin" not in denied.headers
+
+
+def test_readiness_probes_database_but_liveness_never_does(staging):
+    settings, options = staging_configuration()
+    with TestClient(staging_app(settings, options), base_url="https://memy-stage.example.com") as client:
+        calls = []
+        async def failed_probe():
+            calls.append("probe")
+            return "SUPABASE_UNAVAILABLE"
+        client.app.state.readiness_probe.check = failed_probe
+        assert client.get("/health").status_code == 200 and calls == []
+        assert client.get("/ready").status_code == 503 and calls == ["probe"]
+        async def healthy_probe():
+            calls.append("healthy")
+            return None
+        client.app.state.readiness_probe.check = healthy_probe
+        assert client.get("/ready").status_code == 200
+        assert calls == ["probe", "healthy"]
+
+
+def test_security_headers_forward_each_stream_chunk_without_buffering():
+    import asyncio
+    from scripts.run_staging import SecurityHeaders
+
+    async def exercise():
+        events = []
+        forwarded = asyncio.Event()
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/event-stream")]})
+            await send({"type": "http.response.body", "body": b"first", "more_body": True})
+            await asyncio.wait_for(forwarded.wait(), .2)
+            await send({"type": "http.response.body", "body": b"last", "more_body": False})
+        async def send(event):
+            events.append(event)
+            if event.get("body") == b"first":
+                forwarded.set()
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await SecurityHeaders(app)({"type": "http"}, receive, send)
+        assert [e.get("body") for e in events[1:]] == [b"first", b"last"]
+        assert (b"strict-transport-security", b"max-age=31536000") in events[0]["headers"]
+    asyncio.run(exercise())
+
+
+def test_staging_history_backup_worker_has_bounded_shutdown(staging, monkeypatch):
+    import uvicorn
+    from scripts import run_staging
+
+    historical_state(staging)
+    monkeypatch.setenv("STAGING_BOOTSTRAP_AI_OFF", "false")
+    events = []
+    class Worker:
+        def __init__(self, *, target, args, daemon):
+            self.stop = args[2]
+            assert daemon is True and target is run_staging.backup_loop
+        def start(self):
+            events.append("started")
+        def join(self, *, timeout):
+            assert self.stop.is_set()
+            events.append(("joined", timeout))
+    monkeypatch.setattr(run_staging.threading, "Thread", Worker)
+    monkeypatch.setattr(run_staging, "backup_once", lambda *args: events.append("snapshot"))
+    monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: events.append("served"))
+    assert main([]) == 0
+    assert events == ["snapshot", "started", "served", ("joined", 2)]

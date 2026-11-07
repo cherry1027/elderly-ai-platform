@@ -5,14 +5,14 @@ services:
     name: memy-backend-staging
     runtime: docker
     region: frankfurt
-    plan: starter
+    plan: 0.5c-512mb
     branch: codex/real-milestone1-ai-backend
     dockerfilePath: ./Dockerfile
     dockerContext: .
     autoDeployTrigger: 'off'
     numInstances: 1
     healthCheckPath: /health
-    maxShutdownDelaySeconds: 120
+    # Disk-backed services use Render's fixed shutdown window.
     disk:
       name: memy-staging-state
       mountPath: /var/data
@@ -38,6 +38,11 @@ services:
         value: 'false'
       - key: REAL_AI_TEXT_ONLY
         value: 'false'
+      # These opt in to the reviewed fast path, but neither enables paid AI.
+      - key: REAL_AI_COMBINED_TURN_ENABLED
+        value: 'true'
+      - key: REAL_AI_STREAM_TURN_ENABLED
+        value: 'true'
       - key: CONVERSATION_MODE
         value: disabled
       - key: STORY_GENERATION_MODE

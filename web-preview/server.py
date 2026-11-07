@@ -31,6 +31,13 @@ MAX_BODY_BYTES = 25_100_000
 MAX_JSON_BYTES = 2_000_000
 MAX_PDF_BYTES = 2_000_000
 MAX_AUDIO_BYTES = 10_000_000
+MAX_STREAM_BYTES = 2_000_000
+MAX_STREAM_EVENT_BYTES = 1_000_000
+MAX_STREAM_FRAMES = 8
+STREAM_PATH = re.compile(
+    r"/api/v2/story-sessions/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+    r"[0-9a-f]{4}-[0-9a-f]{12})/(?:text-messages|messages)\Z"
+)
 BODY_TIMEOUT_SECONDS = 30.0
 ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
@@ -76,6 +83,82 @@ CSP = "; ".join((
     "form-action 'none'",
     "frame-ancestors 'none'",
 ))
+
+
+class InvalidEventStream(ValueError):
+    """An upstream stream broke the exact bounded application protocol."""
+
+
+class EventStreamLimit(InvalidEventStream):
+    """The stream exceeded its bounded byte/event count."""
+
+
+def _reject_json_constant(_value):
+    raise InvalidEventStream("Invalid event JSON")
+
+
+def canonical_uuid(value):
+    try:
+        return isinstance(value, str) and str(uuid.UUID(value)) == value
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+
+def validate_stream_event(frame, state, session_id, operation_header):
+    """Validate one data-only frame before relaying it; never expose raw SSE."""
+    if not frame.startswith(b"data: ") or b"\n" in frame or b"\r" in frame:
+        raise InvalidEventStream("Invalid frame")
+    data = frame[6:]
+    if len(data) > MAX_STREAM_EVENT_BYTES:
+        raise EventStreamLimit("Event too large")
+    try:
+        event = json.loads(data.decode("utf-8"), object_pairs_hook=_unique_json_object,
+                           parse_constant=_reject_json_constant)
+        # Reject escaped lone surrogates anywhere in the envelope as well.
+        json.dumps(event, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (ValueError, TypeError, RecursionError):
+        raise InvalidEventStream("Invalid event JSON") from None
+    if not isinstance(event, dict):
+        raise InvalidEventStream("Invalid event")
+    kind = event.get("type")
+    if state["operation"] is None:
+        if kind != "operation" or set(event) != {"type", "operation_id", "project_id", "session_id"}:
+            raise InvalidEventStream("Missing operation")
+        if (not all(canonical_uuid(event[key]) for key in ("operation_id", "project_id", "session_id"))
+            or event["session_id"] != session_id or event["operation_id"] != operation_header):
+            raise InvalidEventStream("Invalid operation scope")
+        state["operation"] = event["operation_id"]
+    elif kind == "reply":
+        text = event.get("text")
+        if (state["reply"] or state["saving"] or set(event) != {"type", "text"}
+            or not isinstance(text, str) or not text.strip() or len(text) > 1000 or "\0" in text):
+            raise InvalidEventStream("Invalid reply")
+        state["reply"] = True
+    elif kind == "saving":
+        if state["saving"] or set(event) != {"type"}:
+            raise InvalidEventStream("Invalid saving event")
+        state["saving"] = True
+    elif kind == "completed":
+        if set(event) != {"type", "result"} or not isinstance(event["result"], dict):
+            raise InvalidEventStream("Invalid completion")
+        state["terminal"] = True
+    elif kind == "error":
+        error = event.get("error")
+        if (set(event) != {"type", "status", "error", "operation_id", "recovery", "retry_after"}
+            or type(event["status"]) is not int or not 400 <= event["status"] <= 599
+            or event["operation_id"] != state["operation"]
+            or not isinstance(error, dict) or set(error) != {"code", "message"}
+            or not isinstance(error["code"], str) or not re.fullmatch(r"[A-Z][A-Z0-9_]{0,79}", error["code"])
+            or not isinstance(error["message"], str) or not 1 <= len(error["message"]) <= 1024
+            or (event["recovery"] is not None and (not isinstance(event["recovery"], str)
+                or event["recovery"] not in {"wait", "sign-in", "check-saved", "contact-operator"}))
+            or (event["retry_after"] is not None and (not isinstance(event["retry_after"], str)
+                or not re.fullmatch(r"[0-9]{1,6}", event["retry_after"])))):
+            raise InvalidEventStream("Invalid error")
+        state["terminal"] = True
+    else:
+        raise InvalidEventStream("Unsupported event")
+    return event
 
 
 class InvalidClientConfig(ValueError):
@@ -157,12 +240,17 @@ class PreviewHandler(BaseHTTPRequestHandler):
                    explain: str | None = None) -> None:
         self._error(code, "PREVIEW_BAD_REQUEST", "This request is not supported.")
 
-    def _write(self, status: int, body: bytes, content_type: str,
-               extra_headers: dict[str, str] | None = None) -> None:
+    def _begin_response(self, status: int, content_type: str,
+                        extra_headers: dict[str, str] | None = None,
+                        *, length: int | None = None) -> None:
         self.close_connection = True
+        # Once bytes may have reached the client, failure must close this one
+        # response rather than append a second HTTP/JSON status to an SSE body.
+        self._response_started = True
         self.send_response(status)
         self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
+        if length is not None:
+            self.send_header("Content-Length", str(length))
         self.send_header("Cache-Control", "no-store")
         self.send_header("Pragma", "no-cache")
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -178,8 +266,50 @@ class PreviewHandler(BaseHTTPRequestHandler):
         for name, value in (extra_headers or {}).items():
             self.send_header(name, value)
         self.end_headers()
+
+    def _write(self, status: int, body: bytes, content_type: str,
+               extra_headers: dict[str, str] | None = None) -> None:
+        self._begin_response(status, content_type, extra_headers, length=len(body))
         if getattr(self, "command", None) != "HEAD":
             self.wfile.write(body)
+
+    def _relay_stream(self, upstream, session_id, response_headers):
+        # The application protocol is plain UTF-8; do not decompress an
+        # unbounded compressed event before the decoded byte cap is checked.
+        if upstream.headers.get("Content-Encoding", "identity").lower() != "identity":
+            raise InvalidEventStream("Encoded event streams are unsupported")
+        operation_header = upstream.headers.get("X-Memy-Operation-Id")
+        if not canonical_uuid(operation_header):
+            raise InvalidEventStream("Invalid operation header")
+        state = {"operation": None, "reply": False, "saving": False, "terminal": False}
+        pending = bytearray()
+        total = frames = 0
+        # No chunk_size: httpx otherwise waits for a 64KB buffer (or EOF),
+        # which would hide the early reply until the whole action completed.
+        for chunk in upstream.iter_bytes():
+            total += len(chunk)
+            if total > MAX_STREAM_BYTES:
+                raise EventStreamLimit("Stream too large")
+            pending.extend(chunk)
+            while b"\n\n" in pending:
+                frame, remainder = pending.split(b"\n\n", 1)
+                pending = bytearray(remainder)
+                frames += 1
+                if frames > MAX_STREAM_FRAMES:
+                    raise EventStreamLimit("Too many frames")
+                validate_stream_event(bytes(frame), state, session_id, operation_header)
+                if not getattr(self, "_response_started", False):
+                    self._begin_response(200, "text/event-stream; charset=utf-8",
+                        {**response_headers, "X-Accel-Buffering": "no"})
+                self.wfile.write(frame + b"\n\n")
+                self.wfile.flush()
+                if state["terminal"]:
+                    return  # Do not wait for EOF after a validated terminal frame.
+            if len(pending) > MAX_STREAM_EVENT_BYTES + 6:
+                raise EventStreamLimit("Event too large")
+        # EOF without a terminal event remains an interrupted/uncertain client
+        # operation. Never fabricate success or automatically retry it.
+        raise InvalidEventStream("Incomplete event stream")
 
     def _json(self, status: int, value: object) -> None:
         self._write(status, json.dumps(value, separators=(",", ":")).encode(),
@@ -317,6 +447,19 @@ class PreviewHandler(BaseHTTPRequestHandler):
                 if not safe_header(content_type, 256):
                     raise ValueError("Invalid response content type")
                 media_type = content_type.split(";", 1)[0].strip().lower()
+                if media_type == "text/event-stream":
+                    match = STREAM_PATH.fullmatch(path)
+                    if (self.command != "POST" or query or match is None
+                        or headers.get("Accept") != "text/event-stream"
+                        or not headers.get("Authorization") or not headers.get("Idempotency-Key")
+                        or upstream.status_code != 200):
+                        raise InvalidEventStream("Unexpected stream")
+                    response_headers = {}
+                    operation_header = upstream.headers.get("X-Memy-Operation-Id")
+                    if operation_header is not None and safe_header(operation_header, 256):
+                        response_headers["X-Memy-Operation-Id"] = operation_header
+                    self._relay_stream(upstream, match.group(1), response_headers)
+                    return
                 if media_type == "application/pdf":
                     limit = MAX_PDF_BYTES
                 elif media_type.startswith("audio/"):
@@ -348,9 +491,16 @@ class PreviewHandler(BaseHTTPRequestHandler):
                             response_headers[name] = value
                 self._write(upstream.status_code, b"".join(chunks), content_type,
                             response_headers)
+        except EventStreamLimit:
+            if not getattr(self, "_response_started", False):
+                self._error(502, "PREVIEW_RESPONSE_TOO_LARGE", "The local service response is too large.")
+        except InvalidEventStream:
+            if not getattr(self, "_response_started", False):
+                self._error(502, "PREVIEW_BACKEND_RESPONSE_INVALID", "The local service returned an unsupported response.")
         except (httpx.HTTPError, OSError, ValueError):
-            self._error(503, "PREVIEW_BACKEND_UNAVAILABLE",
-                        "The local service is unavailable. Please try again later.")
+            if not getattr(self, "_response_started", False):
+                self._error(503, "PREVIEW_BACKEND_UNAVAILABLE",
+                            "The local service is unavailable. Please try again later.")
 
     def _dispatch(self) -> None:
         if not self._validate_envelope():

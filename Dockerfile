@@ -17,11 +17,22 @@ RUN groupadd --gid 10001 memy \
 
 WORKDIR /app/backend
 COPY backend/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# Fail explicitly if a compatible pinned runtime wheel is unavailable instead
+# of silently trying a compiler/toolchain fallback in the release image.
+RUN pip install --no-cache-dir --only-binary=:all: -r requirements.txt \
+    && pip check
 COPY backend/app ./app
 COPY backend/scripts ./scripts
 COPY deployment/start_staging.py /app/deployment/start_staging.py
+COPY deployment/container_preflight.py /app/deployment/container_preflight.py
 
+# Check the actual installed decoder, encrypted-cache primitive and bundled
+# EN/SV PDF fonts as the runtime user. No key, Auth or network call is used.
+USER 10001:10001
+RUN python /app/deployment/container_preflight.py
+USER root
+
+STOPSIGNAL SIGTERM
 EXPOSE 10000
 # The short entrypoint handles a root-owned attached volume and drops to the
 # dedicated user before importing or starting the application.

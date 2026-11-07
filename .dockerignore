@@ -8,9 +8,18 @@
 !backend/scripts/**
 !deployment/
 !deployment/start_staging.py
+!deployment/container_preflight.py
 !Dockerfile
 backend/**/__pycache__/
 backend/**/*.pyc
 backend/**/.env*
 backend/**/.private/
 backend/**/node_modules/
+
+# Runtime state/credentials must stay outside every build context location.
+**/*.sqlite3
+**/*.sqlite3-wal
+**/*.sqlite3-shm
+**/*.key
+**/*.pem
+**/.private/**

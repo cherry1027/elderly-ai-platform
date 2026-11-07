@@ -2,7 +2,7 @@
  * No credentials are written to localStorage, sessionStorage, cookies or disk.
  * Refreshing the preview clears this module and requires signing in again.
  */
-export const MOBILE_AUTH_STORAGE_KEY = 'memy.auth.edbkuunyeyxnyenmmqud.v1';
+export const MOBILE_AUTH_STORAGE_KEY = 'memy.auth.mrfzmlckmvgxweiiugmr.v1';
 export const SECURE_STORAGE_TIMEOUT_MS = 4000;
 export const MAX_SESSION_LENGTH = 24000;
 export interface SecureSessionStorage {

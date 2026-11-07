@@ -2,7 +2,10 @@ import Constants from 'expo-constants';
 import { AuthError } from './errors';
 import { readWebStaging } from '../web-staging';
 
-export const DEVELOPMENT_SUPABASE_URL = 'https://edbkuunyeyxnyenmmqud.supabase.co';
+// This web-only pin does not change the native development/registration project.
+export const WEB_PILOT_SUPABASE_URL = 'https://mrfzmlckmvgxweiiugmr.supabase.co';
+// Shared auth code imports this compatibility name through platform resolution.
+export const DEVELOPMENT_SUPABASE_URL = WEB_PILOT_SUPABASE_URL;
 export type MobileAuthConfig = { supabaseUrl: string; publishableKey: string };
 export function validateMobileAuthConfig(value: MobileAuthConfig): MobileAuthConfig {
   if (!value || value.supabaseUrl !== DEVELOPMENT_SUPABASE_URL || typeof value.publishableKey !== 'string' ||

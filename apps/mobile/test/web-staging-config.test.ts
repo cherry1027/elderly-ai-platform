@@ -2,16 +2,23 @@ import { createRequire } from 'node:module';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { readWebStaging } from '../src/web-staging';
-import { readMobileAuthConfig } from '../src/auth/config.web';
+import { readMobileAuthConfig, validateMobileAuthConfig, WEB_PILOT_SUPABASE_URL } from '../src/auth/config.web';
+import { MOBILE_AUTH_STORAGE_KEY as webStorageKey } from '../src/auth/secure-storage.web';
 import { readMobileApiConfig } from '../src/api/config.web';
 import { readRealAiConfig, readRealAiRequested } from '../src/real-ai/config.web';
 jest.mock('expo-constants', () => ({ __esModule: true, default: { expoConfig: null } }));
 const load = createRequire(__filename);
-const { readWebStagingConfig } = load('../scripts/web-staging-config.cjs');
+// Explicit native filenames keep this regression independent of web resolution.
+const { DEVELOPMENT_SUPABASE_URL: nativeSupabaseUrl, validateMobileAuthConfig: validateNativeAuth } =
+  jest.requireActual<typeof import('../src/auth/config')>('../src/auth/config.ts');
+const { MOBILE_AUTH_STORAGE_KEY: nativeStorageKey } =
+  jest.requireActual<typeof import('../src/auth/secure-storage')>('../src/auth/secure-storage.ts');
+const { readWebStagingConfig, WEB_PILOT_SUPABASE_URL: buildSupabaseUrl } = load('../scripts/web-staging-config.cjs');
+const { DEVELOPMENT_SUPABASE_URL: nativeBuildSupabaseUrl } = load('../scripts/auth-config.cjs');
 const { exportEnvironment } = load('../scripts/export-web-staging.cjs');
 const { publicHostSettings, renderStaticBlueprint } = load('../../../web-preview/staging.cjs');
 const config = { webOrigin: 'https://memy-web.example.test', apiOrigin: 'https://memy-api.example.test',
-  supabaseUrl: 'https://edbkuunyeyxnyenmmqud.supabase.co', publishableKey: 'sb_publishable_synthetic_value_1234567890' };
+  supabaseUrl: 'https://mrfzmlckmvgxweiiugmr.supabase.co', publishableKey: 'sb_publishable_synthetic_value_1234567890' };
 const previousPlatform = Platform.OS, previousConstants = Constants.expoConfig;
 const oldLocation = Object.getOwnPropertyDescriptor(globalThis, 'location'), oldSecure = Object.getOwnPropertyDescriptor(globalThis, 'isSecureContext');
 function install() {
@@ -51,6 +58,18 @@ it('activates only the exact secure frontend and API origin, with the pinned pro
   expect(readMobileAuthConfig().supabaseUrl).toBe(config.supabaseUrl);
   expect(readMobileApiConfig()).toEqual({ baseUrl: config.apiOrigin });
   expect(readRealAiConfig()).toEqual({ baseUrl: config.apiOrigin, apiContract: 'real-v2' }); expect(readRealAiRequested()).toBe(true);
+});
+it('isolates the dedicated browser pilot from the unchanged native project and storage namespace', () => {
+  const original = 'https://edbkuunyeyxnyenmmqud.supabase.co';
+  expect(WEB_PILOT_SUPABASE_URL).toBe(config.supabaseUrl); expect(buildSupabaseUrl).toBe(config.supabaseUrl);
+  expect(nativeSupabaseUrl).toBe(original); expect(nativeBuildSupabaseUrl).toBe(original);
+  expect(validateMobileAuthConfig({ supabaseUrl: config.supabaseUrl, publishableKey: config.publishableKey }).supabaseUrl).toBe(config.supabaseUrl);
+  expect(() => validateMobileAuthConfig({ supabaseUrl: original, publishableKey: config.publishableKey })).toThrow();
+  expect(readWebStagingConfig('/mobile', 'web-staging', jest.fn(() => JSON.stringify({ ...config, supabaseUrl: original })))).toBeNull();
+  expect(() => validateNativeAuth({ supabaseUrl: config.supabaseUrl, publishableKey: config.publishableKey })).toThrow();
+  expect(validateNativeAuth({ supabaseUrl: original, publishableKey: config.publishableKey }).supabaseUrl).toBe(original);
+  expect(webStorageKey).toBe('memy.auth.mrfzmlckmvgxweiiugmr.v1');
+  expect(nativeStorageKey).toBe('memy.auth.edbkuunyeyxnyenmmqud.v1');
 });
 it.each(['https://other.example.test', 'http://memy-web.example.test', 'http://127.0.0.1:8768'])('fails closed when served from %s', href => {
   Object.defineProperty(globalThis, 'location', { configurable: true, value: new URL(href) });

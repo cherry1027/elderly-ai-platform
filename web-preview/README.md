@@ -2,6 +2,10 @@
 
 This source exports the existing Expo mobile interface as a static HTTPS browser app. It does not publish a server, activate AI, alter Supabase, or replace the native app. The static app calls the reviewed FastAPI HTTPS service directly. No Python development proxy is exposed publicly.
 
+The hosted browser pilot uses the dedicated Free project `mrfzmlckmvgxweiiugmr`. The native app, native registration and development/staging client configuration continue to use the original `edbkuunyeyxnyenmmqud` project. Existing accounts and stories in the original project are preserved and are not automatically copied into the browser pilot. Use only the new project’s publishable key in its web build.
+
+When deploying this switch, update the backend’s private project configuration and the static host’s generated CSP together. The hosted web/API origins stay the same. A CSP that still permits only the original Supabase origin will block browser login. Verify the new project’s schema, RLS and individual accounts before sending pilot links.
+
 ## Build and origins
 
 In `apps/mobile`, run `npm ci --ignore-scripts --legacy-peer-deps` using Node 22.13 or a supported version. Then run `node scripts/export-web-staging.cjs` with exactly these client-safe settings in the build environment:
@@ -9,7 +13,7 @@ In `apps/mobile`, run `npm ci --ignore-scripts --legacy-peer-deps` using Node 22
 ```
 MEMY_WEB_ORIGIN=https://<approved-static-host>
 MEMY_API_ORIGIN=https://<approved-fastapi-host>
-MEMY_SUPABASE_URL=https://edbkuunyeyxnyenmmqud.supabase.co
+MEMY_SUPABASE_URL=https://mrfzmlckmvgxweiiugmr.supabase.co
 MEMY_SUPABASE_PUBLISHABLE_KEY=<this-projects-publishable-key>
 ```
 

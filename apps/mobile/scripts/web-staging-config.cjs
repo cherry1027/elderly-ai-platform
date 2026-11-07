@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { DEVELOPMENT_SUPABASE_URL } = require('./auth-config.cjs');
+// Browser pilot only. Native development and registration stay on the original project.
+const WEB_PILOT_SUPABASE_URL = 'https://mrfzmlckmvgxweiiugmr.supabase.co';
 
 const WEB_STAGING_CONFIG_NAME = 'staging.web.client.local.json';
 function validPublicOrigin(value) {
@@ -17,7 +18,7 @@ function validateWebStagingConfig(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value) &&
     Object.keys(value).sort().join(',') === 'apiOrigin,publishableKey,supabaseUrl,webOrigin' &&
     validPublicOrigin(value.apiOrigin) && validPublicOrigin(value.webOrigin) && value.apiOrigin !== value.webOrigin &&
-    value.supabaseUrl === DEVELOPMENT_SUPABASE_URL && typeof value.publishableKey === 'string' &&
+    value.supabaseUrl === WEB_PILOT_SUPABASE_URL && typeof value.publishableKey === 'string' &&
     /^sb_publishable_[A-Za-z0-9_-]{20,200}$/.test(value.publishableKey);
 }
 function readWebStagingConfig(root, mode, read = fs.readFileSync) {
@@ -29,4 +30,4 @@ function readWebStagingConfig(root, mode, read = fs.readFileSync) {
     return validateWebStagingConfig(value) ? value : null;
   } catch { return null; }
 }
-module.exports = { WEB_STAGING_CONFIG_NAME, readWebStagingConfig, validateWebStagingConfig, validPublicOrigin };
+module.exports = { WEB_PILOT_SUPABASE_URL, WEB_STAGING_CONFIG_NAME, readWebStagingConfig, validateWebStagingConfig, validPublicOrigin };

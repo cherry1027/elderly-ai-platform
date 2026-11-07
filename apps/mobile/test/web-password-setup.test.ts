@@ -1,13 +1,13 @@
 import { consumeWebRecoveryLink, createWebPasswordSetup } from '../src/auth/web-password-setup';
 import { readWebStaging } from '../src/web-staging';
 jest.mock('../src/web-staging', () => ({ readWebStaging: jest.fn(() => ({ webOrigin: 'https://memy-web.example.test', apiOrigin: 'https://memy-api.example.test' })) }));
-jest.mock('../src/auth/config.web', () => ({ DEVELOPMENT_SUPABASE_URL: 'https://edbkuunyeyxnyenmmqud.supabase.co',
-  readMobileAuthConfig: () => ({ supabaseUrl: 'https://edbkuunyeyxnyenmmqud.supabase.co', publishableKey: 'sb_publishable_synthetic_value_1234567890' }) }));
+jest.mock('../src/auth/config.web', () => ({ DEVELOPMENT_SUPABASE_URL: 'https://mrfzmlckmvgxweiiugmr.supabase.co',
+  readMobileAuthConfig: () => ({ supabaseUrl: 'https://mrfzmlckmvgxweiiugmr.supabase.co', publishableKey: 'sb_publishable_synthetic_value_1234567890' }) }));
 const oldWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
 beforeAll(() => Object.defineProperty(globalThis, 'window', { configurable: true, value: { addEventListener: jest.fn(), removeEventListener: jest.fn() } }));
 afterAll(() => { if (oldWindow) Object.defineProperty(globalThis, 'window', oldWindow); else Reflect.deleteProperty(globalThis, 'window'); });
 const subject = '10000000-0000-4000-8000-000000000001', base = 'https://memy-web.example.test/auth/callback';
-const supabase = 'https://edbkuunyeyxnyenmmqud.supabase.co';
+const supabase = 'https://mrfzmlckmvgxweiiugmr.supabase.co';
 const claims = () => ({ sub: subject, iss: `${supabase}/auth/v1`, role: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 });
 const token = (patch = {}) => `synthetic.${btoa(JSON.stringify({ ...claims(), ...patch })).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_')}.signature`;
 function fixture(type = 'recovery') {
@@ -33,7 +33,8 @@ it.each(['?code=pkce', '#error=access_denied&error_description=private-value', '
   expect(() => consumeWebRecoveryLink(f.location, f.history)).toThrow('Password setup could not be completed.');
   expect(f.history.replaceState).toHaveBeenCalledTimes(1); expect(f.request).not.toHaveBeenCalled();
 });
-it.each([{ iss: 'https://wrong.supabase.co/auth/v1' }, { role: 'anon' }, { sub: 'not-a-user' }, { exp: 1 }])('rejects wrong project/role/subject/expiry %#', patch => {
+it.each([{ iss: 'https://wrong.supabase.co/auth/v1' }, { iss: 'https://edbkuunyeyxnyenmmqud.supabase.co/auth/v1' },
+  { role: 'anon' }, { sub: 'not-a-user' }, { exp: 1 }])('rejects wrong project/role/subject/expiry %#', patch => {
   const f = fixture(); f.location.href = f.location.href.replace(token(), token(patch));
   expect(() => consumeWebRecoveryLink(f.location, f.history)).toThrow();
 });

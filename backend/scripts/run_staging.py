@@ -145,6 +145,11 @@ def staging_configuration():
         "real_ai_enabled": real_enabled, "ai_usage_ledger_path": ledger,
         "real_ai_usage_log_path": usage_log,
     }
+    if bootstrap:
+        # AI-off provisioning has no speech key/state dependency. Do not open,
+        # create or mutate the durable cache before private state is installed.
+        # Nonbootstrap restart/activation retains the original durable guards.
+        updates.update(real_ai_speech_storage_path=None, real_ai_speech_encryption_key=None)
     settings = settings.model_copy(update=updates)
     return settings, {"state": state, "origin": origin, "tls_mode": tls_mode,
                       "bootstrap": bootstrap, "manifest": manifest}
@@ -230,14 +235,83 @@ def backup_loop(settings, options, stop, interval):
             print('{"event":"staging_backup","ok":false}', file=sys.stderr, flush=True)
 
 
+# Only fixed public error identifiers may enter host logs. Unknown StateError
+# messages, Pydantic input details, APIError bodies and paths remain suppressed.
+SAFE_STARTUP_STATE_CODES = frozenset({
+    "BACKUP_HASH_MISMATCH",
+    "BOOTSTRAP_CANNOT_ENABLE_AI",
+    "CUMULATIVE_BUDGET_POLICY_REQUIRED",
+    "DEVELOPMENT_PROJECT_REQUIRED",
+    "DUPLICATE_LEDGER_ROW",
+    "DURABLE_SPEECH_KEY_REQUIRED",
+    "EXACT_HTTPS_CORS_REQUIRED",
+    "EXACT_PUBLIC_HTTPS_ORIGIN_REQUIRED",
+    "EXPLICIT_AI_ENABLE_REQUIRED",
+    "HISTORICAL_LEDGER_REQUIRED",
+    "HISTORICAL_STATE_CHANGED",
+    "INCOMPLETE_STAGING_STATE",
+    "INVALID_BACKUP_INTERVAL",
+    "INVALID_BACKUP_MANIFEST",
+    "INVALID_BACKUP_RETENTION",
+    "INVALID_HISTORY_MANIFEST",
+    "INVALID_STAGING_FLAG",
+    "LEDGER_COUNTER_MISMATCH",
+    "LEDGER_INTEGRITY_FAILED",
+    "LINKED_DIRECTORY_REJECTED",
+    "LIVE_APPROVAL_OR_PROVIDER_UNAVAILABLE",
+    "MISSING_LEDGER_TABLE",
+    "PERSISTENT_STATE_REQUIRED",
+    "PILOT_COHORT_REQUIRED",
+    "PILOT_COHORT_UNAVAILABLE",
+    "PRIVATE_DIRECTORY_REQUIRED",
+    "PRIVATE_FILE_REQUIRED",
+    "PUBLIC_DNS_ORIGIN_REQUIRED",
+    "RENDER_EDGE_REQUIRED",
+    "REVIEWED_TLS_REQUIRED",
+    "STAGING_HOST_MISMATCH",
+    "STATE_CHANGED",
+    "STATE_TOO_LARGE",
+    "UNPRIVILEGED_PORT_REQUIRED",
+    "UNRECOGNIZED_LEDGER",
+    "UNSUPPORTED_LEDGER",
+})
+
+
+def startup_failure(phase, error):
+    code = "STAGING_NOT_READY"
+    if isinstance(error, StateError):
+        candidate = error.args[0] if len(error.args) == 1 and type(error.args[0]) is str else None
+        if candidate in SAFE_STARTUP_STATE_CODES:
+            code = candidate
+        category = "state-error"
+    elif isinstance(error, OSError):
+        category = "os-error"
+    elif isinstance(error, sqlite3.Error):
+        category = "sqlite-error"
+    elif isinstance(error, json.JSONDecodeError):
+        category = "json-error"
+    elif isinstance(error, ValueError):
+        category = "validation-error"
+    elif isinstance(error, ImportError):
+        category = "import-error"
+    else:
+        category = "unexpected-error"
+    return {"staging_preflight": "failed", "code": code, "phase": phase,
+            "category": category,
+            "errno": error.errno if isinstance(error, OSError) and isinstance(error.errno, int) else None}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="Private/local preflight only; no HTTP or paid calls.")
     args = parser.parse_args(argv)
     previous_umask = os.umask(0o077)
+    phase = "configuration"
     try:
         settings, options = staging_configuration()
+        phase = "application"
         app = staging_app(settings, options)
+        phase = "configuration"
         port = int(os.environ.get("PORT", "10000"))
         if not 1024 <= port <= 65535:
             raise StateError("UNPRIVILEGED_PORT_REQUIRED")
@@ -260,6 +334,7 @@ def main(argv=None):
                               "bootstrap_ai_off": options["bootstrap"],
                               "real_ai_enabled": settings.real_ai_enabled, "workers": 1}))
             return 0
+        phase = "backup"
         if not options["bootstrap"]:
             backup_once(settings, options)
         stop = threading.Event()
@@ -267,6 +342,7 @@ def main(argv=None):
         if not options["bootstrap"]:
             thread = threading.Thread(target=backup_loop, args=(settings, options, stop, interval), daemon=True)
             thread.start()
+        phase = "server"
         try:
             import uvicorn
             uvicorn.run(app, host="0.0.0.0", port=port, workers=1, access_log=False,
@@ -278,10 +354,10 @@ def main(argv=None):
             if thread:
                 thread.join(timeout=BACKUP_THREAD_JOIN_SECONDS)
         return 0
-    except Exception:
-        # Startup/provider/cache constructors may raise structured API errors.
-        # Never echo their exception text or private paths into host logs.
-        print('{"staging_preflight":"failed","code":"STAGING_NOT_READY"}', file=sys.stderr)
+    except Exception as error:
+        # Fixed phases and allowlisted state codes identify startup failures
+        # without echoing exception text, configuration values or input details.
+        print(json.dumps(startup_failure(phase, error), sort_keys=True), file=sys.stderr, flush=True)
         return 2
     finally:
         os.umask(previous_umask)

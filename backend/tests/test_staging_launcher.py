@@ -101,6 +101,8 @@ def test_launcher_restores_process_umask_for_in_process_callers(staging):
 
 
 def test_encrypted_speech_database_survives_staging_configuration_restart(staging, monkeypatch):
+    historical_state(staging)
+    monkeypatch.setenv("STAGING_BOOTSTRAP_AI_OFF", "false")
     monkeypatch.setenv("REAL_AI_SPEECH_STORAGE_PATH", str(staging / "speech.sqlite3"))
     monkeypatch.setenv("REAL_AI_SPEECH_ENCRYPTION_KEY", base64.b64encode(b"s" * 32).decode())
     first_settings, first_options = staging_configuration()
@@ -326,3 +328,97 @@ def test_staging_history_backup_worker_has_bounded_shutdown(staging, monkeypatch
     monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: events.append("served"))
     assert main([]) == 0
     assert events == ["snapshot", "started", "served", ("joined", 2)]
+
+
+@pytest.mark.parametrize("phase", ["configuration", "application", "backup", "server"])
+def test_startup_diagnostics_identify_phase_without_echoing_exception(staging, monkeypatch, capsys, phase):
+    import errno
+    import uvicorn
+    from scripts import run_staging
+
+    marker = "private-configuration-marker"
+    failure = PermissionError(errno.EACCES, marker, "/private/never-log-this")
+    def fail(*args, **kwargs):
+        raise failure
+    if phase == "configuration": monkeypatch.setattr(run_staging, "staging_configuration", fail)
+    if phase == "application": monkeypatch.setattr(run_staging, "staging_app", fail)
+    if phase == "backup":
+        historical_state(staging)
+        monkeypatch.setenv("STAGING_BOOTSTRAP_AI_OFF", "false")
+        monkeypatch.setattr(run_staging, "backup_once", fail)
+    if phase == "server": monkeypatch.setattr(uvicorn, "run", fail)
+    assert main([]) == 2
+    output = capsys.readouterr()
+    data = json.loads(output.err)
+    assert data == {"staging_preflight": "failed", "code": "STAGING_NOT_READY", "phase": phase,
+                    "category": "os-error", "errno": errno.EACCES}
+    assert marker not in output.err and "/private/" not in output.err
+
+
+def test_startup_diagnostics_expose_only_known_fixed_state_codes(staging, monkeypatch, capsys):
+    monkeypatch.setenv("RENDER_EXTERNAL_HOSTNAME", "wrong.example.com")
+    assert main(["--check"]) == 2
+    data = json.loads(capsys.readouterr().err)
+    assert data["phase"] == "configuration" and data["category"] == "state-error"
+    assert data["code"] == "STAGING_HOST_MISMATCH"
+
+
+@pytest.mark.parametrize("error,category", [
+    (StateError("PRIVATE_TOKEN_SHOULD_NEVER_APPEAR"), "state-error"),
+    (StateError("/private/sensitive-path"), "state-error"),
+    (ValueError("private-pydantic-input-marker"), "validation-error"),
+    (RuntimeError("private-provider-response-marker"), "unexpected-error"),
+    (sqlite3.DatabaseError("private-ledger-path"), "sqlite-error"),
+    (ImportError("private-import-path"), "import-error"),
+])
+def test_unknown_error_details_never_enter_startup_diagnostics(error, category):
+    from scripts.run_staging import startup_failure
+    data = startup_failure("configuration", error)
+    assert data == {"staging_preflight": "failed", "phase": "configuration", "code": "STAGING_NOT_READY", "category": category, "errno": None}
+    assert str(error) not in json.dumps(data)
+
+
+@pytest.mark.parametrize("existing_cache", [False, True])
+def test_ai_off_bootstrap_does_not_open_create_or_modify_encrypted_speech_cache(staging, monkeypatch, existing_cache):
+    from app.core.errors import APIError
+    from app.services.real_ai_runtime import RealAIRuntime
+
+    speech = staging / "speech.sqlite3"
+    if existing_cache: write_new(speech, b"synthetic-existing-cache-must-remain-untouched")
+    monkeypatch.setenv("REAL_AI_SPEECH_STORAGE_PATH", str(speech))
+    monkeypatch.delenv("REAL_AI_SPEECH_ENCRYPTION_KEY", raising=False)
+    settings, options = staging_configuration()
+    # Reproduce the original constructor dependency without opening real data:
+    # a configured durable path plus missing key fails even with AI disabled.
+    raw = settings.model_copy(update={"real_ai_speech_storage_path": speech})
+    with pytest.raises(APIError) as failed:
+        RealAIRuntime(raw)
+    assert failed.value.code == "SPEECH_STORAGE_UNAVAILABLE"
+    assert settings.real_ai_speech_storage_path is None and settings.real_ai_speech_encryption_key is None
+    with TestClient(staging_app(settings, options), base_url="https://memy-stage.example.com") as client:
+        assert client.get("/health").status_code == 200
+        assert client.get("/api/v2/capabilities").json()["enabled"] is False
+    if existing_cache: assert speech.read_bytes() == b"synthetic-existing-cache-must-remain-untouched"
+    else: assert not speech.exists()
+    assert not (staging / "ledger.sqlite3").exists()
+
+
+def test_nonbootstrap_paid_speech_still_requires_durable_encryption_key(staging, monkeypatch):
+    from uuid import uuid4
+
+    historical_state(staging)
+    monkeypatch.setenv("STAGING_BOOTSTRAP_AI_OFF", "false")
+    monkeypatch.setenv("STAGING_ENABLE_REAL_AI", "true")
+    monkeypatch.setenv("REAL_AI_ENABLED", "true")
+    monkeypatch.setenv("REAL_AI_SPEECH_ENABLED", "true")
+    monkeypatch.setenv("REAL_AI_SPEECH_STORAGE_PATH", str(staging / "speech.sqlite3"))
+    monkeypatch.delenv("REAL_AI_SPEECH_ENCRYPTION_KEY", raising=False)
+    for name in ("approval.json", "policy.json"):
+        write_new(staging / name, b"{}")
+    write_new(staging / "cohort.json", json.dumps({"version": 1, "approved_by": "synthetic-test", "user_ids": [str(uuid4())]}).encode())
+    monkeypatch.setenv("LIVE_AI_APPROVAL_PATH", str(staging / "approval.json"))
+    monkeypatch.setenv("AI_BUDGET_POLICY_PATH", str(staging / "policy.json"))
+    monkeypatch.setenv("AI_PILOT_COHORT_PATH", str(staging / "cohort.json"))
+    with pytest.raises(StateError, match="DURABLE_SPEECH_KEY_REQUIRED"):
+        staging_configuration()
+    assert not (staging / "speech.sqlite3").exists()

@@ -11,6 +11,7 @@ export interface PlaybackDependencies {
   foreground(): boolean; mode(): Promise<void>; file(): OwnedFile; player(uri: string): Player;
 }
 export interface RealPlayback {
+  prepare?(): void;
   play(bytes: Uint8Array, onFinish: () => void): Promise<void>;
   stop(): Promise<void>;
   dispose(): Promise<void>;

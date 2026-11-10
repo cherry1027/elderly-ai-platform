@@ -4,6 +4,8 @@ import { Pressable, Text } from 'react-native';
 import { LanguageProvider, useLanguage } from '../src/language';
 import { PREFERENCES_KEY, STORAGE_TIMEOUT_MS } from '../src/onboarding/preferences';
 
+jest.mock('../src/onboarding/document-language', () => jest.requireActual('../src/onboarding/document-language.web'));
+
 // Use the same global device mock as the provider; replacing its factory here
 // can leave a module loaded during setup holding a different storage instance.
 const device = AsyncStorage as jest.Mocked<typeof AsyncStorage>;
@@ -40,14 +42,14 @@ beforeEach(() => {
 afterEach(() => { jest.useRealTimers(); });
 
 describe('persistent language and introduction provider', () => {
-  it('waits for loading, then starts the first-use flow in English', async () => {
+  it('waits for loading, then starts the first-use flow in Swedish', async () => {
     let finish!: (value: string | null) => void;
     device.getItem.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
     await render(<LanguageProvider><Probe /></LanguageProvider>);
     expect(screen.getByText('loading')).toBeOnTheScreen();
     await act(() => finish(null));
     await screen.findByText('ready');
-    expect(screen.getByText('en')).toBeOnTheScreen();
+    expect(screen.getByText('sv')).toBeOnTheScreen();
     expect(screen.getByText('first use')).toBeOnTheScreen();
     expect(screen.getByText('storage available')).toBeOnTheScreen();
     expect(device.setItem).not.toHaveBeenCalled();
@@ -100,7 +102,7 @@ describe('persistent language and introduction provider', () => {
   it('handles a corrupt stored record conservatively', async () => {
     device.getItem.mockResolvedValue('{"version":99,"language":"sv","completed":true}');
     await openProvider();
-    expect(screen.getByText('en')).toBeOnTheScreen();
+    expect(screen.getByText('sv')).toBeOnTheScreen();
     expect(screen.getByText('first use')).toBeOnTheScreen();
     expect(screen.getByText('storage warning')).toBeOnTheScreen();
   });
@@ -109,7 +111,7 @@ describe('persistent language and introduction provider', () => {
     let finishRead!: (raw: string | null) => void;
     device.getItem.mockImplementation(() => new Promise((resolve) => { finishRead = resolve; }));
     await render(<LanguageProvider><Probe /></LanguageProvider>);
-    await fireEvent.press(screen.getByRole('button', { name: 'Swedish' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'English' }));
     await fireEvent.press(screen.getByRole('button', { name: 'Complete' }));
     expect(device.setItem).not.toHaveBeenCalled();
     await act(async () => {
@@ -147,13 +149,29 @@ describe('persistent language and introduction provider', () => {
     device.getItem.mockImplementation(async (key) => values.get(key) ?? null);
     device.setItem.mockImplementation(async (key, value) => { values.set(key, value); });
     const first = await openProvider();
-    await fireEvent.press(screen.getByRole('button', { name: 'Swedish' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'English' }));
     await fireEvent.press(screen.getByRole('button', { name: 'Complete' }));
     await waitFor(() => expect(device.setItem).toHaveBeenCalledTimes(2));
     await first.unmount();
     await openProvider();
-    expect(screen.getByText('sv')).toBeOnTheScreen();
+    expect(screen.getByText('en')).toBeOnTheScreen();
     expect(screen.getByText('completed')).toBeOnTheScreen();
     expect([...values.keys()]).toEqual([PREFERENCES_KEY]);
+  });
+
+  it('updates the browser document locale when a saved language is restored and deliberately changed', async () => {
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'document');
+    const documentElement = { lang: 'sv' };
+    Object.defineProperty(globalThis, 'document', { configurable: true, value: { documentElement } });
+    try {
+      device.getItem.mockResolvedValue('{"version":1,"language":"en","completed":true}');
+      await openProvider();
+      expect(documentElement.lang).toBe('en-GB');
+      await fireEvent.press(screen.getByRole('button', { name: 'Swedish' }));
+      expect(documentElement.lang).toBe('sv-SE');
+    } finally {
+      if (original) Object.defineProperty(globalThis, 'document', original);
+      else Reflect.deleteProperty(globalThis, 'document');
+    }
   });
 });

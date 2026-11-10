@@ -67,8 +67,9 @@ describe('actual native router flow', () => {
   it('launches directly at language selection on first use', async () => {
     const flow = await openFlow();
     expect(flow.getPathname()).toBe('/language');
-    expect(screen.getByRole('header', { name: copy.en.languageTitle })).toBeVisible();
-    expect(screen.getByRole('radio', { name: 'English' })).toBeChecked();
+    expect(screen.getByRole('header', { name: copy.sv.languageTitle })).toBeVisible();
+    expect(screen.getByRole('radio', { name: 'Svenska' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: 'English' })).not.toBeChecked();
   });
 
   it.each<Language>(['en', 'sv'])('continues and returns in %s without losing the selected language', async (language) => {
@@ -102,11 +103,11 @@ describe('actual native router flow', () => {
 
   it('does not stack duplicate introduction screens after repeated Continue activation', async () => {
     const flow = await openFlow();
-    const next = screen.getByRole('button', { name: copy.en.continue });
+    const next = screen.getByRole('button', { name: copy.sv.continue });
     await act(async () => { await fireEvent.press(next); await fireEvent.press(next); });
-    await screen.findByRole('header', { name: introCopy.en.scenes[0].title });
-    await fireEvent.press(screen.getByRole('button', { name: introCopy.en.back }));
-    await screen.findByRole('header', { name: copy.en.languageTitle });
+    await screen.findByRole('header', { name: introCopy.sv.scenes[0].title });
+    await fireEvent.press(screen.getByRole('button', { name: introCopy.sv.back }));
+    await screen.findByRole('header', { name: copy.sv.languageTitle });
     expect(flow.getPathname()).toBe('/language');
   });
 
@@ -120,11 +121,11 @@ describe('actual native router flow', () => {
 
   it('persists the selected language across application remount', async () => {
     const first = await openFlow();
-    await fireEvent.press(screen.getByRole('radio', { name: 'Svenska' }));
-    await expectStoredPreferences('sv', false);
+    await fireEvent.press(screen.getByRole('radio', { name: 'English' }));
+    await expectStoredPreferences('en', false);
     await first.unmount();
     await openFlow();
-    expect(screen.getByRole('radio', { name: 'Svenska' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: 'English' })).toBeChecked();
   });
 
   it('does not contact authentication or backend services during the complete flow', async () => {
@@ -165,16 +166,16 @@ describe('actual native router flow', () => {
   it('returns to Welcome after a language change without inventing completion for a remembered account visit', async () => {
     const flow = await renderRouter({ ...routes, index: RememberedVisitEntry }, { initialUrl: '/' });
     await fireEvent.press(await screen.findByRole('button', { name: 'Simulate previously verified visit' }));
-    await screen.findByRole('header', { name: copy.en.welcomeTitle });
-    expect(await AsyncStorage.getItem(PREFERENCES_KEY)).toBeNull();
-    await fireEvent.press(screen.getByRole('button', { name: copy.en.changeLanguage }));
-    await screen.findByRole('header', { name: copy.en.languageTitle });
-    await fireEvent.press(screen.getByRole('radio', { name: 'Svenska' }));
-    await fireEvent.press(screen.getByRole('button', { name: copy.sv.continue }));
     await screen.findByRole('header', { name: copy.sv.welcomeTitle });
+    expect(await AsyncStorage.getItem(PREFERENCES_KEY)).toBeNull();
+    await fireEvent.press(screen.getByRole('button', { name: copy.sv.changeLanguage }));
+    await screen.findByRole('header', { name: copy.sv.languageTitle });
+    await fireEvent.press(screen.getByRole('radio', { name: 'English' }));
+    await fireEvent.press(screen.getByRole('button', { name: copy.en.continue }));
+    await screen.findByRole('header', { name: copy.en.welcomeTitle });
     expect(flow.getPathname()).toBe('/welcome');
-    expect(screen.queryByRole('header', { name: introCopy.sv.scenes[0].title })).toBeNull();
-    await expectStoredPreferences('sv', false);
+    expect(screen.queryByRole('header', { name: introCopy.en.scenes[0].title })).toBeNull();
+    await expectStoredPreferences('en', false);
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
@@ -242,22 +243,22 @@ describe('introduction completion and replay', () => {
 
   it('moves back through scenes without marking completion', async () => {
     await openFlow('/introduction?scene=2');
-    await fireEvent.press(screen.getByRole('button', { name: introCopy.en.back }));
-    expect(await screen.findByRole('header', { name: introCopy.en.scenes[1].title })).toBeVisible();
-    await fireEvent.press(screen.getByRole('button', { name: introCopy.en.back }));
-    expect(await screen.findByRole('header', { name: introCopy.en.scenes[0].title })).toBeVisible();
+    await fireEvent.press(screen.getByRole('button', { name: introCopy.sv.back }));
+    expect(await screen.findByRole('header', { name: introCopy.sv.scenes[1].title })).toBeVisible();
+    await fireEvent.press(screen.getByRole('button', { name: introCopy.sv.back }));
+    expect(await screen.findByRole('header', { name: introCopy.sv.scenes[0].title })).toBeVisible();
     expect(AsyncStorage.setItem).not.toHaveBeenCalled();
   });
 
   it.each([0, 1, 2])('explicitly skips from scene %s and returning users bypass the introduction', async (scene) => {
     const flow = await openFlow('/introduction?scene=' + scene);
-    await fireEvent.press(screen.getByRole('button', { name: introCopy.en.skip }));
-    await screen.findByRole('header', { name: copy.en.welcomeTitle });
-    await expectStoredPreferences('en', true);
+    await fireEvent.press(screen.getByRole('button', { name: introCopy.sv.skip }));
+    await screen.findByRole('header', { name: copy.sv.welcomeTitle });
+    await expectStoredPreferences('sv', true);
     await flow.unmount();
     const returning = await openFlow();
     expect(returning.getPathname()).toBe('/welcome');
-    expect(screen.queryByText(introCopy.en.scenes[0].title)).toBeNull();
+    expect(screen.queryByText(introCopy.sv.scenes[0].title)).toBeNull();
   });
 
   it('replays without clearing prior completion or language', async () => {
@@ -312,10 +313,10 @@ describe('introduction completion and replay', () => {
   it('does not duplicate language selection when backing out of the first scene', async () => {
     const flow = await openFlow();
     for (let attempt = 0; attempt < 3; attempt++) {
-      await fireEvent.press(screen.getByRole('button', { name: copy.en.continue }));
-      await screen.findByRole('header', { name: introCopy.en.scenes[0].title });
-      await fireEvent.press(screen.getByRole('button', { name: introCopy.en.back }));
-      await screen.findByRole('header', { name: copy.en.languageTitle });
+      await fireEvent.press(screen.getByRole('button', { name: copy.sv.continue }));
+      await screen.findByRole('header', { name: introCopy.sv.scenes[0].title });
+      await fireEvent.press(screen.getByRole('button', { name: introCopy.sv.back }));
+      await screen.findByRole('header', { name: copy.sv.languageTitle });
     }
     expect(router.canGoBack()).toBe(false);
     expect(flow.getPathname()).toBe('/language');
@@ -323,7 +324,7 @@ describe('introduction completion and replay', () => {
 
   it.each(['-1', '3', 'garbage'])('handles invalid scene parameter %s safely', async (scene) => {
     await openFlow('/introduction?scene=' + scene);
-    expect(screen.getByRole('header', { name: introCopy.en.scenes[0].title })).toBeVisible();
+    expect(screen.getByRole('header', { name: introCopy.sv.scenes[0].title })).toBeVisible();
   });
 
   it('preserves completion when changing the language of a returning user', async () => {

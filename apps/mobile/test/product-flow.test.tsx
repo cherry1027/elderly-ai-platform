@@ -25,6 +25,7 @@ jest.mock('../src/real-ai/api', () => ({ ...jest.requireActual('../src/real-ai/a
   getRealOperation: jest.fn(), findRealOperation: jest.fn(), transcribeRealRecording: jest.fn(), sendRealMessage: jest.fn(),
   generateRealDraft: jest.fn(), editRealDraft: jest.fn(), exportRealDraft: jest.fn(), downloadRealExport: jest.fn(), createRealSpeech: jest.fn(),
 }));
+jest.mock('../src/real-ai/conversation-mode', () => ({ readConversationMode: async () => null, saveConversationMode: jest.fn() }));
 jest.mock('../src/api/story-projects', () => ({ ...jest.requireActual('../src/api/story-projects'), listStorySessions: jest.fn(), continueStoryProject: jest.fn() }));
 jest.mock('../src/audio/native-recorder', () => ({ ...jest.requireActual('../src/audio/native-recorder'), createNativeRecorder: jest.fn(), createRecordingId: jest.fn() }));
 const mockPrivacy = { ready: true, failed: false, release: jest.fn(), rememberReturn: jest.fn(), createStore: jest.fn() };
@@ -126,7 +127,8 @@ describe('Talk → Memories → My Story product flow — synthetic services onl
     await opened(); await fireEvent.changeText(screen.getByLabelText(t.input), 'We lived near the garden.'); await press(t.send);
     await waitFor(() => expect(screen.getByText('What do you remember about the garden?')).toBeOnTheScreen());
     expect(screen.getByRole('tab', { name: t.chat }).props.accessibilityState.selected).toBe(true);
-    expect(screen.getByLabelText(t.input)).toHaveDisplayValue(''); expect(screen.queryByText(t.reviewSuggested)).toBeNull();
+    expect(screen.getByLabelText(t.input)).toHaveDisplayValue('');
+    expect(screen.getByRole('button', { name: t.reviewSuggested })).toBeEnabled();
     expect(screen.queryByRole('button', { name: t.generate })).toBeNull(); expect(api.generateRealDraft).not.toHaveBeenCalled();
     expect(api.getRealMemories).not.toHaveBeenCalled(); expect(api.getRealDrafts).not.toHaveBeenCalled(); expect(api.createRealSpeech).not.toHaveBeenCalled();
   });
@@ -160,7 +162,7 @@ describe('Talk → Memories → My Story product flow — synthetic services onl
     expect(screen.getByText(copy.voice)).toBeOnTheScreen(); expect(screen.getByRole('button', { name: copy.reload })).toBeOnTheScreen(); noPaidActions();
   });
   it('creates My Story only after the explicit consent and Create action', async () => {
-    jest.mocked(api.getRealMemories).mockResolvedValue([realMemory({ status: 'confirmed', version: 2 })]);
+    jest.mocked(api.getRealMemories).mockResolvedValue([realMemory({ status: 'confirmed', version: 2, clarification_question: null })]);
     await opened(); await tab(t.book); await waitFor(() => expect(screen.getByRole('button', { name: t.generate })).toBeOnTheScreen());
     expect(screen.getByRole('button', { name: t.generate })).toBeDisabled(); expect(api.generateRealDraft).not.toHaveBeenCalled();
     await fireEvent.press(screen.getByRole('checkbox', { name: t.generationConsent }));
@@ -173,14 +175,15 @@ describe('Talk → Memories → My Story product flow — synthetic services onl
     jest.spyOn(Dimensions, 'get').mockReturnValue({ ...dimensions, height: 700, scale: 2 }); await opened();
     const composer = screen.getByTestId('conversation-composer');
     expect(within(composer).getByLabelText(t.input)).toBeOnTheScreen();
-    const microphone = within(composer).getByRole('button', { name: t.start }), send = within(composer).getByRole('button', { name: t.send });
-    expect(microphone).toHaveStyle({ minHeight: 56, minWidth: 56 }); expect(send).toHaveStyle({ minHeight: 56, minWidth: 56 });
+    const speak = within(composer).getByRole('button', { name: t.speakMode }), send = within(composer).getByRole('button', { name: t.send });
+    expect(speak).toHaveStyle({ minHeight: 56, minWidth: 94 }); expect(send).toHaveStyle({ minHeight: 56, minWidth: 56 });
     expect(screen.getByTestId('conversation-composer-row')).toHaveStyle({ flexDirection: 'column' });
     expect(screen.getByLabelText(t.input).props.allowFontScaling).toBe(true); expect(screen.getByTestId('story-top-back')).toBeOnTheScreen();
     expect(within(screen.getByTestId('story-content-scroll')).queryByTestId('conversation-composer')).toBeNull(); noPaidActions();
   });
-  it('uses the microphone action for consent and retains an explicit Stop during recording', async () => {
-    await opened(); await press(t.start); expect(screen.getByText(t.consentTitle)).toBeOnTheScreen();
+  it('uses the microphone action for consent and retains an explicit Stop during recording when speech is paused', async () => {
+    jest.mocked(api.getRealCapabilities).mockResolvedValue({ ...caps, speech: false });
+    await opened(); await press(t.speakMode); await press(t.start); expect(screen.getByText(t.consentTitle)).toBeOnTheScreen();
     expect(recorder.requestPermission).not.toHaveBeenCalled(); await press(t.consentContinue);
     await waitFor(() => expect(screen.getByRole('button', { name: t.stop })).toBeOnTheScreen());
     expect(recorder.start).toHaveBeenCalledTimes(1); expect(api.transcribeRealRecording).not.toHaveBeenCalled();
@@ -225,7 +228,7 @@ describe('Talk → Memories → My Story product flow — synthetic services onl
     expect(StyleSheet.flatten(input.props.style).height).toBeUndefined();
     expect(input.props.multiline).toBe(true); expect(input.props.allowFontScaling).toBe(true); expect(input.props.placeholder).toBe(t.input);
     expect(screen.getByTestId('conversation-composer-row')).toHaveStyle({ flexDirection: 'row' });
-    expect(screen.getByRole('button', { name: t.start })).toHaveStyle({ minHeight: 56, minWidth: 56 });
+    expect(screen.getByRole('button', { name: t.speakMode })).toHaveStyle({ minHeight: 56, minWidth: 94 });
     expect(screen.getByRole('button', { name: t.send })).toHaveStyle({ minHeight: 56, minWidth: 56 });
     const words = 'A first memory.\nA second detail.\nSomething else I remembered.';
     await fireEvent.changeText(input, words); expect(input).toHaveDisplayValue(words);

@@ -123,15 +123,15 @@ describe('actual native login routes with mocked auth services', () => {
   });
   it('guards direct authenticated entry when there is no verified user', async () => {
     await renderRouter(routes, { initialUrl: '/authenticated' });
-    await screen.findByRole('header', { name: copy.en.languageTitle });
-    expect(screen.queryByText(authCopy.en.signedIn)).toBeNull();
-    expect(screen.queryByRole('header', { name: authCopy.en.title })).toBeNull();
+    await screen.findByRole('header', { name: copy.sv.languageTitle });
+    expect(screen.queryByText(authCopy.sv.signedIn)).toBeNull();
+    expect(screen.queryByRole('header', { name: authCopy.sv.title })).toBeNull();
   });
   it('restores only a verified service account at application entry', async () => {
     snapshot = { status: 'signed-in', user: { id: 'verified-a', email: 'a@example.test' }, error: null };
     await renderRouter(routes, { initialUrl: '/' });
-    await openSettings(); await screen.findByText('a@example.test');
-    expect(screen.getByRole('button', { name: authCopy.en.signOut })).toBeEnabled();
+    await openSettings('sv'); await screen.findByText('a@example.test');
+    expect(screen.getByRole('button', { name: authCopy.sv.signOut })).toBeEnabled();
   });
   it('removes account details and offers cleanup retry after failed sign-out', async () => {
     await openWelcome(); await openLogin(); await fill(); await openSettings(); await screen.findByText('a@example.test');
@@ -201,9 +201,9 @@ describe('canonical entrance and in-memory login intent', () => {
 
   it.each(coldPaths)('opens first-use language selection from cold %s', async (path) => {
     const flow = await renderRouter(routes, { initialUrl: path });
-    await screen.findByRole('header', { name: copy.en.languageTitle });
+    await screen.findByRole('header', { name: copy.sv.languageTitle });
     expect(flow.getPathname()).toBe('/language');
-    expect(screen.queryByRole('header', { name: authCopy.en.title })).toBeNull();
+    expect(screen.queryByRole('header', { name: authCopy.sv.title })).toBeNull();
     expect(auth.signIn).not.toHaveBeenCalled();
     expect(auth.signOut).not.toHaveBeenCalled();
   });
@@ -221,22 +221,22 @@ describe('canonical entrance and in-memory login intent', () => {
   it.each(coldPaths)('opens the authenticated screen for a verified session from cold %s', async (path) => {
     snapshot = { status: 'signed-in', user: { id: 'verified-a', email: 'a@example.test' }, error: null };
     const flow = await renderRouter(routes, { initialUrl: path });
-    await openSettings(); await screen.findByText('a@example.test');
+    await openSettings('sv'); await screen.findByText('a@example.test');
     expect(flow.getPathname()).toBe('/authenticated');
-    expect(screen.queryByRole('header', { name: authCopy.en.title })).toBeNull();
+    expect(screen.queryByRole('header', { name: authCopy.sv.title })).toBeNull();
     expect(auth.signOut).not.toHaveBeenCalled();
   });
 
   it('returns to Welcome after sign-out from a verified account with no saved onboarding preferences', async () => {
     snapshot = { status: 'signed-in', user: { id: 'verified-a', email: 'a@example.test' }, error: null };
     const flow = await renderRouter(routes, { initialUrl: '/' });
-    await openSettings(); await screen.findByText('a@example.test');
+    await openSettings('sv'); await screen.findByText('a@example.test');
     expect(await AsyncStorage.getItem(PREFERENCES_KEY)).toBeNull();
-    await fireEvent.press(screen.getByRole('button', { name: authCopy.en.signOut }));
-    await screen.findByRole('header', { name: copy.en.welcomeTitle });
+    await fireEvent.press(screen.getByRole('button', { name: authCopy.sv.signOut }));
+    await screen.findByRole('header', { name: copy.sv.welcomeTitle });
     expect(flow.getPathname()).toBe('/welcome');
     expect(await AsyncStorage.getItem(PREFERENCES_KEY)).toBeNull();
-    expect(screen.queryByLabelText(authCopy.en.password)).toBeNull();
+    expect(screen.queryByLabelText(authCopy.sv.password)).toBeNull();
     expect(screen.queryByText('a@example.test')).toBeNull();
     expect(auth.signIn).not.toHaveBeenCalled();
   });
@@ -244,13 +244,13 @@ describe('canonical entrance and in-memory login intent', () => {
   it('returns to Welcome after displayed account verification is lost without inventing onboarding completion', async () => {
     snapshot = { status: 'signed-in', user: { id: 'verified-a', email: 'a@example.test' }, error: null };
     const flow = await renderRouter(routes, { initialUrl: '/' });
-    await openSettings(); await screen.findByText('a@example.test');
+    await openSettings('sv'); await screen.findByText('a@example.test');
     expect(await AsyncStorage.getItem(PREFERENCES_KEY)).toBeNull();
     await act(() => publish({ status: 'signed-out', user: null, error: 'session' }));
-    await screen.findByRole('header', { name: copy.en.welcomeTitle });
+    await screen.findByRole('header', { name: copy.sv.welcomeTitle });
     expect(flow.getPathname()).toBe('/welcome');
     expect(await AsyncStorage.getItem(PREFERENCES_KEY)).toBeNull();
-    expect(screen.queryByLabelText(authCopy.en.password)).toBeNull();
+    expect(screen.queryByLabelText(authCopy.sv.password)).toBeNull();
     expect(screen.queryByText('a@example.test')).toBeNull();
     expect(auth.signIn).not.toHaveBeenCalled();
   });
@@ -261,13 +261,13 @@ describe('canonical entrance and in-memory login intent', () => {
     jest.mocked(auth.restore).mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
     await renderRouter(routes, { initialUrl: path });
     await waitFor(() => expect(auth.restore).toHaveBeenCalledTimes(1));
-    expect(screen.queryByRole('header', { name: authCopy.en.title })).toBeNull();
+    expect(screen.queryByRole('header', { name: authCopy.sv.title })).toBeNull();
     expect(auth.signOut).not.toHaveBeenCalled();
     await act(async () => {
       publish({ status: 'signed-in', user: { id: 'restored-a', email: 'restored@example.test' }, error: null });
       finish();
     });
-    await openSettings(); await screen.findByText('restored@example.test');
+    await openSettings('sv'); await screen.findByText('restored@example.test');
     expect(auth.signOut).not.toHaveBeenCalled();
   });
 
@@ -323,24 +323,24 @@ describe('canonical entrance and in-memory login intent', () => {
   it.each(['/', ...coldPaths])('keeps cold session-recovery entry %s on Welcome without inventing preferences', async path => {
     snapshot = { status: 'signed-out', user: null, error: 'session' };
     const flow = await renderRouter(routes, { initialUrl: path });
-    await screen.findByRole('header', { name: copy.en.welcomeTitle });
+    await screen.findByRole('header', { name: copy.sv.welcomeTitle });
     expect(flow.getPathname()).toBe('/welcome');
     expect(router.canGoBack()).toBe(false);
     expect(await AsyncStorage.getItem(PREFERENCES_KEY)).toBeNull();
     expect(auth.signIn).not.toHaveBeenCalled(); expect(auth.signOut).not.toHaveBeenCalled();
-    expect(screen.queryByLabelText(authCopy.en.password)).toBeNull();
+    expect(screen.queryByLabelText(authCopy.sv.password)).toBeNull();
   });
 
   it('offers cleanup retry at cold Welcome even without saved preferences', async () => {
     snapshot = { status: 'blocked', user: null, error: 'cleanup' };
     const flow = await renderRouter(routes, { initialUrl: '/' });
-    await screen.findByText(authCopy.en.errors.cleanup);
+    await screen.findByText(authCopy.sv.errors.cleanup);
     expect(flow.getPathname()).toBe('/welcome'); expect(router.canGoBack()).toBe(false);
-    expect(screen.queryByRole('button', { name: introCopy.en.login })).toBeNull();
+    expect(screen.queryByRole('button', { name: introCopy.sv.login })).toBeNull();
     expect(await AsyncStorage.getItem(PREFERENCES_KEY)).toBeNull();
     expect(auth.signOut).not.toHaveBeenCalled();
-    await fireEvent.press(screen.getByRole('button', { name: authCopy.en.retryCleanup }));
-    await waitFor(() => expect(screen.getByRole('button', { name: introCopy.en.login })).toBeEnabled());
+    await fireEvent.press(screen.getByRole('button', { name: authCopy.sv.retryCleanup }));
+    await waitFor(() => expect(screen.getByRole('button', { name: introCopy.sv.login })).toBeEnabled());
     expect(flow.getPathname()).toBe('/welcome');
     expect(await AsyncStorage.getItem(PREFERENCES_KEY)).toBeNull();
   });

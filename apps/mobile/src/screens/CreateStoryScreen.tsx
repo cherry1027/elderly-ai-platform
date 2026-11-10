@@ -33,7 +33,6 @@ export function CreateStoryScreen({ language, state, serviceAvailable, onSubmit,
   const text = createStoryCopy[language];
   const { waiting } = useApiBackoff();
   const [title, setTitle] = useState('');
-  const [projectLanguage, setProjectLanguage] = useState<Language>(language);
   const [validation, setValidation] = useState<CreateStoryInputError['kind'] | null>(null);
   const [validationAttempt, setValidationAttempt] = useState(0);
   const [focused, setFocused] = useState<string | null>(null);
@@ -47,7 +46,7 @@ export function CreateStoryScreen({ language, state, serviceAvailable, onSubmit,
   const disabled = saving || uncertain || authenticationFailed || state.status === 'success';
   const clearDraft = () => { setTitle(''); clearValidation(); Keyboard.dismiss(); };
   const guard = useGuardedLeave({ language, handleRef: leaveRef,
-    dirty: state.status !== 'success' && (title !== '' || projectLanguage !== language),
+    dirty: state.status !== 'success' && title !== '',
     uncertain: saving || uncertain, onDiscard: clearDraft, onCheckSavedResult: onBack,
     checkDisabled: waiting || saving || authenticationFailed });
 
@@ -81,14 +80,14 @@ export function CreateStoryScreen({ language, state, serviceAvailable, onSubmit,
   function changeTitle(value: string) {
     setTitle(value);
     if (!validation) return;
-    try { validateCreateStoryInput({ title: value, language: projectLanguage }); clearValidation(); }
+    try { validateCreateStoryInput({ title: value, language }); clearValidation(); }
     catch (error) { setValidation(error instanceof CreateStoryInputError ? error.kind : 'required'); }
   }
 
   function submit() {
     if (waiting || disabled || submitted.current) return;
     let input: CreateStoryProjectInput;
-    try { input = validateCreateStoryInput({ title, language: projectLanguage }); }
+    try { input = validateCreateStoryInput({ title, language }); }
     catch (error) {
       revealPending.current = true;
       setValidation(error instanceof CreateStoryInputError ? error.kind : 'required');
@@ -145,27 +144,6 @@ export function CreateStoryScreen({ language, state, serviceAvailable, onSubmit,
               onFocus={() => setFocused('title')} onBlur={() => setFocused(null)} />
             <Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.help}>{text.titleHelp}</Text>
           </View>
-          <View style={styles.field} accessible={false} accessibilityRole="radiogroup" accessibilityLabel={text.projectLanguage}
-            accessibilityLanguage={accessibilityLanguages[language]}>
-            <Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.label}>{text.projectLanguage}</Text>
-            <Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.help}>{text.languageHelp}</Text>
-            {(['sv', 'en'] as const).map((value) => {
-              const selected = projectLanguage === value;
-              const label = value === 'sv' ? text.swedish : text.english;
-              return <Pressable key={value} accessibilityRole="radio" accessibilityLabel={label}
-                accessibilityHint={`${text.projectLanguage}. ${text.languageHelp}`}
-                accessibilityLanguage={accessibilityLanguages[language]} accessibilityState={{ checked: selected, disabled }}
-                disabled={disabled} onPress={() => { if (!disabled) setProjectLanguage(value); }}
-                onFocus={() => setFocused(value)} onBlur={() => setFocused(null)}
-                style={({ pressed }) => [styles.action, styles.secondary, styles.radio, selected && styles.selected,
-                  pressed && !disabled && styles.pressed, focused === value && styles.focused, disabled && styles.disabled]}>
-                <View accessible={false} importantForAccessibility="no-hide-descendants" style={styles.radioCircle}>
-                  {selected && <View style={styles.radioDot} />}
-                </View>
-                <Text allowFontScaling style={[styles.actionLabel, styles.secondaryLabel, styles.radioLabel]}>{label}</Text>
-              </Pressable>;
-            })}
-          </View>
           {saving && <Text accessibilityLiveRegion="polite" accessibilityLanguage={accessibilityLanguages[language]}
             allowFontScaling style={styles.notice}>{text.savingWarning}</Text>}
           <Pressable accessibilityRole="button" accessibilityLabel={saving ? text.saving : text.create}
@@ -196,13 +174,8 @@ const styles = StyleSheet.create({
   action: { minHeight: layout.minimumTouchTarget, width: '100%', paddingVertical: 16, paddingHorizontal: 24,
     borderWidth: 2, borderColor: colors.forest, borderRadius: layout.controlRadius, backgroundColor: colors.forest,
     alignItems: 'center', justifyContent: 'center' },
-  secondary: { backgroundColor: colors.paper }, selected: { backgroundColor: colors.selected },
-  radio: { flexDirection: 'row', gap: 16, justifyContent: 'flex-start' },
-  radioCircle: { width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: colors.forest,
-    alignItems: 'center', justifyContent: 'center' },
-  radioDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: colors.forest }, radioLabel: { textAlign: 'left' },
   actionLabel: { color: colors.paper, fontSize: 22, lineHeight: 32, fontWeight: '600', textAlign: 'center', flexShrink: 1 },
-  secondaryLabel: { color: colors.forest }, disabled: { opacity: 0.65 }, pressed: { opacity: 0.8 },
+  disabled: { opacity: 0.65 }, pressed: { opacity: 0.8 },
   focused: { borderColor: colors.ink }, success: { width: '100%', gap: 20 },
   savedTitle: { color: colors.ink, fontFamily: headingFont, fontSize: 28, lineHeight: 38, flexShrink: 1 },
 });

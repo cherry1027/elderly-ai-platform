@@ -1,10 +1,10 @@
 export const createStoryCopy = {
   en: {
-    title: 'Create My Story', introduction: 'Give your story a title and choose its language.',
+    title: 'Create My Story', introduction: 'Give your story a title. Your new story will use English.',
     titleLabel: 'Story title', titleHelp: 'Use 1–120 characters.',
-    projectLanguage: 'Story language', languageHelp: 'The story language cannot be changed after it is created.', english: 'English', swedish: 'Swedish',
+    english: 'English', swedish: 'Swedish',
     create: 'Create My Story', saving: 'Saving story…', back: 'Back to My Stories', cancel: 'Cancel and return to My Stories', signOut: 'Sign Out',
-    unavailable: 'Saving is not available in this development setup. You can check your title and language, but nothing will be saved.',
+    unavailable: 'Saving is currently unavailable. You can still review your title.',
     savingWarning: 'Your request may already have reached the service. Leaving this screen might not stop it. Check My Stories before trying again.',
     uncertain: 'We could not confirm whether your story was saved. Go back to My Stories and refresh before trying again.',
     success: 'Your story was saved.', savedLanguage: 'Language',
@@ -24,11 +24,11 @@ export const createStoryCopy = {
     },
   },
   sv: {
-    title: 'Skapa min berättelse', introduction: 'Ge din berättelse en titel och välj språk.',
+    title: 'Skapa min berättelse', introduction: 'Ge din berättelse en titel. Din nya berättelse blir på svenska.',
     titleLabel: 'Berättelsens titel', titleHelp: 'Använd 1–120 tecken.',
-    projectLanguage: 'Berättelsens språk', languageHelp: 'Berättelsens språk kan inte ändras efter att den har skapats.', english: 'Engelska', swedish: 'Svenska',
+    english: 'Engelska', swedish: 'Svenska',
     create: 'Skapa min berättelse', saving: 'Sparar berättelsen…', back: 'Tillbaka till Mina berättelser', cancel: 'Avbryt och gå tillbaka till Mina berättelser', signOut: 'Logga ut',
-    unavailable: 'Det går inte att spara i den här utvecklingsmiljön. Du kan kontrollera titel och språk, men ingenting sparas.',
+    unavailable: 'Det går inte att spara just nu. Du kan fortfarande granska din titel.',
     savingWarning: 'Din begäran kan redan ha nått tjänsten. Att lämna skärmen kanske inte stoppar den. Kontrollera Mina berättelser innan du försöker igen.',
     uncertain: 'Vi kunde inte bekräfta om din berättelse sparades. Gå tillbaka till Mina berättelser och uppdatera innan du försöker igen.',
     success: 'Din berättelse har sparats.', savedLanguage: 'Språk',

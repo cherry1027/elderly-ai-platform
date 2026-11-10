@@ -62,7 +62,7 @@ it.each((['en','sv'] as const).flatMap(language=>cases(language,jest.fn(async()=
   expect(dismiss).toHaveBeenCalled(); expect(write).not.toHaveBeenCalled();
   expect(screen.getByLabelText(active.input).props.value).toBe(active.value);
   expect(screen.getByLabelText(active.input).props.allowFontScaling).toBe(true);
-  if(name==='Create Story')expect(screen.getByRole('radio',{name:createStoryCopy[language].swedish})).toBeOnTheScreen();
+  if(name==='Create Story')expect(screen.getByRole('button',{name:createStoryCopy[language].create})).toBeOnTheScreen();
   if(name==='Registration')expect(screen.getByRole('button',{name:registrationCopy[language].checkDetails})).toBeOnTheScreen();
   if(name==='Edit Story')expect(screen.getByRole('button',{name:storyDetailsCopy[language].save})).toBeOnTheScreen();
 });

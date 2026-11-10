@@ -131,14 +131,14 @@ describe('native registration routes, mocked services only', () => {
   });
   it('keeps first-use preferences and animated introduction in the existing order', async () => {
     const flow = await renderRouter(routes, { initialUrl: '/register' });
-    await screen.findByRole('header', { name: copy.en.languageTitle });
+    await screen.findByRole('header', { name: copy.sv.languageTitle });
     expect(flow.getPathname()).toBe('/language');
     expect(auth.signIn).not.toHaveBeenCalled();
   });
   it('preserves a legitimate signed-in account at direct registration entry', async () => {
     snapshot = { status: 'signed-in', user: { id: 'existing', email: 'existing@example.test' }, error: null };
     await renderRouter(routes, { initialUrl: '/register' });
-    await openSettings(); await screen.findByText('existing@example.test');
+    await openSettings('sv'); await screen.findByText('existing@example.test');
     expect(auth.signOut).not.toHaveBeenCalled();
     expect(registration.signUp).not.toHaveBeenCalled();
   });
@@ -202,7 +202,7 @@ async function withAppState(check: (change: (state: AppStateStatus) => void) => 
 describe('confirmation callback route without live requests', () => {
   it('does not accept a raw router parameter as proof of confirmation', async () => {
     await renderRouter(routes, { initialUrl: '/auth/confirm?code=synthetic-untrusted-code' });
-    await screen.findByText(registrationCopy.en.confirmationInvalid);
+    await screen.findByText(registrationCopy.sv.confirmationInvalid);
     expect(registration.confirm).not.toHaveBeenCalled();
     expect(auth.signIn).not.toHaveBeenCalled();
   });
@@ -210,12 +210,12 @@ describe('confirmation callback route without live requests', () => {
     const target = await redirectSystemPath({ path: callback('synthetic-code'), initial: true });
     expect(target).toBe('/auth/confirm');
     const flow = await renderRouter(routes, { initialUrl: target });
-    await screen.findByText(registrationCopy.en.confirmationUnavailable);
+    await screen.findByText(registrationCopy.sv.confirmationUnavailable);
     expect(flow.getPathname()).toBe('/auth/confirm');
     expect(registration.confirm).toHaveBeenCalledWith({ code: 'synthetic-code', state: callbackState });
     expect(auth.signIn).not.toHaveBeenCalled();
     expect(auth.signOut).not.toHaveBeenCalled();
-    expect(screen.queryByRole('button', { name: authCopy.en.signOut })).toBeNull();
+    expect(screen.queryByRole('button', { name: authCopy.sv.signOut })).toBeNull();
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
   it('offers normal explicit login only after mocked server-confirmed cleanup, without auto-authentication', async () => {
@@ -234,10 +234,10 @@ describe('confirmation callback route without live requests', () => {
     snapshot = { status: 'signed-in', user: { id: 'account-a', email: 'a@example.test' }, error: null };
     await redirectSystemPath({ path: callback('synthetic-account-b-code'), initial: true });
     await renderRouter(routes, { initialUrl: '/auth/confirm' });
-    await screen.findByText(registrationCopy.en.confirmationUnavailable);
+    await screen.findByText(registrationCopy.sv.confirmationUnavailable);
     expect(auth.signOut).not.toHaveBeenCalled();
-    await fireEvent.press(screen.getByRole('button', { name: registrationCopy.en.back }));
-    await openSettings(); await screen.findByText('a@example.test');
+    await fireEvent.press(screen.getByRole('button', { name: registrationCopy.sv.back }));
+    await openSettings('sv'); await screen.findByText('a@example.test');
     expect(auth.signOut).not.toHaveBeenCalled();
   });
   it('does not clear pending verification material merely by navigating to the callback', async () => {
@@ -249,9 +249,9 @@ describe('confirmation callback route without live requests', () => {
   });
   it('consumes later warm links while the confirmation route is already mounted', async () => {
     await renderRouter(routes, { initialUrl: '/auth/confirm' });
-    await screen.findByText(registrationCopy.en.confirmationInvalid);
+    await screen.findByText(registrationCopy.sv.confirmationInvalid);
     await act(async () => { await redirectSystemPath({ path: callback('synthetic-warm-code'), initial: false }); });
-    await screen.findByText(registrationCopy.en.confirmationUnavailable);
+    await screen.findByText(registrationCopy.sv.confirmationUnavailable);
     expect(registration.confirm).toHaveBeenCalledTimes(1);
   });
   it('keeps a verified confirmation result across native background and foreground', async () => {
@@ -260,11 +260,11 @@ describe('confirmation callback route without live requests', () => {
       await redirectSystemPath({ path: callback('synthetic-code'), initial: true });
       const view = await renderRouter(routes, { initialUrl: '/auth/confirm' });
       try {
-        await screen.findByText(registrationCopy.en.confirmationConfirmed);
+        await screen.findByText(registrationCopy.sv.confirmationConfirmed);
         await act(() => changes('background'));
-        expect(screen.queryByText(registrationCopy.en.confirmationConfirmed)).toBeNull();
+        expect(screen.queryByText(registrationCopy.sv.confirmationConfirmed)).toBeNull();
         await act(() => changes('active'));
-        await screen.findByText(registrationCopy.en.confirmationConfirmed);
+        await screen.findByText(registrationCopy.sv.confirmationConfirmed);
         expect(registration.confirm).toHaveBeenCalledTimes(1);
         expect(auth.signIn).not.toHaveBeenCalled();
       } finally { await view.unmount(); }
@@ -280,7 +280,7 @@ describe('confirmation callback route without live requests', () => {
       await redirectSystemPath({ path: callback('synthetic-code'), initial: false });
       finish();
     });
-    await screen.findByText(registrationCopy.en.confirmationConfirmed);
+    await screen.findByText(registrationCopy.sv.confirmationConfirmed);
     expect(takeConfirmationLink()).toBeNull();
     expect(registration.confirm).toHaveBeenCalledTimes(1);
   });
@@ -288,19 +288,19 @@ describe('confirmation callback route without live requests', () => {
     jest.mocked(registration.confirm).mockRejectedValueOnce({ kind, message: 'private-synthetic-detail' });
     await redirectSystemPath({ path: callback('synthetic-code'), initial: true });
     await renderRouter(routes, { initialUrl: '/auth/confirm' });
-    await screen.findByText(kind === 'cleanup' ? registrationCopy.en.confirmationBlocked : registrationCopy.en.confirmationInvalid);
+    await screen.findByText(kind === 'cleanup' ? registrationCopy.sv.confirmationBlocked : registrationCopy.sv.confirmationInvalid);
     expect(screen.queryByText(/private-synthetic-detail/)).toBeNull();
-    expect(screen.queryByRole('button', { name: registrationCopy.en.login })).toBeNull();
+    expect(screen.queryByRole('button', { name: registrationCopy.sv.login })).toBeNull();
     expect(auth.signIn).not.toHaveBeenCalled();
   });
   it('does not navigate to Login when confirmation cleanup fails', async () => {
     jest.mocked(registration.confirm).mockResolvedValueOnce();
     await redirectSystemPath({ path: callback('synthetic-code'), initial: true });
     await renderRouter(routes, { initialUrl: '/auth/confirm' });
-    await screen.findByText(registrationCopy.en.confirmationConfirmed);
+    await screen.findByText(registrationCopy.sv.confirmationConfirmed);
     jest.mocked(registration.cancel).mockRejectedValueOnce({ kind: 'cleanup' });
-    await fireEvent.press(screen.getByRole('button', { name: registrationCopy.en.login }));
-    await screen.findByText(registrationCopy.en.confirmationBlocked);
-    await waitFor(() => expect(screen.queryByRole('header', { name: authCopy.en.title })).toBeNull());
+    await fireEvent.press(screen.getByRole('button', { name: registrationCopy.sv.login }));
+    await screen.findByText(registrationCopy.sv.confirmationBlocked);
+    await waitFor(() => expect(screen.queryByRole('header', { name: authCopy.sv.title })).toBeNull());
   });
 });

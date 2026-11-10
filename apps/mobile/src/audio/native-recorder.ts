@@ -20,8 +20,9 @@ export class RecordingFailure extends Error {
 
 export type RecordingStatus = { durationMs: number; isRecording: boolean; interrupted: boolean };
 export type RecordingDriver = {
+  prepare?(): void;
   requestPermission(): Promise<boolean>;
-  start(): Promise<void>;
+  start(options?: { finishOnPause?: boolean }): Promise<void>;
   stop(): Promise<AudioRecording>;
   getStatus(): RecordingStatus;
   discard(recording: AudioRecording): Promise<void>;

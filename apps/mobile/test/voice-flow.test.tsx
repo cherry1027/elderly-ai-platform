@@ -20,6 +20,7 @@ jest.mock('../src/real-ai/api', () => ({ ...jest.requireActual('../src/real-ai/a
   transcribeRealRecording: jest.fn(), sendRealMessage: jest.fn(), sendRealTextMessage: jest.fn(), hashRealText: jest.fn(),
   getRealOperation: jest.fn(), findRealOperation: jest.fn(), createRealSpeech: jest.fn(), getRealSpeechAudio: jest.fn(),
 }));
+jest.mock('../src/real-ai/conversation-mode', () => ({ readConversationMode: async () => null, saveConversationMode: jest.fn() }));
 jest.mock('../src/api/story-projects', () => ({ ...jest.requireActual('../src/api/story-projects'), listStorySessions: jest.fn(), continueStoryProject: jest.fn() }));
 jest.mock('../src/audio/native-recorder', () => ({ ...jest.requireActual('../src/audio/native-recorder'), createNativeRecorder: jest.fn(), createRecordingId: jest.fn() }));
 const mockPrivacy = { ready: true, failed: false, release: jest.fn(), rememberReturn: jest.fn(), createStore: jest.fn() };
@@ -44,12 +45,16 @@ async function press(label: string) { await fireEvent.press(screen.getByRole('bu
 async function ready() {
   await waitFor(() => {
     expect(api.getRealMessages).toHaveBeenCalled(); expect(api.getRealTranscripts).toHaveBeenCalled();
-    const input = screen.queryByLabelText(t.input) ?? screen.getByLabelText(realCopy.sv.input);
-    expect(input.props.editable).toBe(true);
+    const input = screen.queryByLabelText(t.input) ?? screen.queryByLabelText(realCopy.sv.input);
+    if (input) expect(input.props.editable).toBe(true);
+    else expect(screen.getByRole('button', { name: t.start })).toBeOnTheScreen();
   });
 }
 async function opened() { const view = await render(<RealStoryWorkspace {...props} />); await ready(); return view; }
-async function permitVoice() { await press(t.start); await press(t.consentContinue); await waitFor(() => expect(screen.getByRole('button', { name: t.stop })).toBeOnTheScreen()); }
+async function selectVoice(copy: typeof realCopy.en | typeof realCopy.sv = t) {
+  if (!screen.queryByRole('button', { name: copy.start })) await press(copy.speakMode);
+}
+async function permitVoice() { await selectVoice(); await press(t.start); await press(t.consentContinue); await waitFor(() => expect(screen.getByRole('button', { name: t.stop })).toBeOnTheScreen()); }
 async function emit(state: AppStateStatus) { await act(async () => { AppState.currentState = state; [...listeners].forEach(listener => listener(state)); }); }
 function pendingOperation(kind: 'transcription' | 'conversation', status: 'uncertain' | 'completed' = 'uncertain') {
   return { operation_id: ids.memory, project_id: ids.project, session_id: ids.session, kind, status,
@@ -58,7 +63,7 @@ function pendingOperation(kind: 'transcription' | 'conversation', status: 'uncer
 beforeEach(() => {
   AppState.currentState = 'active'; listeners = []; keyNumber = 0;
   jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, callback) => { listeners.push(callback); return { remove: () => { listeners = listeners.filter(item => item !== callback); } }; });
-  jest.mocked(api.getRealCapabilities).mockResolvedValue({ contract: 'real-v2', mode: 'real', enabled: true, transcription: true, conversation: true, writing: true, speech: true, reason: 'READY' });
+  jest.mocked(api.getRealCapabilities).mockResolvedValue({ contract: 'real-v2', mode: 'real', enabled: true, transcription: true, conversation: true, writing: true, speech: false, reason: 'READY' });
   jest.mocked(projects.listStorySessions).mockResolvedValue([{ id: ids.session, project_id: ids.project, language: 'en', status: 'active',
     created_at: project.created_at, updated_at: project.updated_at, ended_at: null }]);
   jest.mocked(api.getRealTranscripts).mockResolvedValue([]); jest.mocked(api.getRealMessages).mockResolvedValue([]);
@@ -73,7 +78,7 @@ afterEach(async () => { await mediaPrivacy.retry(); jest.restoreAllMocks(); AppS
 
 describe('voice consent and automatic chaining — synthetic transports only', () => {
   it.each(['en', 'sv'] as const)('asks consent before microphone/provider actions and keeps Cancel inert in %s', async language => {
-    const copy = realCopy[language]; await render(<RealStoryWorkspace {...props} language={language} />); await ready(); await press(copy.start);
+    const copy = realCopy[language]; await render(<RealStoryWorkspace {...props} language={language} />); await ready(); await selectVoice(copy); await press(copy.start);
     expect(screen.getByText(copy.consentTitle)).toBeOnTheScreen();
     expect(recorder.requestPermission).not.toHaveBeenCalled(); expect(recorder.start).not.toHaveBeenCalled();
     expect(api.transcribeRealRecording).not.toHaveBeenCalled(); expect(api.sendRealMessage).not.toHaveBeenCalled();
@@ -111,7 +116,7 @@ describe('voice consent and automatic chaining — synthetic transports only', (
   it('does not transfer accepted voice consent to another signed-in user', async () => {
     const view = await opened(); await permitVoice(); await press(t.stop); await waitFor(() => expect(api.sendRealMessage).toHaveBeenCalledTimes(1));
     await view.rerender(<RealStoryWorkspace {...props} user={{ ...user, id: '80000000-0000-4000-8000-000000000002' }} />);
-    await waitFor(() => expect(api.getRealMessages).toHaveBeenCalledTimes(2)); await ready(); await press(t.start);
+    await waitFor(() => expect(api.getRealMessages).toHaveBeenCalledTimes(2)); await ready(); await selectVoice(); await press(t.start);
     expect(screen.getByText(t.consentTitle)).toBeOnTheScreen(); expect(recorder.requestPermission).toHaveBeenCalledTimes(1);
   });
   it('never chains an uncertain transcription or automatically repeats it', async () => {
@@ -172,6 +177,7 @@ describe('voice consent and automatic chaining — synthetic transports only', (
   it('preserves a separate unsent typed draft throughout successful voice processing', async () => {
     await opened(); await fireEvent.changeText(screen.getByLabelText(t.input), 'Keep my unsent typed words.');
     await permitVoice(); await press(t.stop); await waitFor(() => expect(api.sendRealMessage).toHaveBeenCalledTimes(1));
+    await press(t.writeMode);
     expect(screen.getByLabelText(t.input).props.value).toBe('Keep my unsent typed words.'); expect(api.sendRealTextMessage).not.toHaveBeenCalled();
     expect(api.createRealSpeech).not.toHaveBeenCalled();
   });
@@ -187,7 +193,7 @@ describe('voice consent and automatic chaining — synthetic transports only', (
   it('does not touch the microphone or ask voice consent while real AI is off', async () => {
     jest.mocked(api.getRealCapabilities).mockResolvedValue({ contract: 'real-v2', mode: 'real', enabled: false,
       transcription: false, conversation: false, writing: false, speech: false, reason: 'LIVE_AI_DISABLED' });
-    await opened(); const record = screen.queryByRole('button', { name: t.start });
+    await opened(); await selectVoice(); const record = screen.queryByRole('button', { name: t.start });
     if (record) { expect(record).toBeDisabled(); await fireEvent.press(record); }
     expect(screen.getByText(t.disabled)).toBeOnTheScreen(); expect(screen.queryByText(t.consentTitle)).toBeNull();
     expect(recorder.requestPermission).not.toHaveBeenCalled(); expect(api.transcribeRealRecording).not.toHaveBeenCalled();
@@ -243,7 +249,7 @@ describe('independent review: saved voice recovery', () => {
     jest.mocked(api.getRealTranscripts).mockResolvedValue([transcript]);
     await emit('background'); await emit('active'); await press(t.resume);
     await waitFor(() => expect(api.getRealTranscripts).toHaveBeenCalledTimes(2));
-    expect(screen.getByLabelText(t.input).props.editable).toBe(false);
+    expect(screen.getByRole('button', { name: t.writeMode })).toBeDisabled();
     expect(screen.queryByRole('button', { name: t.process })).toBeNull();
     expect(api.sendRealMessage).toHaveBeenCalledTimes(1);
   });

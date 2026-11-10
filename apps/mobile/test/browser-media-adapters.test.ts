@@ -2,6 +2,7 @@ import { Blob as NodeBlob } from 'node:buffer';
 import { saveBrowserRecording, getBrowserRecordingBlob, discardBrowserRecording, clearBrowserRecordings } from '../src/audio/browser-recordings';
 import { createRecordingUpload } from '../src/audio/recording-upload.web';
 import { createNativeRecorder } from '../src/audio/native-recorder.web';
+import { createRealPlayback } from '../src/real-ai/native-playback.web';
 import { createSecureSessionStorage, MOBILE_AUTH_STORAGE_KEY } from '../src/auth/secure-storage.web';
 import { readWebStaging } from '../src/web-staging';
 jest.mock('../src/web-staging', () => ({ readWebStaging: jest.fn(() => ({ webOrigin: 'https://memy-web.example.test', apiOrigin: 'https://memy-api.example.test' })) }));
@@ -88,4 +89,50 @@ it('cancels a permission grant that arrives after disposal and stops its tracks'
   let resolve!: (value: typeof stream) => void; getUserMedia.mockImplementationOnce(() => new Promise(yes => { resolve = yes; }));
   const recorder = createNativeRecorder(), permission = recorder.requestPermission(); await recorder.dispose(); resolve(stream);
   expect(await permission).toBe(false); expect(track.stop).toHaveBeenCalled();
+});
+it('ends a voice capture only after speech followed by a pause, releasing the microphone', async () => {
+  jest.useFakeTimers();
+  let sample = 0;
+  install('AudioContext', class {
+    state = 'running';
+    resume = jest.fn(async () => {});
+    close = jest.fn(async () => { this.state = 'closed'; });
+    createMediaStreamSource = () => ({ connect: jest.fn(), disconnect: jest.fn() });
+    createAnalyser = () => ({ fftSize: 32, getFloatTimeDomainData: (samples: Float32Array) => samples.fill(sample) });
+  });
+  const recorder = createNativeRecorder();
+  try {
+    recorder.prepare?.();
+    await recorder.requestPermission(); await recorder.start({ finishOnPause: true });
+    jest.advanceTimersByTime(4000);
+    expect(recorder.getStatus().isRecording).toBe(true);
+    sample = 0.05; jest.advanceTimersByTime(300);
+    FakeRecorder.instances[0].ondataavailable?.({ data: new Blob(['synthetic audio'], { type: 'audio/webm' }) });
+    sample = 0; jest.advanceTimersByTime(3100);
+    expect(recorder.getStatus().isRecording).toBe(true);
+    jest.advanceTimersByTime(100);
+    expect(recorder.getStatus().isRecording).toBe(false);
+    await expect(recorder.stop()).resolves.toMatchObject({ type: 'audio/webm' });
+    expect(track.stop).toHaveBeenCalled();
+  } finally { await recorder.dispose(); }
+});
+it('silences decoded spoken audio synchronously when the page is hidden', async () => {
+  const source = { connect: jest.fn(), disconnect: jest.fn(), start: jest.fn(), stop: jest.fn(), onended: null };
+  install('Audio', class {});
+  install('AudioContext', class {
+    state = 'running';
+    resume = jest.fn(async () => {});
+    close = jest.fn(async () => { this.state = 'closed'; });
+    decodeAudioData = jest.fn(async () => ({}));
+    createBufferSource = () => source;
+  });
+  const playback = createRealPlayback(), finish = jest.fn(), bytes = new Uint8Array(44);
+  bytes.set(Buffer.from('RIFF'), 0); bytes.set(Buffer.from('WAVE'), 8);
+  try {
+    playback.prepare?.(); await playback.play(bytes, finish);
+    expect(source.start).toHaveBeenCalledTimes(1);
+    for (const listener of windowListeners.get('pagehide') ?? []) listener();
+    expect(source.stop).toHaveBeenCalledTimes(1);
+    expect(source.onended).toBeNull(); expect(finish).not.toHaveBeenCalled();
+  } finally { await playback.dispose(); }
 });

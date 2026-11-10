@@ -55,13 +55,12 @@ it.each(['en', 'sv'] as const)('preserves a new story form and requires an expli
   const props = { language, state: { status: 'idle' as const }, serviceAvailable: true, onSubmit, onBack, onSignOut };
   const view = await render(<CreateStoryScreen {...props} />);
   await fireEvent.changeText(screen.getByLabelText(text.titleLabel), 'A fictional summer');
-  await fireEvent.press(screen.getByRole('radio', { name: text.swedish }));
   expect(screen.getByLabelText(text.titleLabel).props.editable).toBe(true);
   await blocked(text.create, onSubmit);
   mockWaiting = false; await view.rerender(<CreateStoryScreen {...props} />);
   expect(screen.getByLabelText(text.titleLabel).props.value).toBe('A fictional summer');
   expect(onSubmit).not.toHaveBeenCalled(); await fireEvent.press(button(text.create)); await fireEvent.press(button(text.create));
-  expect(onSubmit).toHaveBeenCalledTimes(1); expect(onSubmit).toHaveBeenCalledWith({ title: 'A fictional summer', language: 'sv' });
+  expect(onSubmit).toHaveBeenCalledTimes(1); expect(onSubmit).toHaveBeenCalledWith({ title: 'A fictional summer', language });
 });
 
 it.each(['en', 'sv'] as const)('keeps project metadata editable while only Save waits in %s', async language => {

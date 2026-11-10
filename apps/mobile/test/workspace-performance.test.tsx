@@ -66,7 +66,7 @@ beforeEach(() => {
       provenance: { mode: 'original', provider: 'user', model: null, version: 1 } }),
     message: realMessage('assistant', { text: 'Fresh Memy reply.', source_transcript_id: null, source_text_input_id: ids.key }), memories: [], mode: 'real',
   }));
-  jest.mocked(api.reviewRealMemory).mockReset().mockResolvedValue(realMemory({ status: 'confirmed', version: 2 }));
+  jest.mocked(api.reviewRealMemory).mockReset().mockResolvedValue(realMemory({ status: 'confirmed', version: 2, clarification_question: null }));
 });
 afterEach(async () => {
   await mediaPrivacy.retry(); jest.restoreAllMocks(); AppState.currentState = 'active';

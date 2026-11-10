@@ -72,7 +72,6 @@ async function save(title = 'Synthetic created story', language: Locale = 'en') 
 }
 it.each<Locale>(['en', 'sv'])('navigates intentionally from My Stories to native Create and back in %s', async language => {
   await openCreate(language);
-  expect(screen.getByRole('radio', { name: createStoryCopy[language][language === 'sv' ? 'swedish' : 'english'] }).props.accessibilityState.checked).toBe(true);
   expect(createStoryProject).not.toHaveBeenCalled();
   await fireEvent.changeText(screen.getByLabelText(createStoryCopy[language].titleLabel), 'Unsaved private title');
   await fireEvent.press(screen.getByRole('button', { name: createStoryCopy[language].back }));
@@ -96,9 +95,9 @@ it.each(['checking', 'signed-out', 'blocked', 'busy'] as const)('never exposes c
 });
 it('ignores URL claims that try to open or submit a creation form', async () => {
   await renderRouter(routes, { initialUrl: '/authenticated?create=true&title=Injected&language=en' });
-  await openMyStories();
-  await screen.findByRole('header', { name: storiesCopy.en.title });
-  expect(screen.queryByLabelText(createStoryCopy.en.titleLabel)).toBeNull(); expect(createStoryProject).not.toHaveBeenCalled();
+  await openMyStories('sv');
+  await screen.findByRole('header', { name: storiesCopy.sv.title });
+  expect(screen.queryByLabelText(createStoryCopy.sv.titleLabel)).toBeNull(); expect(createStoryProject).not.toHaveBeenCalled();
 });
 it('keeps the unconfigured live preview honest and never invents saved data', async () => {
   jest.mocked(readMobileApiConfig).mockReturnValue(null);

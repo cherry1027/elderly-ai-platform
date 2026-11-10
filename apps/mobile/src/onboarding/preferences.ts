@@ -13,7 +13,7 @@ export type OnboardingPreferences = {
 
 export const defaultPreferences: OnboardingPreferences = {
   version: 1,
-  language: 'en',
+  language: 'sv',
   completed: false,
 };
 

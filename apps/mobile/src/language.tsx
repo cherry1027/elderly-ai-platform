@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type PropsWithChildren } from 'react';
 import type { Language } from './i18n';
+import { setDocumentLanguage } from './onboarding/document-language';
 import { createPreferencesWriter, defaultPreferences, readPreferences } from './onboarding/preferences';
 
 type LanguageState = {
@@ -34,6 +35,10 @@ export function LanguageProvider({ children }: PropsWithChildren) {
     });
     return () => { active = false; mounted.current = false; };
   }, []);
+
+  useEffect(() => {
+    if (ready) setDocumentLanguage(preferences.language);
+  }, [preferences.language, ready]);
 
   const persist = useCallback(async () => {
     const saved = await write(current.current);

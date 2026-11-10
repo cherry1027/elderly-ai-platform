@@ -19,17 +19,49 @@ export function createRecordingId(): string {
   return value;
 }
 let captureOwner: object | null = null;
+
+/** Listen for a pause only inside an explicitly started voice recording. */
+function monitorPause(context: AudioContext, stream: MediaStream, onPause: () => void): () => void {
+  try {
+    const input = context.createMediaStreamSource(stream), meter = context.createAnalyser();
+    input.connect(meter);
+    const samples = new Float32Array(meter.fftSize);
+    let voicedSamples = 0, lastVoice = 0;
+    const interval = setInterval(() => {
+      if (context.state !== 'running') return;
+      try { meter.getFloatTimeDomainData(samples); }
+      catch { clearInterval(interval); return; /* fall back to manual stop */ }
+      const level = Math.sqrt(samples.reduce((total, sample) => total + sample * sample, 0) / samples.length);
+      if (level > 0.012) {
+        voicedSamples++;
+        lastVoice = Date.now();
+      } else if (voicedSamples >= 3 && Date.now() - lastVoice >= 3200) {
+        clearInterval(interval);
+        onPause();
+      }
+    }, 100);
+    return () => { clearInterval(interval); input.disconnect(); samples.fill(0); };
+  } catch {
+    return () => {};
+  }
+}
+
 export function createNativeRecorder(): RecordingDriver {
   const owner = {};
   let disposed = false, permission = false, interrupted = false, started = 0, duration = 0;
   let stream: MediaStream | null = null, recorder: MediaRecorder | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let stopMonitor: (() => void) | null = null;
+  let meterContext: AudioContext | null = null;
   let chunks: Blob[] = [], total = 0, pending: Promise<AudioRecording> | null = null;
   let requesting: Promise<boolean> | null = null;
   let resolve: ((value: AudioRecording) => void) | null = null, reject: ((error: Error) => void) | null = null;
   const foreground = () => readWebStaging() !== null && typeof document !== 'undefined' && document.visibilityState !== 'hidden';
   const release = () => {
     if (timer) clearTimeout(timer); timer = null;
+    stopMonitor?.(); stopMonitor = null;
+    if (meterContext && meterContext.state !== 'closed') void meterContext.close().catch(() => {});
+    meterContext = null;
     if (stream) for (const track of stream.getTracks()) { track.onended = null; track.stop(); }
     stream = null; permission = false;
     if (captureOwner === owner) captureOwner = null;
@@ -58,9 +90,16 @@ export function createNativeRecorder(): RecordingDriver {
   if (typeof document !== 'undefined') document.addEventListener('visibilitychange', background);
   if (typeof window !== 'undefined') window.addEventListener('pagehide', pageHide);
   return {
+    prepare() {
+      if (disposed || !foreground() || typeof AudioContext === 'undefined') return;
+      try {
+        meterContext ??= new AudioContext();
+        void meterContext.resume().catch(() => {});
+      } catch { /* the manual stop button remains available */ }
+    },
     async requestPermission() {
-      if (disposed || !foreground() || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') return false;
-      if (captureOwner && captureOwner !== owner) return false;
+      if (disposed || !foreground() || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined' ||
+          (captureOwner && captureOwner !== owner)) { release(); return false; }
       if (stream && permission) return true;
       if (requesting) return requesting;
       captureOwner = owner;
@@ -76,7 +115,7 @@ export function createNativeRecorder(): RecordingDriver {
       })();
       return requesting;
     },
-    async start() {
+    async start({ finishOnPause = false } = {}) {
       if (disposed || !foreground() || !permission || !stream || captureOwner !== owner || recorder?.state === 'recording') throw new RecordingFailure('startup');
       const type = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find(value => MediaRecorder.isTypeSupported(value));
       if (!type) { release(); throw new RecordingFailure('creation'); }
@@ -95,6 +134,13 @@ export function createNativeRecorder(): RecordingDriver {
         recorder.onstop = () => { if (recorder === instance) finish(); };
         recorder.start(250); started = Date.now();
         timer = setTimeout(() => { if (recorder?.state === 'recording') { duration = MAX_RECORDING_MS; recorder.stop(); } }, MAX_RECORDING_MS);
+        if (finishOnPause && meterContext) {
+          stopMonitor = monitorPause(meterContext, stream, () => {
+            if (recorder === instance && instance.state === 'recording') {
+              try { instance.stop(); } catch { fail(); }
+            }
+          });
+        }
       } catch { fail(); throw new RecordingFailure('startup'); }
     },
     async stop() {

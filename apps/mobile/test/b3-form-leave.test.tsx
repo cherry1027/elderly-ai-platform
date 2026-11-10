@@ -71,16 +71,13 @@ function retainedEditor(language: Language) {
   expect(screen.getByLabelText(text.descriptionLabel).props.value).toBe('A private fictional description\nwith two lines.');
 }
 
-it.each<Language>(['en', 'sv'])('%s Create visible Back and hardware Back share the guard and Keep preserves title and language', async language => {
+it.each<Language>(['en', 'sv'])('%s Create visible Back and hardware Back share the guard and Keep preserves the title', async language => {
   await render(<CreateStory {...createProps(language)} />);
   const text = createStoryCopy[language], leave = leaveCopy[language];
   await fireEvent.changeText(screen.getByLabelText(text.titleLabel), 'A private fictional summer');
-  const chosen = language === 'en' ? text.swedish : text.english;
-  await fireEvent.press(screen.getByRole('radio', { name: chosen }));
   await fireEvent.press(button(text.back)); expect(screen.getByText(leave.dirty)).toBeOnTheScreen();
   expect(onBack).not.toHaveBeenCalled(); await fireEvent.press(button(leave.keep));
   expect(screen.getByLabelText(text.titleLabel).props.value).toBe('A private fictional summer');
-  expect(screen.getByRole('radio', { name: chosen })).toBeChecked();
   await hardwareBack(); expect(onBack).not.toHaveBeenCalled(); await fireEvent.press(button(leave.keep));
   expect(screen.getByLabelText(text.titleLabel).props.value).toBe('A private fictional summer');
   await hardwareBack(); await fireEvent.press(button(leave.discard)); expect(onBack).toHaveBeenCalledTimes(1);

@@ -35,7 +35,9 @@ const project = (title: string): StoryProject => ({ id: '10000000-0000-4000-8000
   description: null, language: 'en', status: 'draft', created_at: '2026-10-20T10:00:00Z', updated_at: '2026-10-20T10:00:00Z' });
 function publish(next: AuthSnapshot) { snapshot = next; listeners.forEach(listener => listener()); }
 beforeEach(async () => {
-  await AsyncStorage.clear(); listeners = new Set(); snapshot = account();
+  await AsyncStorage.clear();
+  await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language: 'en', completed: true }));
+  listeners = new Set(); snapshot = account();
   auth = {
     getSnapshot: () => snapshot,
     subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },

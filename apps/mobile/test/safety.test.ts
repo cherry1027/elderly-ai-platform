@@ -47,9 +47,13 @@ describe('development-only mobile application boundaries', () => {
     // Expo Router's published navigation types describe the existing native stack;
     // permit this exact SDK subpath, without allowing arbitrary external imports.
     const allowed = new Set(['react', 'react-native', 'react-native-svg', 'react-native-safe-area-context', 'expo-router', 'expo-router/react-navigation', 'expo-status-bar', 'expo-constants', 'expo-secure-store', 'expo-audio', 'expo-file-system', 'expo-crypto', 'expo/fetch', '@supabase/supabase-js', '@react-native-async-storage/async-storage']);
-    const imports = [...source.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((match) => match[1]);
+    const wakeLock = path.join(appRoot, 'src/audio/RecordingWakeLock.tsx');
+    const imports = sources.flatMap(file => [...fs.readFileSync(file, 'utf8').matchAll(/from\s+['"]([^'"]+)['"]/g)]
+      .map(match => ({ file, name: match[1] })));
     expect(imports.length).toBeGreaterThan(0);
-    for (const name of imports) expect(name.startsWith('.') || allowed.has(name)).toBe(true);
+    for (const { file, name } of imports) {
+      expect(name.startsWith('.') || allowed.has(name) || (file === wakeLock && name === 'expo-keep-awake')).toBe(true);
+    }
   });
 
   it('does not read environment credentials or browser state', () => {

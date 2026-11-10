@@ -41,7 +41,9 @@ let snapshot: AuthSnapshot; let listeners: Set<() => void>; let auth: MobileAuth
 const account = (id = 'account-a'): AuthSnapshot => ({ status: 'signed-in', user: { id, email: `${id}@example.test` }, error: null });
 function publish(next: AuthSnapshot) { snapshot = next; listeners.forEach(listener => listener()); }
 beforeEach(async () => {
-  await AsyncStorage.clear(); snapshot = account(); listeners = new Set();
+  await AsyncStorage.clear();
+  await AsyncStorage.setItem(PREFERENCES_KEY, JSON.stringify({ version: 1, language: 'en', completed: true }));
+  snapshot = account(); listeners = new Set();
   auth = {
     getSnapshot: () => snapshot,
     subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },

@@ -79,9 +79,9 @@ describe('non-sensitive onboarding preferences', () => {
     const device = storage();
     const preferences = { ...defaultPreferences };
     const result = createPreferencesWriter(device)(preferences);
-    preferences.language = 'sv';
+    preferences.language = 'en';
     await result;
-    expect(JSON.parse(device.setItem.mock.calls[0][1]).language).toBe('en');
+    expect(JSON.parse(device.setItem.mock.calls[0][1]).language).toBe('sv');
   });
 
   it('serializes rapid changes so completion and the latest language are retained', async () => {

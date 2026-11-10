@@ -14,17 +14,17 @@ import { realDraft, realIds, realMemory } from './real-ai-fixtures';
 const noop = () => {};
 const first = realMemory({ clarification_question: null });
 const reviewed = realMemory({ id: realIds.assistant, value: 'An earlier reviewed memory', evidence: 'Earlier original words.', status: 'confirmed', version: 2, clarification_question: null });
-function MemoryHarness({ language, memories, onReview, onShareMemory = noop, onBeginCorrection }: {
-  language: Language; memories: RealMemory[]; onReview: (memory: RealMemory, status: 'confirmed' | 'rejected') => void; onShareMemory?: () => void; onBeginCorrection?: (memory: RealMemory) => void;
+function MemoryHarness({ language, memories, onReview, onShareMemory = noop, onBeginCorrection, onOpenStory }: {
+  language: Language; memories: RealMemory[]; onReview: (memory: RealMemory, status: 'confirmed' | 'rejected') => void; onShareMemory?: () => void; onBeginCorrection?: (memory: RealMemory) => void; onOpenStory?: () => void;
 }) {
   const [corrections, setCorrections] = useState<Record<string, string>>({});
   return <MemoriesContent language={language} storyLanguage={language} memories={memories} corrections={corrections}
     blocked={false} busy={false} onCorrection={(id, value) => setCorrections(before => ({ ...before, [id]: value }))}
-    onReview={onReview} onShareMemory={onShareMemory} onBeginCorrection={onBeginCorrection} />;
+    onReview={onReview} onShareMemory={onShareMemory} onBeginCorrection={onBeginCorrection} onOpenStory={onOpenStory} />;
 }
 function bookProps(language: Language = 'en'): AutobiographyContentProps {
   return {
-    language, storyLanguage: language, draft: realDraft(), drafts: [realDraft()], memories: [realMemory({ status: 'confirmed' })],
+    language, storyLanguage: language, draft: realDraft(), drafts: [realDraft()], memories: [reviewed],
     editor: null, history: null, exports: null, blocked: false, busy: false, ambiguousEdit: false, usageBlocked: false,
     writingAvailable: true, privacyReady: true, privacyFailed: false, generationControls: <Text allowFontScaling>Existing deliberate generation controls</Text>,
     onEdit: jest.fn(), onChangeEditor: jest.fn(), onSave: jest.fn(), onCancel: jest.fn(), onSelectDraft: jest.fn(),
@@ -47,6 +47,7 @@ it.each(['en', 'sv'] as const)('prioritizes pending memories and keeps actual re
   expect(screen.getByText(reviewed.value)).toBeOnTheScreen(); expect(screen.getByText(copy.confirmed)).toBeOnTheScreen();
   await fireEvent.press(screen.getByRole('button', { name: copy.changeDecision }));
   const reviewedCard = within(screen.getByText(reviewed.value).parent!);
+  expect(reviewedCard.queryByRole('button', { name: t.confirm })).toBeNull();
   await fireEvent.press(reviewedCard.getByRole('button', { name: t.reject }));
   expect(review).toHaveBeenCalledWith(reviewed, 'rejected');
 });
@@ -67,22 +68,39 @@ it.each(['en', 'sv'] as const)('retains correction text through details toggles 
   await fireEvent.press(screen.getByRole('button', { name: copy.saveCorrection }));
   expect(review).toHaveBeenCalledWith(first, 'confirmed');
 });
-it('does not remove a pending memory until the controller returns its verified saved status', async () => {
-  const review = jest.fn();
-  const view = await render(<MemoryHarness language="en" memories={[first, reviewed]} onReview={review} />);
-  await fireEvent.press(screen.getByRole('button', { name: realCopy.en.confirm }));
-  expect(screen.getByText(first.value)).toBeOnTheScreen();
-  expect(screen.getAllByText(realCopy.en.pendingStatus).length).toBeGreaterThan(0);
-  await view.rerender(<MemoryHarness language="en" memories={[{ ...first, status: 'confirmed', version: 2 }, reviewed]} onReview={review} />);
-  expect(screen.queryByText(realCopy.en.pendingStatus)).toBeNull();
-  expect(screen.getByText(first.value)).toBeOnTheScreen();
-  expect(screen.getByText(storyContentCopy.en.allReviewed)).toBeOnTheScreen();
-  expect(screen.getByRole('button', { name: storyContentCopy.en.reviewed }).props.accessibilityState.expanded).toBe(true);
+it.each(['en', 'sv'] as const)('shows a saved decision and story action only after verified confirmation in %s', async language => {
+  const review = jest.fn(), openStory = jest.fn(), copy = storyContentCopy[language], t = realCopy[language];
+  const pending = { ...first, clarification_question: 'Where did you live?' };
+  const view = await render(<MemoryHarness language={language} memories={[pending, reviewed]} onReview={review} onOpenStory={openStory} />);
+  await fireEvent.press(screen.getByRole('button', { name: t.confirm }));
+  expect(screen.getByText(pending.value)).toBeOnTheScreen();
+  expect(screen.getByText(t.pendingStatus)).toBeOnTheScreen();
+  expect(screen.queryByText(copy.memorySaved)).toBeNull();
+  expect(screen.queryByRole('button', { name: copy.startStory })).toBeNull();
+  await view.rerender(<MemoryHarness language={language} memories={[{ ...pending, status: 'confirmed', version: 2, clarification_question: null }, reviewed]} onReview={review} onOpenStory={openStory} />);
+  expect(screen.queryByText(t.pendingStatus)).toBeNull();
+  expect(screen.getByText(pending.value)).toBeOnTheScreen();
+  expect(screen.getByText(copy.memorySaved)).toHaveProp('accessibilityLiveRegion', 'polite');
+  expect(screen.getByText(copy.reviewProgress(2))).toBeOnTheScreen();
+  expect(screen.getByText(copy.allReviewed)).toBeOnTheScreen();
+  expect(screen.getByRole('button', { name: copy.reviewed }).props.accessibilityState.expanded).toBe(true);
+  await fireEvent.press(screen.getByRole('button', { name: copy.startStory }));
+  expect(openStory).toHaveBeenCalledTimes(1);
 });
 it.each(['en', 'sv'] as const)('offers a clear existing destination for empty memories in %s', async language => {
   const share = jest.fn();
   await render(<MemoryHarness language={language} memories={[]} onReview={noop} onShareMemory={share} />);
   await fireEvent.press(screen.getByRole('button', { name: storyContentCopy[language].shareMemory })); expect(share).toHaveBeenCalledTimes(1);
+});
+it('keeps a newly saved memory visible beside the remaining questions', async () => {
+  const review = jest.fn(), copy = storyContentCopy.en, t = realCopy.en;
+  const next = realMemory({ id: realIds.draft, value: 'Another pending memory' });
+  const view = await render(<MemoryHarness language="en" memories={[first, next]} onReview={review} />);
+  await fireEvent.press(within(screen.getByText(first.value).parent!).getByRole('button', { name: t.confirm }));
+  await view.rerender(<MemoryHarness language="en" memories={[{ ...first, status: 'confirmed', version: 2 }, next]} onReview={review} />);
+  expect(within(screen.getByText(first.value).parent!).getByText(copy.confirmed)).toBeOnTheScreen();
+  expect(screen.queryByRole('button', { name: copy.reviewed })).toBeNull();
+  expect(screen.getByText(next.value)).toBeOnTheScreen();
 });
 it.each(['en', 'sv'] as const)('puts Edit and PDF before prose and keeps technical information secondary in %s', async language => {
   const props = bookProps(language), t = realCopy[language], copy = storyContentCopy[language];
@@ -290,12 +308,20 @@ it.each(['en', 'sv'] as const)('keeps uncertainty as the existing question and l
   const question = realMemory({ clarification_question: 'Which year did you move?', uncertain: true });
   await render(<MemoryHarness language={language} memories={[question]} onReview={review} />);
   expect(screen.getByText(question.clarification_question!)).toBeOnTheScreen();
-  expect(screen.queryByText(copy.isCorrect)).toBeNull();
+  expect(screen.getByText(copy.isCorrect)).toBeOnTheScreen();
   expect(screen.getAllByText(t.pendingStatus)).toHaveLength(1);
   expect(screen.queryByText(/confidence|candidate|provider/i)).toBeNull();
   expect(screen.queryByText(question.evidence)).toBeNull();
   await fireEvent.press(screen.getByRole('button', { name: t.reject }));
   expect(review).toHaveBeenCalledWith(question, 'rejected');
+});
+
+it.each(['en', 'sv'] as const)('replaces an incomplete legacy question with a clear prompt about the visible memory in %s', async language => {
+  const question = realMemory({ clarification_question: 'Year?', uncertain: true });
+  await render(<MemoryHarness language={language} memories={[question]} onReview={noop} />);
+  expect(screen.getByText(question.value)).toBeOnTheScreen();
+  expect(screen.getByText(storyContentCopy[language].isCorrect)).toBeOnTheScreen();
+  expect(screen.queryByText(question.clarification_question!)).toBeNull();
 });
 
 it('retains known version selection while separate history is loading without starting another read', async () => {
@@ -348,4 +374,35 @@ it.each(['en', 'sv'] as const)('offers unresolved memories before explicit story
   expect(generate).not.toHaveBeenCalled();
   await fireEvent.press(screen.getByRole('button', { name: t.generate }));
   expect(generate).toHaveBeenCalledTimes(1);
+});
+
+it.each(['en', 'sv'] as const)('requires open questions to be resolved before generating, while keeping existing draft actions available in %s', async language => {
+  const props = bookProps(language), copy = storyContentCopy[language], t = realCopy[language];
+  const pending = realMemory({ clarification_question: 'Which date is right?', uncertain: true });
+  const view = await render(<AutobiographyContent {...props} draft={null} drafts={[]} memories={[reviewed, pending]} />);
+  expect(screen.getByText(copy.answerFirst)).toBeOnTheScreen();
+  expect(screen.queryByText('Existing deliberate generation controls')).toBeNull();
+  await fireEvent.press(screen.getByRole('button', { name: copy.reviewFirst }));
+  expect(props.onReviewMemories).toHaveBeenCalledTimes(1);
+  await view.rerender(<AutobiographyContent {...props} memories={[reviewed, pending]} />);
+  expect(screen.getByRole('button', { name: t.edit })).toBeEnabled();
+  expect(screen.getByRole('button', { name: t.export })).toBeEnabled();
+  await fireEvent.press(screen.getByRole('button', { name: t.createVersion }));
+  expect(screen.getByText(copy.answerFirst)).toBeOnTheScreen();
+  expect(screen.queryByText('Existing deliberate generation controls')).toBeNull();
+  await view.rerender(<AutobiographyContent {...props} />);
+  expect(screen.getByText('Existing deliberate generation controls')).toBeOnTheScreen();
+});
+
+it.each(['en', 'sv'] as const)('offers a visible draft and browser-appropriate PDF action in %s', async language => {
+  jest.replaceProperty(Native.Platform, 'OS', 'web');
+  const props = bookProps(language), copy = storyContentCopy[language], t = realCopy[language];
+  await render(<AutobiographyContent {...props} />);
+  expect(screen.getByRole('header', { name: copy.draftHeading })).toBeOnTheScreen();
+  expect(screen.getByText(props.draft!.content)).toBeOnTheScreen();
+  expect(screen.queryByRole('button', { name: t.export })).toBeNull();
+  await fireEvent.press(screen.getByRole('button', { name: copy.downloadPdf }));
+  expect(props.onExport).toHaveBeenCalledTimes(1);
+  await fireEvent.press(screen.getByRole('button', { name: copy.pdfDetails }));
+  expect(screen.getByText(copy.browserPdf)).toBeOnTheScreen();
 });

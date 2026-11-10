@@ -31,19 +31,13 @@ async function setup(props: Partial<React.ComponentProps<typeof CreateStoryScree
 }
 
 describe('native Create My Story form', () => {
-  it.each<Language>(['en', 'sv'])('renders only title and language controls with localized labels in %s', async language => {
+  it.each<Language>(['en', 'sv'])('asks for a title in %s without a second language choice', async language => {
     await setup({ language });
     const text = createStoryCopy[language];
     expect(screen.getByRole('header', { name: text.title })).toBeOnTheScreen();
     expect(screen.getByLabelText(text.titleLabel)).toBeOnTheScreen();
-    expect(screen.getByText(text.projectLanguage)).toBeOnTheScreen();
-    expect(screen.getByText(text.languageHelp)).toBeOnTheScreen();
-    expect(screen.getAllByRole('radio')).toHaveLength(2);
-    for (const label of [text.english, text.swedish]) {
-      const radio = screen.getByRole('radio', { name: label });
-      expect(radio.props.accessibilityHint).toBe(`${text.projectLanguage}. ${text.languageHelp}`);
-    }
-    expect(screen.getByRole('radio', { name: language === 'sv' ? text.swedish : text.english })).toBeChecked();
+    expect(screen.getByText(text.introduction)).toBeOnTheScreen();
+    expect(screen.queryAllByRole('radio')).toHaveLength(0);
     expect(nativeNodes('input')).toHaveLength(1);
     expect(screen.queryByText(/description|beskrivning|microphone|recording|AI|guest/i)).toBeNull();
     expect(globalThis.fetch).not.toHaveBeenCalled();
@@ -89,14 +83,12 @@ describe('native Create My Story form', () => {
     } finally { dismiss.mockRestore(); }
   });
 
-  it.each<Language>(['en', 'sv'])('keeps invalid feedback through edits and language choices until the title is corrected in %s', async language => {
+  it.each<Language>(['en', 'sv'])('keeps invalid feedback through edits until the title is corrected in %s', async language => {
     const { onSubmit } = await setup({ language });
     const text = createStoryCopy[language];
     const input = screen.getByLabelText(text.titleLabel);
     await fireEvent.press(screen.getByRole('button', { name: text.create }));
     await fireEvent.changeText(input, '   ');
-    expect(screen.getByRole('alert')).toHaveTextContent(text.validation.required);
-    await fireEvent.press(screen.getByRole('radio', { name: language === 'sv' ? text.english : text.swedish }));
     expect(screen.getByRole('alert')).toHaveTextContent(text.validation.required);
     await fireEvent.changeText(input, 'a'.repeat(121));
     expect(screen.getByRole('alert')).toHaveTextContent(text.validation['too-long']);
@@ -203,15 +195,15 @@ describe('native Create My Story form', () => {
     expect(screen.queryByText(text.success)).toBeNull();
   });
 
-  it('trims the submitted title and sends only the two approved fields', async () => {
-    const { onSubmit } = await setup();
-    await fireEvent.changeText(screen.getByLabelText(createStoryCopy.en.titleLabel), '  A synthetic memory  ');
-    await fireEvent.press(screen.getByRole('radio', { name: createStoryCopy.en.swedish }));
-    await fireEvent.press(screen.getByRole('button', { name: createStoryCopy.en.create }));
-    expect(onSubmit).toHaveBeenCalledWith({ title: 'A synthetic memory', language: 'sv' });
+  it.each<Language>(['en', 'sv'])('trims the title and uses the selected app language %s', async language => {
+    const { onSubmit } = await setup({ language });
+    const text = createStoryCopy[language];
+    await fireEvent.changeText(screen.getByLabelText(text.titleLabel), '  A synthetic memory  ');
+    await fireEvent.press(screen.getByRole('button', { name: text.create }));
+    expect(onSubmit).toHaveBeenCalledWith({ title: 'A synthetic memory', language });
     expect(Object.keys(onSubmit.mock.calls[0][0]).sort()).toEqual(['language', 'title']);
-    expect(screen.queryByText(createStoryCopy.en.success)).toBeNull();
-    expect(screen.getByLabelText(createStoryCopy.en.titleLabel).props.value).toBe('  A synthetic memory  ');
+    expect(screen.queryByText(text.success)).toBeNull();
+    expect(screen.getByLabelText(text.titleLabel).props.value).toBe('  A synthetic memory  ');
   });
 
   it('accepts 120 Unicode code points without a UTF-16 maxLength truncation', async () => {
@@ -253,14 +245,13 @@ describe('native Create My Story form', () => {
     } finally { dismiss.mockRestore(); }
   });
 
-  it('preserves title and the chosen story language when the interface language changes', async () => {
-    const { view, initial } = await setup();
+  it('preserves the unsaved title and submits with the updated app language', async () => {
+    const { view, initial, onSubmit } = await setup();
     await fireEvent.changeText(screen.getByLabelText(createStoryCopy.en.titleLabel), 'A synthetic title');
-    await fireEvent.press(screen.getByRole('radio', { name: createStoryCopy.en.english }));
     await view.rerender(<CreateStoryScreen {...initial} language="sv" />);
     expect(screen.getByLabelText(createStoryCopy.sv.titleLabel).props.value).toBe('A synthetic title');
-    expect(screen.getByRole('radio', { name: createStoryCopy.sv.english })).toBeChecked();
-    expect(screen.getByRole('radio', { name: createStoryCopy.sv.swedish })).not.toBeChecked();
+    await fireEvent.press(screen.getByRole('button', { name: createStoryCopy.sv.create }));
+    expect(onSubmit).toHaveBeenCalledWith({ title: 'A synthetic title', language: 'sv' });
   });
 
   it('ignores repeated native button events before the controller updates state', async () => {
@@ -292,7 +283,7 @@ describe('native Create My Story form', () => {
     const create = screen.getByRole('button', { name: text.saving });
     expect(create).toBeDisabled(); expect(create.props.accessibilityState.busy).toBe(true);
     expect(screen.getByLabelText(text.titleLabel).props.editable).toBe(false);
-    for (const radio of screen.getAllByRole('radio')) expect(radio).toBeDisabled();
+    expect(screen.queryAllByRole('radio')).toHaveLength(0);
     await fireEvent.press(create); expect(onSubmit).not.toHaveBeenCalled();
     expect(screen.getByText(text.savingWarning)).toBeOnTheScreen();
     await fireEvent.press(screen.getByRole('button', { name: text.cancel }));
@@ -372,7 +363,7 @@ describe('native Create My Story form', () => {
   it.each<Language>(['en', 'sv'])('keeps controls large, text scalable, focus visible and the native form scrollable in %s', async language => {
     await setup({ language });
     const text = createStoryCopy[language];
-    for (const button of [...screen.getAllByRole('button'), ...screen.getAllByRole('radio')]) {
+    for (const button of screen.getAllByRole('button')) {
       expect(button).toHaveStyle({ minHeight: 56 });
     }
     const input = screen.getByLabelText(text.titleLabel);
@@ -380,9 +371,6 @@ describe('native Create My Story form', () => {
     expect(input.props.accessibilityLanguage).toBe(language === 'en' ? 'en-GB' : 'sv-SE');
     await fireEvent(input, 'focus'); expect(input).toHaveStyle({ borderColor: colors.ink });
     await fireEvent(input, 'blur'); expect(input).toHaveStyle({ borderColor: colors.border });
-    const radio = screen.getByRole('radio', { name: text.swedish });
-    await fireEvent(radio, 'focus'); expect(radio).toHaveStyle({ borderColor: colors.ink });
-    await fireEvent(radio, 'blur'); expect(radio).toHaveStyle({ borderColor: colors.forest });
     const create = screen.getByRole('button', { name: text.create });
     await fireEvent(create, 'focus'); expect(create).toHaveStyle({ borderColor: colors.ink });
     await fireEvent(create, 'blur'); expect(create).toHaveStyle({ borderColor: colors.forest });

@@ -309,6 +309,31 @@ def test_model_uncertainty_is_preserved_without_any_conflict_identifier() -> Non
     assert result.facts[0].conflicts_with_fact_id is None
 
 
+
+@pytest.mark.parametrize(
+    "language,question,expected",
+    [
+        ("sv", "Var?", "Vad vill du förtydliga om uppgiften ”Lund”?"),
+        ("en", "You mentioned Lund. What is your favorite color?",
+         "What would you like to clarify about the detail “Lund”?"),
+    ],
+)
+def test_unusable_review_question_preserves_uncertain_fact_with_grounded_copy(
+    language, question, expected,
+):
+    client = RecordingClient([
+        extraction(language=language, facts=[fact(uncertain=True, clarification_question=question)]),
+        reply(language=language),
+    ])
+
+    result = run(client, "I moved to Lund in 1975.", language=language)
+
+    assert result.facts[0].uncertain is True
+    assert result.facts[0].value == "Lund"
+    assert result.facts[0].clarification_question == expected
+    assert len(client.calls) == 2
+
+
 def _assert_strict_object_schemas(schema: dict[str, Any]) -> None:
     if schema.get("type") == "object":
         assert schema["additionalProperties"] is False

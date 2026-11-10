@@ -199,6 +199,27 @@ def test_invalid_interviewer_output_is_not_returned_as_a_saved_reply(reply):
     assert raised.value.code == "CONVERSATION_INVALID_RESPONSE"
 
 
+
+@pytest.mark.parametrize(
+    "language,reply,expected",
+    [("sv", "Tack för minnet. När?", "Tack för minnet."),
+     ("en", "When?", "We can go at your pace.")],
+)
+def test_fragment_reply_does_not_hide_saved_turn_or_force_another_question(language, reply, expected):
+    client = ScriptedClient([
+        extracted(language),
+        {"language": language, "text": reply},
+    ])
+    old_question = fact(PENDING_ID, "pending", uncertain=True, clarification_question="When?")
+
+    result = asyncio.run(provider(client).respond("Lund", language, [old_question]))
+
+    assert result.text == expected
+    assert result.facts[0].value == "Lund"
+    assert "When?" not in client.calls[1]["payload"]["unresolved_questions"]
+    assert len(client.calls) == 2
+
+
 def test_provider_failure_does_not_leak_private_payload_or_retry():
     client = ScriptedClient([RuntimeError("synthetic-private-token-and-story")])
     with pytest.raises(APIError) as raised:
@@ -420,6 +441,10 @@ def test_current_realtime_speech_buffers_exact_transcript_then_returns_valid_pri
     payload = json.loads(request["input"][0]["content"][0]["text"])
     assert payload == {"language": language, "saved_assistant_text": text}
     assert "EXACTLY" in request["instructions"]
+    if language == "sv":
+        assert "sv-SE" in request["instructions"] and "å, ä and ö" in request["instructions"]
+    else:
+        assert "sv-SE" not in request["instructions"]
     with wave.open(io.BytesIO(audio.data), "rb") as stream:
         assert stream.getnchannels() == 1 and stream.getsampwidth() == 2
         assert stream.getframerate() == 24_000 and stream.getnframes() == 2_400

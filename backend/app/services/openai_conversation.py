@@ -126,8 +126,14 @@ source_text, confirmed_context, or pending_context. Extract at most eight facts 
 infer, normalize, translate, or add details. Every value and evidence must be an exact,
 case-sensitive, contiguous substring of source_text, and value must occur inside evidence.
 A year is allowed only when its digits occur in evidence. Use a short lowercase ASCII semantic
-slot, or null. Set uncertain true and provide a brief question in the requested language when
-the source is ambiguous. Do not assign confirmation status and do not emit database identifiers.
+slot, or null. Reuse a slot only for the same detail of the same experience, never for
+two different events of the same type. Use null when the relationship is unclear.
+Set uncertain true only for an ambiguity in a detail the person actually shared.
+For that candidate, write one complete clarification question in the requested language that
+mentions the exact candidate value or its source-supported year. Ask only what is needed to
+clarify that detail. Never write a standalone word, quiz the person, or turn an absent detail
+into an uncertainty. A short yes/no answer alone is not a new biographical fact or confirmation.
+Do not assign confirmation status or emit database identifiers.
 Return only the strict structured result in the requested language."""
 
 _REPLY_INSTRUCTIONS = """Write one short, warm response in the requested language.
@@ -251,6 +257,45 @@ def _validate_exact_object(value: Any, keys: set[str]) -> dict[str, Any]:
     return value
 
 
+def _last_sentence(text: str) -> str:
+    return re.split(r"(?<=[.!])\s+|\n+", text)[-1]
+
+
+def _complete_question(text: str) -> bool:
+    return (
+        text.endswith("?")
+        and text.count("?") == 1
+        and len(re.findall(r"[^\W_]+", _last_sentence(text))) >= 3
+    )
+
+
+def _grounded_clarification(question: str, value: str, year: int | None, language: str) -> str:
+    anchors = [value]
+    if year is not None:
+        anchors.append(str(year))
+    question_sentence = _last_sentence(question).casefold()
+    if _complete_question(question) and any(
+        re.search(rf"(?<!\w){re.escape(anchor.casefold())}(?!\w)", question_sentence)
+        for anchor in anchors
+    ):
+        return question
+
+    # The card already shows the exact value. An excerpt also gives the
+    # interviewer context without promoting the candidate to an established fact.
+    excerpt = " ".join(value.split())
+    if "?" in excerpt:
+        return (
+            "Vad vill du förtydliga om den här uppgiften?"
+            if language == "sv"
+            else "What would you like to clarify about this detail?"
+        )
+    if len(excerpt) > 100:
+        excerpt = excerpt[:100].rstrip() + "…"
+    if language == "sv":
+        return f"Vad vill du förtydliga om uppgiften ”{excerpt}”?"
+    return f"What would you like to clarify about the detail “{excerpt}”?"
+
+
 def _validate_extraction(raw: Any, source: str, language: str) -> list[FactCandidate]:
     body = _validate_exact_object(raw, {"language", "facts"})
     if body["language"] != language:
@@ -302,6 +347,8 @@ def _validate_extraction(raw: Any, source: str, language: str) -> list[FactCandi
         )
         if uncertain != (question is not None):
             raise ValueError
+        if question is not None:
+            question = _grounded_clarification(question, value, year, language)
         identity = (fact_type, value, evidence, year, slot)
         if identity in seen:
             raise ValueError

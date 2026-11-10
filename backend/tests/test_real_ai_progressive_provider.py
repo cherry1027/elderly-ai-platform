@@ -187,6 +187,18 @@ def test_bad_preview_never_leaks_partial_text_and_no_second_attempt(bad_reply):
     assert emitted==[] and len(script.stream_calls)==1 and not script.calls
 
 
+
+def test_stream_preview_and_final_result_omit_the_same_fragment_question():
+    script = ProgressiveScript(combined("sv", "Tack för minnet. Var?"))
+    run, emitted = progressive(script, "sv")
+
+    result = asyncio.run(run())
+
+    assert result.text == "Tack för minnet."
+    assert emitted == [{"type": "reply", "text": result.text}]
+    assert result.facts and len(script.stream_calls) == 1
+
+
 def test_final_extraction_rejection_never_turns_preview_into_a_verified_result():
     body=combined();body['extraction']=extracted('en',evidence='Not in source')
     script=ProgressiveScript(body);run,emitted=progressive(script)
@@ -199,7 +211,8 @@ def test_preview_and_final_reply_must_match_exactly():
     early=combined(reply='Original?');final=combined(reply='Changed?')
     script=ProgressiveScript(final,prefix=json.dumps(early));run,emitted=progressive(script)
     with pytest.raises(APIError):asyncio.run(run())
-    assert emitted==[{'type':'reply','text':'Original?'}] and len(script.stream_calls)==1
+    # Both fragments render the same fallback, but a changed wire reply still fails.
+    assert emitted==[{'type':'reply','text':'We can go at your pace.'}] and len(script.stream_calls)==1
 
 
 def test_normal_json_request_still_uses_unchanged_schema_and_never_streams():

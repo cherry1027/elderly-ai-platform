@@ -122,6 +122,7 @@ async def _execute(request, gateway, *, project_id, session_id, kind, key, finge
             raise error
         trace = DispatchTrace()
         token = ai_dispatch_trace.set(trace)
+        save_started = False
         try:
             governor = getattr(request.app.state.real_ai, "governor", None)
             if governor is not None:
@@ -138,6 +139,7 @@ async def _execute(request, gateway, *, project_id, session_id, kind, key, finge
                 payload = await produce(provider)
                 if kind == "conversation":
                     await emit_progress({"type": "saving"})
+                save_started = True
                 row = await gateway.complete(claim, payload, {
                     "mode": "real", "provider": "openai", "model": model, "version": 1,
                 })
@@ -145,8 +147,12 @@ async def _execute(request, gateway, *, project_id, session_id, kind, key, finge
                                     claim["operation_id"])
         except BaseException as cause:
             code = cause.code if isinstance(cause, APIError) else "REAL_AI_UNCERTAIN"
+            draft_rejected = (kind == "generation" and not save_started and isinstance(cause, APIError)
+                              and cause.status_code == 422 and code == "DRAFT_VERIFICATION_FAILED")
             try:
-                await asyncio.shield(gateway.fail(claim, code, uncertain=trace.dispatched))
+                # A verifier rejection occurs before any draft write. The paid
+                # calls are accounted for separately by the provider governor.
+                await asyncio.shield(gateway.fail(claim, code, uncertain=trace.dispatched and not draft_rejected))
             except (Exception, asyncio.CancelledError):
                 pass  # Remains non-reclaimable even if recording failure is unavailable.
             if isinstance(cause, asyncio.CancelledError):
@@ -169,6 +175,11 @@ async def operation_result(row, gateway, operation_id=None):
     if operation_id is not None and result["operation_id"] != str(operation_id):
         raise unavailable()
     await gateway.get_project(UUID(result["project_id"]))
+    if (result["kind"] == "generation" and result["status"] == "uncertain"
+        and result["error_code"] == "DRAFT_VERIFICATION_FAILED" and result["result"] is None):
+        # Older releases marked every dispatched error uncertain, even when
+        # the verifier had rejected the draft before the save was attempted.
+        result["status"] = "failed"
     if result["result"] is not None:
         normalized = await gateway.normalize_result(result["kind"], result["result"])
         result["result"] = (await gateway.draft(UUID(normalized["draft_id"]))

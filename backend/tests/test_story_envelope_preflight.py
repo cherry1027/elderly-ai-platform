@@ -3,7 +3,6 @@
 import asyncio
 from copy import deepcopy
 import json
-import re
 from uuid import UUID
 
 import pytest
@@ -11,8 +10,8 @@ import pytest
 from app.core.errors import APIError
 from app.services.openai_client import MAX_JSON_BYTES, structured_body
 from app.services.openai_story import (
-    MAX_CANDIDATE_CHARACTERS, OpenAIStoryWriter, VERIFIER_INSTRUCTIONS,
-    Verification, _request_size,
+    MAX_CANDIDATE_CHARACTERS, MAX_CANDIDATE_PARAGRAPHS, OpenAIStoryWriter,
+    VERIFIER_INSTRUCTIONS, Verification, _request_size, _worst_case_paragraphs,
 )
 from app.services.real_ai_provider import _RealStoryClient
 
@@ -42,10 +41,9 @@ class Client:
         self.calls.append(operation)
         if operation == "story_writer":
             return {"language": self.language, "content": self.content}
-        paragraphs = [part for part in re.split(r"\n\s*\n", self.content) if part.strip()]
         return {"language": self.language, "passed": True, "unsupported_claims": [], "paragraphs": [
-            {"text": part, "source_ids": [payload["confirmed_sources"][0]["memory_id"]], "supported": True}
-            for part in paragraphs]}
+            {"number": part["number"], "source_ids": [payload["confirmed_sources"][0]["memory_id"]], "supported": True}
+            for part in payload["candidate_paragraphs"]]}
 
 
 @pytest.mark.parametrize("language", ["en", "sv"])
@@ -92,20 +90,30 @@ def test_printable_unicode_quotes_slashes_and_normal_whitespace_remain_supported
     assert client.calls == ["story_writer", "story_verifier"]
 
 
+def test_too_many_candidate_paragraphs_cannot_consume_a_verifier_call():
+    client = Client(content="\n\n".join(["I remember Malmö."] * (MAX_CANDIDATE_PARAGRAPHS + 1)))
+    with pytest.raises(APIError) as error:
+        asyncio.run(OpenAIStoryWriter(client).write("en", "warm", sources()))
+    assert error.value.code == "AI_INVALID_RESPONSE"
+    assert client.calls == ["story_writer"]
+
+
 @pytest.mark.parametrize("character", ['"', "\\", "\n", "\t", "\r", "å", "中", "🌷", "\u2028"])
 def test_quote_placeholder_bounds_every_accepted_character_in_nested_transport(character):
     client = Client()
-    def size(text):
+    def size(paragraphs):
         return _request_size(client, "story_verifier", VERIFIER_INSTRUCTIONS,
-            {"language": "en", "candidate": text, "confirmed_sources": sources()}, Verification.model_json_schema())
-    assert size(character * MAX_CANDIDATE_CHARACTERS) <= size('"' * MAX_CANDIDATE_CHARACTERS)
+            {"language": "en", "candidate_paragraphs": paragraphs, "confirmed_sources": sources()}, Verification.model_json_schema())
+    paragraphs = [{"number": number, "text": character * (MAX_CANDIDATE_CHARACTERS // MAX_CANDIDATE_PARAGRAPHS)}
+                  for number in range(1, MAX_CANDIDATE_PARAGRAPHS + 1)]
+    assert size(paragraphs) <= size(_worst_case_paragraphs())
 
 
 def test_real_wrapper_size_hook_accounts_for_authoritative_correction_instructions():
     client = Client()
     wrapper = _RealStoryClient(client)
     arguments = ("story_verifier", VERIFIER_INSTRUCTIONS,
-                 {"language": "en", "candidate": "I remember.", "confirmed_sources": sources()},
+                 {"language": "en", "candidate_paragraphs": [{"number": 1, "text": "I remember."}], "confirmed_sources": sources()},
                  Verification.model_json_schema())
     assert _request_size(wrapper, *arguments) > _request_size(client, *arguments)
     assert client.calls == []

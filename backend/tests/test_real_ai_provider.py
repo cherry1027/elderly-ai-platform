@@ -246,7 +246,7 @@ def test_story_uses_confirmed_snapshots_and_separate_verifier_but_requires_human
     writer = ScriptedClient([{"language": "sv", "content": source["sentence"]}])
     reviewer = ScriptedClient([{
         "language": "sv", "passed": True, "unsupported_claims": [], "paragraphs": [{
-            "text": source["sentence"], "source_ids": [CONFIRMED_ID], "supported": True,
+            "number": 1, "source_ids": [CONFIRMED_ID], "supported": True,
         }],
     }])
     reviewer.text_model = "separate-verifier-model"
@@ -254,6 +254,7 @@ def test_story_uses_confirmed_snapshots_and_separate_verifier_but_requires_human
     assert asyncio.run(instance.write("sv", "warm", [source])) == source["sentence"]
     assert writer.calls[0]["operation"] == "story_writer"
     assert reviewer.calls[0]["operation"] == "story_verifier"
+    assert reviewer.calls[0]["payload"]["candidate_paragraphs"] == [{"number": 1, "text": source["sentence"]}]
     assert instance.human_review_required
     assert instance.mode == "openai"
     assert instance.text_model == writer.text_model
@@ -276,7 +277,7 @@ def test_raw_confirmed_value_is_quoted_for_writer_without_inference_or_mutating_
     client = ScriptedClient([
         {"language": language, "content": sentence},
         {"language": language, "passed": True, "unsupported_claims": [], "paragraphs": [{
-            "text": sentence, "source_ids": [CONFIRMED_ID], "supported": True,
+            "number": 1, "source_ids": [CONFIRMED_ID], "supported": True,
         }]},
     ])
     assert asyncio.run(provider(client).write(language, "warm", [source])) == sentence
@@ -299,7 +300,7 @@ def test_raw_corrected_value_is_quoted_instead_of_promoting_old_value():
     client = ScriptedClient([
         {"language": "sv", "content": sentence},
         {"language": "sv", "passed": True, "unsupported_claims": [], "paragraphs": [{
-            "text": sentence, "source_ids": [CONFIRMED_ID], "supported": True,
+            "number": 1, "source_ids": [CONFIRMED_ID], "supported": True,
         }]},
     ])
     assert asyncio.run(provider(client).write("sv", "warm", [source])) == sentence

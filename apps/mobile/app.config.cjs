@@ -15,7 +15,7 @@ module.exports = ({ config }) => {
     (process.env.MEMY_MOBILE_REAL_AI === '1' || realAi.enabled);
   return {
     ...config,
-    ...(webStaging ? { platforms: ['web'], web: { ...config.web, output: 'single', name: 'Memy', lang: 'en', themeColor: '#345b46', backgroundColor: '#f7f4eb' } } : {}),
+    ...(webStaging ? { platforms: ['web'], web: { ...config.web, output: 'single', name: 'Mina Minnen', lang: 'sv', themeColor: '#345b46', backgroundColor: '#f7f4eb' } } : {}),
     // Change only the display name; retain slug, scheme and application storage keys.
     name: preview ? `${config.name} (Sample Stories)` : config.name,
     extra: {

@@ -12,7 +12,7 @@ import { ConfirmationScreen } from '../../screens/ConfirmationScreen';
 type Status = 'checking' | 'confirmed' | 'invalid' | 'blocked' | 'unavailable';
 export default function ConfirmationRoute() {
   const router = useRouter();
-  const { language, ready } = useLanguage();
+  const { language, ready, completed } = useLanguage();
   const auth = useAuth();
   const { confirm, cancel } = useRegistration();
   const { requestLogin, cancelRegistration } = useLoginNavigation();
@@ -55,10 +55,10 @@ export default function ConfirmationRoute() {
     void cancel().then(() => {
       clearConfirmationLink();
       cancelRegistration();
-      if (login && auth.status === 'signed-out') { requestLogin(); router.replace('/login'); }
+      if (login && completed && auth.status === 'signed-out') { requestLogin(); router.replace('/login'); }
       else router.replace('/');
     }).catch(() => setStatus('blocked'));
-  }, [cancel, cancelRegistration, requestLogin, auth.status, router]);
+  }, [cancel, cancelRegistration, requestLogin, completed, auth.status, router]);
   useFocusEffect(useCallback(() => {
     const listener = BackHandler.addEventListener('hardwareBackPress', () => { leave(false); return true; });
     return () => listener.remove();

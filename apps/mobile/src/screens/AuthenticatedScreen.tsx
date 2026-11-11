@@ -17,7 +17,7 @@ export function AuthenticatedScreen({ language, user, onSignOut, busy = false }:
   const text = authCopy[language];
   const [focused, setFocused] = useState(false);
   return <Screen>
-    <MemyBrand />
+    <MemyBrand language={language} />
     <View style={screenStyles.section}>
       <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]}
         allowFontScaling style={[screenStyles.heading, styles.heading]}>{text.signedInTitle}</Text>

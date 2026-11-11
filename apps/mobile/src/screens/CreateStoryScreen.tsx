@@ -106,7 +106,7 @@ export function CreateStoryScreen({ language, state, serviceAvailable, onSubmit,
     <Screen back={{ language, label: text.back, onPress: () => leave(onBack) }} keyboardAware scrollViewRef={scrollView} onContentLayout={event => {
       layoutOffsets.current.content = event.nativeEvent.layout.y; revealTitleError();
     }}>
-      <MemyBrand />
+      <MemyBrand language={language} />
       <View style={screenStyles.section}>
         <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]}
           allowFontScaling style={[screenStyles.heading, styles.heading]}>{text.title}</Text>
@@ -121,9 +121,9 @@ export function CreateStoryScreen({ language, state, serviceAvailable, onSubmit,
             allowFontScaling style={styles.notice}>{text.success}</Text>
           <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[state.project.language]}
             allowFontScaling style={styles.savedTitle}>{state.project.title}</Text>
-          <Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.label}>
-            {text.savedLanguage}: {state.project.language === 'sv' ? text.swedish : text.english}
-          </Text>
+          {language === 'en' && <Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.label}>
+            {createStoryCopy.en.savedLanguage}: {state.project.language === 'sv' ? createStoryCopy.en.swedish : createStoryCopy.en.english}
+          </Text>}
         </View> : <>
           {state.status === 'error' && <Text accessibilityRole="alert" accessibilityLiveRegion="assertive"
             accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.notice}>

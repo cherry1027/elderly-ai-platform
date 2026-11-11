@@ -37,8 +37,8 @@ export const registrationCopy = {
     confirmationUnavailable: 'Email confirmation is not available in this development preview yet. No confirmation was attempted.',
   },
   sv: {
-    title: 'Skapa ditt Memy-konto',
-    introduction: 'Bekräfta din e-post och logga sedan in i Memy.',
+    title: 'Skapa ditt konto för Mina Minnen',
+    introduction: 'Bekräfta din e-post och logga sedan in i Mina Minnen.',
     email: 'E-post', password: 'Lösenord', confirmation: 'Bekräfta lösenord',
     showPassword: 'Visa lösenord', hidePassword: 'Dölj lösenord',
     showConfirmation: 'Visa bekräftelselösenord', hideConfirmation: 'Dölj bekräftelselösenord',
@@ -50,7 +50,7 @@ export const registrationCopy = {
     mismatch: 'Lösenorden matchar inte. Ange samma lösenord i båda fälten.',
     gate: 'Endast förhandsvisning av registrering. Kontrollera uppgifterna; inget konto skapas och inget mejl skickas.',
     checked: 'Dina uppgifter klarade de lokala kontrollerna. Registrering är inte aktiverad. Inget konto skapades och inget mejl skickades.',
-    sent: 'Om registreringen kan fortsätta får du ett mejl med en bekräftelselänk. Bekräfta din e-post, återvänd till Memy och logga in som vanligt. Det kan ta några minuter innan mejlet kommer.',
+    sent: 'Om registreringen kan fortsätta får du ett mejl med en bekräftelselänk. Bekräfta din e-post, återvänd till Mina Minnen och logga in som vanligt. Det kan ta några minuter innan mejlet kommer.',
     emailLimit: 'Mejl i utvecklingsmiljön är begränsade till två meddelanden i timmen. Kontrollera inkorgen innan du begär ett nytt mejl.',
     pending: 'En registreringsbegäran väntar redan. Kontrollera din e-post innan du försöker igen.',
     errors: {
@@ -62,7 +62,7 @@ export const registrationCopy = {
       'weak-password': 'Lösenordet uppfyller inte utvecklingsprojektets regler. Använd ett längre och starkare lösenord.',
       link: 'E-postbekräftelsen kunde inte verifieras. Använd det senaste godkända bekräftelsemejlet för utvecklingsmiljön.',
       cleanup: 'Registreringen kunde inte slutföras säkert. Kontoåtkomsten är stängd. Återvänd till Välkommen för hjälp.',
-      configuration: 'Registreringen behöver de godkända utvecklingsinställningarna. Be Memy-teamet kontrollera dem.',
+      configuration: 'Registreringen behöver de godkända utvecklingsinställningarna. Be teamet för Mina Minnen kontrollera dem.',
       pending: 'En registreringsbegäran väntar redan. Kontrollera din e-post innan du försöker igen.',
       unknown: 'Registreringen kunde inte slutföras. Kontrollera din e-post innan du försöker igen. Logga in om du redan har ett konto.',
     },

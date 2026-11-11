@@ -11,7 +11,7 @@ import { colors, layout } from '../src/theme';
 import { introCopy } from '../src/intro-copy';
 
 describe('language selection', () => {
-  it('shows readable language self-names with an explicitly checked English default', async () => {
+  it('shows readable language self-names and the checked English choice', async () => {
     await render(<LanguageScreen language="en" onSelectLanguage={jest.fn()} onContinue={jest.fn()} />);
 
     expect(screen.getByRole('radio', { name: 'English' }).props.accessibilityState).toEqual({ checked: true });
@@ -38,7 +38,8 @@ describe('language selection', () => {
     );
     expect(screen.getByRole('radio', { name: 'Svenska' }).props.accessibilityState).toEqual({ checked: true });
     expect(screen.getByRole('radio', { name: 'English' }).props.accessibilityState).toEqual({ checked: false });
-    expect(screen.getByText('Valt')).toBeOnTheScreen();
+    expect(screen.queryByText('Valt')).toBeNull();
+    expect(screen.getByText('Mina Minnen')).toBeOnTheScreen();
     expect(screen.getByRole('header', { name: 'Välj ditt språk' })).toBeOnTheScreen();
 
     await fireEvent.press(screen.getByRole('radio', { name: 'English' }));
@@ -96,7 +97,7 @@ describe('Welcome', () => {
     expect(screen.getByText(copy[language].welcomeDescription)).toBeOnTheScreen();
     expect(screen.queryByText(copy[language].welcomeEyebrow)).toBeNull();
     expect(screen.getByText(copy[language].footer)).toBeOnTheScreen();
-    expect(heading).toHaveTextContent(/Memy/);
+    expect(heading).toHaveTextContent(language === 'sv' ? 'Välkommen till Mina Minnen.' : 'Welcome to Memy.');
 
     const buttons = screen.getAllByRole('button');
     expect(buttons.filter((button) => !button.props.accessibilityState?.disabled)).toHaveLength(1);

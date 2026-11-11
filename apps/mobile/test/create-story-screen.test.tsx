@@ -335,7 +335,11 @@ describe('native Create My Story form', () => {
     const text = createStoryCopy[language];
     expect(screen.getByText(text.success).props.accessibilityLiveRegion).toBe('polite');
     expect(screen.getByRole('header', { name: project.title }).props.accessibilityLanguage).toBe('sv-SE');
-    expect(screen.getByText(`${text.savedLanguage}: ${text.swedish}`)).toBeOnTheScreen();
+    if (language === 'en') expect(screen.getByText('Language: Swedish')).toBeOnTheScreen();
+    else {
+      expect(screen.queryByText('Språk: Svenska')).toBeNull();
+      expect(screen.queryByText(/Din nya berättelse blir på svenska/)).toBeNull();
+    }
     expect(screen.queryByLabelText(text.titleLabel)).toBeNull();
     expect(screen.queryByRole('button', { name: text.create })).toBeNull();
     await fireEvent.press(screen.getByRole('button', { name: text.back }));

@@ -35,7 +35,7 @@ describe('native introduction screens', () => {
     expect(screen.getByText(text.scenes[scene].caption)).toBeOnTheScreen();
     expect(screen.getByText(text.illustration)).toBeOnTheScreen();
     expect(screen.getByText(text.progress(scene + 1)).props.accessibilityLiveRegion).toBe('polite');
-    expect(screen.getByText('Memy')).toBeOnTheScreen();
+    expect(screen.getByText(language === 'sv' ? 'Mina Minnen' : 'Memy')).toBeOnTheScreen();
     expect(jest.mocked(AnimatedMemoryBook)).toHaveBeenLastCalledWith(
       { scene, language, motion: false }, undefined,
     );

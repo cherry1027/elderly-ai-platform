@@ -16,14 +16,14 @@ export const rootNavigationCopy = {
   },
   sv: {
     tabs: { home: 'Hem', stories: 'Mina berättelser', settings: 'Inställningar' },
-    navigation: 'Huvudnavigering', navigationScrollHint: 'Rulla för att nå alla navigeringsval.', homeTitle: 'Välkommen till Memy',
+    navigation: 'Huvudnavigering', navigationScrollHint: 'Rulla för att nå alla navigeringsval.', homeTitle: 'Välkommen till Mina Minnen',
     homeDescription: 'Dina minnen, i din takt.',
     openStories: 'Öppna Mina berättelser', createStory: 'Börja en ny berättelse',
     simulation: 'Utvecklingsversion: transkribering och AI-skrivande är simulerade.',
     realAvailability: 'Tillgången till verklig AI kontrolleras när du öppnar en berättelse. Din inspelning ersätts aldrig med en simulerad transkription.',
-    settingsTitle: 'Inställningar', settingsDescription: 'Gör Memy bekvämt för dig.',
+    settingsTitle: 'Inställningar', settingsDescription: 'Anpassa Mina Minnen så att det passar dig.',
     languageTitle: 'Språk', languageHelp: 'Detta ändrar appens språk. Dina berättelser behåller sitt eget språk.',
-    replay: 'Så använder du Memy', accountTitle: 'Ditt konto', signOut: 'Logga ut',
+    replay: 'Så använder du Mina Minnen', accountTitle: 'Ditt konto', signOut: 'Logga ut',
     openStory: 'Öppna berättelse',
   },
 } satisfies Record<Language, unknown>;

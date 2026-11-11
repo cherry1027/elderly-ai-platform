@@ -5,6 +5,11 @@ export const languageNames: Record<Language, string> = {
   sv: 'Svenska',
 };
 
+export const productNames: Record<Language, string> = {
+  en: 'Memy',
+  sv: 'Mina Minnen',
+};
+
 export const accessibilityLanguages: Record<Language, string> = {
   en: 'en-GB',
   sv: 'sv-SE',
@@ -15,7 +20,6 @@ export const copy = {
     languageTitle: 'Choose your language',
     languageDescription: 'Choose the language you feel most comfortable with.',
     languageGroup: 'Language',
-    selected: 'Selected',
     continue: 'Continue',
     welcomeEyebrow: 'Your story starts with you',
     welcomeTitle: 'Welcome to Memy.',
@@ -27,10 +31,9 @@ export const copy = {
     languageTitle: 'Välj ditt språk',
     languageDescription: 'Välj det språk som känns bäst för dig.',
     languageGroup: 'Språk',
-    selected: 'Valt',
     continue: 'Fortsätt',
     welcomeEyebrow: 'Din berättelse börjar med dig',
-    welcomeTitle: 'Välkommen till Memy.',
+    welcomeTitle: 'Välkommen till Mina Minnen.',
     welcomeDescription: 'En plats för dina minnen, med dina egna ord.',
     changeLanguage: 'Byt språk',
     footer: 'Dina minnen. Dina ord. Din berättelse.',

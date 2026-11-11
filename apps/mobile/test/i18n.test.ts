@@ -4,6 +4,7 @@ import {
   languageNames,
   type Language,
 } from '../src/i18n';
+import { realCopy } from '../src/real-ai/copy';
 
 describe('English and Swedish wording', () => {
   it('provides both languages using their own names', () => {
@@ -22,7 +23,7 @@ describe('English and Swedish wording', () => {
 
   it.each([
     ['en', 'Welcome to Memy.', 'A place for your memories, in your own words.'],
-    ['sv', 'Välkommen till Memy.', 'En plats för dina minnen, med dina egna ord.'],
+    ['sv', 'Välkommen till Mina Minnen.', 'En plats för dina minnen, med dina egna ord.'],
   ] as const)('preserves the approved %s Welcome wording', (language, title, description) => {
     expect(copy[language].welcomeTitle).toBe(title);
     expect(copy[language].welcomeDescription).toBe(description);
@@ -35,5 +36,9 @@ describe('English and Swedish wording', () => {
     expect(copy[language].continue).toBe(next);
     expect(copy[language].changeLanguage).toBe(back);
     expect(accessibilityLanguages[language]).toBe(locale);
+  });
+
+  it('uses the agreed Swedish interviewer, conversation, and recording labels', () => {
+    expect(realCopy.sv).toMatchObject({ assistant: 'Minna', chat: 'Berätta', speakMode: 'Berätta', start: 'Spela in' });
   });
 });

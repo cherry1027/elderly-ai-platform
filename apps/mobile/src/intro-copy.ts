@@ -27,13 +27,13 @@ export const introCopy = {
   sv: {
     scenes: [
       { eyebrow: 'Dina minnen', title: 'Varje liv har en berättelse.', description: 'Börja med de minnen du vill berätta om.', caption: 'Ett litet ögonblick. En välbekant plats. Börja där du vill.' },
-      { eyebrow: 'Din röst, dina ord', title: 'Prata i din egen takt.', description: 'Spela in ett minne. Memy hjälper dig att berätta din historia.', caption: 'Det är ingen brådska. Dina ord är alltid utgångspunkten.' },
-      { eyebrow: 'En bok som är din', title: 'Dina minnen. Din självbiografi.', description: 'Memy kan hjälpa till att göra minnen som du har bekräftat till ett utkast till din egen berättelse.', caption: 'Granska och redigera ditt utkast. Du bestämmer vad som hör till din berättelse.' },
+      { eyebrow: 'Din röst, dina ord', title: 'Berätta i din egen takt.', description: 'Spela in när du vill. Minna hjälper dig att berätta din historia.', caption: 'Det är ingen brådska. Dina ord är alltid utgångspunkten.' },
+      { eyebrow: 'En bok som är din', title: 'Dina minnen. Din självbiografi.', description: 'Minna kan hjälpa till att göra minnen som du har bekräftat till ett utkast till din egen berättelse.', caption: 'Granska och redigera ditt utkast. Du bestämmer vad som hör till din berättelse.' },
     ],
     next: 'Nästa',
     back: 'Tillbaka',
     skip: 'Hoppa över',
-    enter: 'Öppna Memy',
+    enter: 'Öppna Mina Minnen',
     replay: 'Visa introduktionen igen',
     progress: (step: number) => `Introduktion: steg ${step} av 3`,
     illustration: 'Endast illustration. Ingen inspelning eller berättelse skapas.',

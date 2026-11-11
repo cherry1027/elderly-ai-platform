@@ -159,16 +159,18 @@ describe('persistent language and introduction provider', () => {
     expect([...values.keys()]).toEqual([PREFERENCES_KEY]);
   });
 
-  it('updates the browser document locale when a saved language is restored and deliberately changed', async () => {
+  it('updates the browser document locale and title when a saved language is restored and deliberately changed', async () => {
     const original = Object.getOwnPropertyDescriptor(globalThis, 'document');
-    const documentElement = { lang: 'sv' };
-    Object.defineProperty(globalThis, 'document', { configurable: true, value: { documentElement } });
+    const webDocument = { documentElement: { lang: 'sv' }, title: '' };
+    Object.defineProperty(globalThis, 'document', { configurable: true, value: webDocument });
     try {
       device.getItem.mockResolvedValue('{"version":1,"language":"en","completed":true}');
       await openProvider();
-      expect(documentElement.lang).toBe('en-GB');
+      expect(webDocument.documentElement.lang).toBe('en-GB');
+      expect(webDocument.title).toBe('Memy');
       await fireEvent.press(screen.getByRole('button', { name: 'Swedish' }));
-      expect(documentElement.lang).toBe('sv-SE');
+      expect(webDocument.documentElement.lang).toBe('sv-SE');
+      expect(webDocument.title).toBe('Mina Minnen');
     } finally {
       if (original) Object.defineProperty(globalThis, 'document', original);
       else Reflect.deleteProperty(globalThis, 'document');

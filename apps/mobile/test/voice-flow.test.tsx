@@ -7,6 +7,7 @@ import { RealStoryWorkspace } from '../src/real-ai/RealStoryWorkspace';
 import { LargeButton } from '../src/components/LargeButton';
 import { getComponents } from './component-probe';
 import { realCopy } from '../src/real-ai/copy';
+import { conversationModeCopy } from '../src/real-ai/conversation-mode';
 import { mediaPrivacy } from '../src/real-ai/media-privacy';
 import { realIds as ids, realMessage, realTranscript } from './real-ai-fixtures';
 
@@ -20,7 +21,7 @@ jest.mock('../src/real-ai/api', () => ({ ...jest.requireActual('../src/real-ai/a
   transcribeRealRecording: jest.fn(), sendRealMessage: jest.fn(), sendRealTextMessage: jest.fn(), hashRealText: jest.fn(),
   getRealOperation: jest.fn(), findRealOperation: jest.fn(), createRealSpeech: jest.fn(), getRealSpeechAudio: jest.fn(),
 }));
-jest.mock('../src/real-ai/conversation-mode', () => ({ readConversationMode: async () => null, saveConversationMode: jest.fn() }));
+jest.mock('../src/real-ai/conversation-mode', () => ({ ...jest.requireActual('../src/real-ai/conversation-mode'), readConversationMode: async () => null, saveConversationMode: jest.fn() }));
 jest.mock('../src/api/story-projects', () => ({ ...jest.requireActual('../src/api/story-projects'), listStorySessions: jest.fn(), continueStoryProject: jest.fn() }));
 jest.mock('../src/audio/native-recorder', () => ({ ...jest.requireActual('../src/audio/native-recorder'), createNativeRecorder: jest.fn(), createRecordingId: jest.fn() }));
 const mockPrivacy = { ready: true, failed: false, release: jest.fn(), rememberReturn: jest.fn(), createStore: jest.fn() };
@@ -52,7 +53,9 @@ async function ready() {
 }
 async function opened() { const view = await render(<RealStoryWorkspace {...props} />); await ready(); return view; }
 async function selectVoice(copy: typeof realCopy.en | typeof realCopy.sv = t) {
-  if (!screen.queryByRole('button', { name: copy.start })) await press(copy.speakMode);
+  if (screen.queryByRole('button', { name: copy.start })) return;
+  const controls = conversationModeCopy[copy === realCopy.sv ? 'sv' : 'en'];
+  await press(screen.queryByRole('button', { name: copy.speakMode }) ? copy.speakMode : controls.switchToVoice);
 }
 async function permitVoice() { await selectVoice(); await press(t.start); await press(t.consentContinue); await waitFor(() => expect(screen.getByRole('button', { name: t.stop })).toBeOnTheScreen()); }
 async function emit(state: AppStateStatus) { await act(async () => { AppState.currentState = state; [...listeners].forEach(listener => listener(state)); }); }
@@ -177,7 +180,7 @@ describe('voice consent and automatic chaining — synthetic transports only', (
   it('preserves a separate unsent typed draft throughout successful voice processing', async () => {
     await opened(); await fireEvent.changeText(screen.getByLabelText(t.input), 'Keep my unsent typed words.');
     await permitVoice(); await press(t.stop); await waitFor(() => expect(api.sendRealMessage).toHaveBeenCalledTimes(1));
-    await press(t.writeMode);
+    await press(conversationModeCopy.en.switchToWrite);
     expect(screen.getByLabelText(t.input).props.value).toBe('Keep my unsent typed words.'); expect(api.sendRealTextMessage).not.toHaveBeenCalled();
     expect(api.createRealSpeech).not.toHaveBeenCalled();
   });
@@ -249,7 +252,7 @@ describe('independent review: saved voice recovery', () => {
     jest.mocked(api.getRealTranscripts).mockResolvedValue([transcript]);
     await emit('background'); await emit('active'); await press(t.resume);
     await waitFor(() => expect(api.getRealTranscripts).toHaveBeenCalledTimes(2));
-    expect(screen.getByRole('button', { name: t.writeMode })).toBeDisabled();
+    expect(screen.getByRole('button', { name: conversationModeCopy.en.switchToWrite })).toBeDisabled();
     expect(screen.queryByRole('button', { name: t.process })).toBeNull();
     expect(api.sendRealMessage).toHaveBeenCalledTimes(1);
   });

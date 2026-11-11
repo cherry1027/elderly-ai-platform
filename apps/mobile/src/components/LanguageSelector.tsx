@@ -9,13 +9,14 @@ interface Props { language: Language; onSelectLanguage: (language: Language) => 
 /** Shared native radio choices; preference ownership stays in LanguageProvider. */
 export function LanguageSelector({ language, onSelectLanguage, density = 'comfortable' }: Props) {
   const text = copy[language];
+  const selectedLabel = language === 'en' && density === 'comfortable' ? 'Selected' : undefined;
   return <View accessibilityRole="radiogroup" accessibilityLabel={text.languageGroup} style={[styles.group, density === 'compact' && styles.compactGroup]}>
     {languages.map(option => <LanguageOption key={option} language={option} selected={language === option}
-      selectedLabel={text.selected} compact={density === 'compact'} onPress={() => onSelectLanguage(option)} />)}
+      selectedLabel={selectedLabel} compact={density === 'compact'} onPress={() => onSelectLanguage(option)} />)}
   </View>;
 }
 function LanguageOption({ language, selected, selectedLabel, compact, onPress }: {
-  language: Language; selected: boolean; selectedLabel: string; compact: boolean; onPress: () => void;
+  language: Language; selected: boolean; selectedLabel?: string; compact: boolean; onPress: () => void;
 }) {
   const [focused, setFocused] = useState(false);
   return <Pressable accessibilityRole="radio" accessibilityLabel={languageNames[language]}
@@ -28,7 +29,7 @@ function LanguageOption({ language, selected, selectedLabel, compact, onPress }:
     </View>
     <View style={styles.optionCopy}>
       <Text allowFontScaling style={styles.label}>{languageNames[language]}</Text>
-      {selected && !compact && <Text allowFontScaling style={styles.selectedLabel}>{selectedLabel}</Text>}
+      {selected && selectedLabel && <Text allowFontScaling style={styles.selectedLabel}>{selectedLabel}</Text>}
     </View>
   </Pressable>;
 }

@@ -5,6 +5,7 @@ import { useLanguage } from '../../language';
 import { useAuth } from '../../auth/AuthProvider';
 import { useLoginNavigation } from '../../navigation/LoginNavigation';
 import { AccountAction, AccountHeading, AccountNotice, AccountScreen, accountStyles } from '../../components/AccountPresentation';
+import { PreferenceLoading } from '../../components/PreferenceLoading';
 import { createWebPasswordSetup, PasswordSetupError, type WebPasswordSetup } from '../../auth/web-password-setup';
 
 const copy = {
@@ -16,9 +17,9 @@ const copy = {
     invalid: 'This link is unavailable or has expired. Ask the pilot organiser for a fresh password setup email.',
     failed: 'We could not complete password setup. Check your connection, then try again. No automatic retry was made.',
     weak: 'Choose a password between 12 and 128 characters.', rate: 'Too many requests. Please wait before trying again.' },
-  sv: { title: 'Välj ditt lösenord', description: 'Välj ett privat lösenord för ditt Memy-pilotkonto.', password: 'Nytt lösenord', repeat: 'Upprepa lösenord',
-    help: 'Använd minst 12 tecken. Ditt lösenord delas aldrig med Memy-teamet.', save: 'Spara lösenord', checking: 'Kontrollerar länken i ditt mejl…',
-    saved: 'Ditt lösenord har sparats. Du kan nu logga in på Memy.', login: 'Gå till inloggning', mismatch: 'Lösenorden stämmer inte överens.',
+  sv: { title: 'Välj ditt lösenord', description: 'Välj ett privat lösenord för ditt pilotkonto i Mina Minnen.', password: 'Nytt lösenord', repeat: 'Upprepa lösenord',
+    help: 'Använd minst 12 tecken. Ditt lösenord delas aldrig med teamet för Mina Minnen.', save: 'Spara lösenord', checking: 'Kontrollerar länken i ditt mejl…',
+    saved: 'Ditt lösenord har sparats. Du kan nu logga in i Mina Minnen.', login: 'Gå till inloggning', mismatch: 'Lösenorden stämmer inte överens.',
     cleanup: 'Ditt lösenord har sparats. Det gick inte att bekräfta att mejlsessionen avslutats. Logga in som vanligt; spara inte lösenordet igen.',
     uncertain: 'Lösenordet kan ha sparats. Försök logga in med ditt nya lösenord. Be annars om en ny länk. Upprepa inte sparandet.',
     invalid: 'Länken är inte tillgänglig eller har gått ut. Be pilotansvarig om ett nytt mejl för att välja lösenord.',
@@ -26,7 +27,7 @@ const copy = {
     weak: 'Välj ett lösenord med 12 till 128 tecken.', rate: 'För många förfrågningar. Vänta innan du försöker igen.' },
 };
 export default function WebPasswordSetupRoute() {
-  const { language } = useLanguage(), router = useRouter(), navigation = useLoginNavigation(), auth = useAuth(), text = copy[language];
+  const { language, ready, completed } = useLanguage(), router = useRouter(), navigation = useLoginNavigation(), auth = useAuth(), text = copy[language];
   const service = useRef<WebPasswordSetup | null>(null), mounted = useRef(false), submitting = useRef(false);
   const [state, setState] = useState<'checking' | 'ready' | 'busy' | 'saved' | 'uncertain' | 'invalid'>('checking');
   const [leaving, setLeaving] = useState(false);
@@ -71,9 +72,16 @@ export default function WebPasswordSetupRoute() {
     try {
       // An already signed-in browser account must not silently replace the email recipient.
       if (auth.status !== 'signed-out') await auth.signOut();
-      if (mounted.current) { navigation.requestLogin(); router.replace('/login'); }
+      if (!mounted.current) return;
+      if (completed) {
+        navigation.requestLogin();
+        router.replace('/login');
+      } else {
+        router.replace('/');
+      }
     } catch { if (mounted.current) { setNotice('failed'); setLeaving(false); } }
   };
+  if (!ready) return <PreferenceLoading language={language} />;
   return <AccountScreen>
     <AccountHeading language={language} title={text.title} description={text.description} />
     {state === 'checking' && <AccountNotice language={language} message={text.checking} urgent={false} />}

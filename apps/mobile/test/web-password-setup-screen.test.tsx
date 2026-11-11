@@ -3,8 +3,9 @@ import WebPasswordSetupRoute from '../src/app/auth/callback.web';
 import { createWebPasswordSetup, PasswordSetupError } from '../src/auth/web-password-setup';
 import { useAuth } from '../src/auth/AuthProvider';
 const mockReplace = jest.fn(), mockRequestLogin = jest.fn();
+let mockLanguage: 'en' | 'sv', mockCompleted: boolean;
 jest.mock('expo-router', () => ({ useRouter: () => ({ replace: mockReplace }) }));
-jest.mock('../src/language', () => ({ useLanguage: () => ({ language: 'en', ready: true }) }));
+jest.mock('../src/language', () => ({ useLanguage: () => ({ language: mockLanguage, ready: true, completed: mockCompleted }) }));
 jest.mock('../src/auth/AuthProvider', () => ({ useAuth: jest.fn() }));
 jest.mock('../src/navigation/LoginNavigation', () => ({ useLoginNavigation: () => ({ requestLogin: mockRequestLogin }) }));
 jest.mock('../src/auth/web-password-setup', () => ({ ...jest.requireActual('../src/auth/web-password-setup'), createWebPasswordSetup: jest.fn() }));
@@ -26,6 +27,7 @@ beforeAll(() => {
   Object.defineProperty(globalThis, 'document', { configurable: true, value: { visibilityState: 'visible', addEventListener: (name: string, callback: () => void) => callbacks.set(name, callback), removeEventListener: (name: string) => callbacks.delete(name) } });
 });
 beforeEach(() => {
+  mockLanguage = 'en'; mockCompleted = true;
   jest.mocked(createWebPasswordSetup).mockReturnValue(service); service.verify.mockResolvedValue(); service.save.mockResolvedValue({ cleanup: 'complete' });
   jest.mocked(useAuth).mockReturnValue({ status: 'signed-in', signOut } as unknown as ReturnType<typeof useAuth>); signOut.mockResolvedValue();
   Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
@@ -46,6 +48,19 @@ it('requires explicit save and safely signs out an existing browser account befo
   let release!: () => void; signOut.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
   await fireEvent.press(screen.getByLabelText('Go to sign in')); expect(mockRequestLogin).not.toHaveBeenCalled();
   await act(async () => { release(); }); expect(signOut).toHaveBeenCalledTimes(1); expect(mockRequestLogin).toHaveBeenCalledTimes(1); expect(mockReplace).toHaveBeenCalledWith('/login');
+});
+it('sends a first-time browser visitor through language onboarding after saving the password', async () => {
+  mockLanguage = 'sv'; mockCompleted = false;
+  jest.mocked(useAuth).mockReturnValue({ status: 'signed-out', signOut } as unknown as ReturnType<typeof useAuth>);
+  await render(<WebPasswordSetupRoute />);
+  await fireEvent.changeText(await screen.findByLabelText('Nytt lösenord'), 'Synthetic password 123');
+  await fireEvent.changeText(screen.getByLabelText('Upprepa lösenord'), 'Synthetic password 123');
+  await fireEvent.press(screen.getByLabelText('Spara lösenord'));
+  await screen.findByText('Ditt lösenord har sparats. Du kan nu logga in i Mina Minnen.');
+  await fireEvent.press(screen.getByLabelText('Gå till inloggning'));
+  expect(mockReplace).toHaveBeenCalledWith('/');
+  expect(mockRequestLogin).not.toHaveBeenCalled();
+  expect(signOut).not.toHaveBeenCalled();
 });
 it('preserves confirmed save when session cleanup fails and offers no repeated write', async () => {
   service.save.mockResolvedValueOnce({ cleanup: 'unknown' }); await ready(); await fireEvent.press(screen.getByLabelText('Save password'));

@@ -10,9 +10,10 @@ import Svg, {
   Rect,
   Stop,
 } from 'react-native-svg';
+import { accessibilityLanguages, productNames, type Language } from '../i18n';
 
 /** Native adaptation of the existing web Welcome wordmark and sprout path. */
-export function MemyBrand() {
+export function MemyBrand({ language }: { language: Language }) {
   return (
     <View style={styles.brand}>
       <Svg
@@ -31,7 +32,9 @@ export function MemyBrand() {
           strokeLinejoin="round"
         />
       </Svg>
-      <Text allowFontScaling style={styles.wordmark}>Memy</Text>
+      <Text allowFontScaling accessibilityLanguage={accessibilityLanguages[language]} style={styles.wordmark}>
+        {productNames[language]}
+      </Text>
     </View>
   );
 }

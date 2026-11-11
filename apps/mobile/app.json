@@ -16,7 +16,7 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "Memy uses the microphone only when you choose to record a fictional test sample. Memy anv\u00e4nder mikrofonen bara n\u00e4r du v\u00e4ljer att spela in ett fiktivt test.",
+          "microphonePermission": "Memy uses the microphone only when you choose to record a fictional test sample. Mina Minnen anv\u00e4nder mikrofonen bara n\u00e4r du v\u00e4ljer att spela in ett fiktivt test.",
           "recordAudioAndroid": true,
           "enableBackgroundRecording": false,
           "enableBackgroundPlayback": false

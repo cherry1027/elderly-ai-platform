@@ -7,9 +7,11 @@ import * as api from '../src/real-ai/api';
 import * as projects from '../src/api/story-projects';
 import { createNativeRecorder, createRecordingId } from '../src/audio/native-recorder';
 import { RealStoryWorkspace } from '../src/real-ai/RealStoryWorkspace';
+import { storyContentCopy } from '../src/real-ai/StoryContent';
 import { Screen } from '../src/components/Screen';
 import { getComponent } from './component-probe';
 import { realCopy } from '../src/real-ai/copy';
+import { conversationModeCopy } from '../src/real-ai/conversation-mode';
 import { mediaPrivacy } from '../src/real-ai/media-privacy';
 import { leaveCopy } from '../src/navigation/useGuardedLeave';
 import { realDraft, realIds as ids, realMemory, realMessage, realTranscript } from './real-ai-fixtures';
@@ -25,7 +27,7 @@ jest.mock('../src/real-ai/api', () => ({ ...jest.requireActual('../src/real-ai/a
   getRealOperation: jest.fn(), findRealOperation: jest.fn(), transcribeRealRecording: jest.fn(), sendRealMessage: jest.fn(),
   generateRealDraft: jest.fn(), editRealDraft: jest.fn(), exportRealDraft: jest.fn(), downloadRealExport: jest.fn(), createRealSpeech: jest.fn(),
 }));
-jest.mock('../src/real-ai/conversation-mode', () => ({ readConversationMode: async () => null, saveConversationMode: jest.fn() }));
+jest.mock('../src/real-ai/conversation-mode', () => ({ ...jest.requireActual('../src/real-ai/conversation-mode'), readConversationMode: async () => null, saveConversationMode: jest.fn() }));
 jest.mock('../src/api/story-projects', () => ({ ...jest.requireActual('../src/api/story-projects'), listStorySessions: jest.fn(), continueStoryProject: jest.fn() }));
 jest.mock('../src/audio/native-recorder', () => ({ ...jest.requireActual('../src/audio/native-recorder'), createNativeRecorder: jest.fn(), createRecordingId: jest.fn() }));
 const mockPrivacy = { ready: true, failed: false, release: jest.fn(), rememberReturn: jest.fn(), createStore: jest.fn() };
@@ -111,17 +113,31 @@ describe('Talk → Memories → My Story product flow — synthetic services onl
     expect(api.getRealMemories).not.toHaveBeenCalled(); expect(api.getRealDrafts).not.toHaveBeenCalled();
     expect(projects.continueStoryProject).not.toHaveBeenCalled(); noPaidActions();
   });
-  it.each(['en', 'sv'] as const)('Finish opens collected memories without paid work and Keep Talking reuses the conversation in %s', async language => {
-    const copy = realCopy[language]; jest.mocked(api.getRealMemories).mockResolvedValue([realMemory()]); await opened(language);
-    await press(copy.finish);
-    await waitFor(() => expect(screen.getByRole('tab', { name: copy.memories }).props.accessibilityState.selected).toBe(true));
-    expect(screen.getByText(copy.finishTitle)).toBeOnTheScreen(); expect(screen.getByText(copy.finishHint)).toBeOnTheScreen();
-    await waitFor(() => expect(screen.getByText(realMemory().value)).toBeOnTheScreen());
-    expect(api.getRealMemories).toHaveBeenCalledTimes(1); expect(api.getRealDrafts).not.toHaveBeenCalled(); noPaidActions();
+  it.each(['en', 'sv'] as const)('Finish opens My Story and offers memory review without generating in %s', async language => {
+    const copy = realCopy[language], story = storyContentCopy[language];
+    jest.mocked(api.getRealMemories).mockResolvedValue([realMemory()]); await opened(language);
+    await press(conversationModeCopy[language].finishAndOpenStory);
+    expect(screen.getByRole('tab', { name: copy.book }).props.accessibilityState.selected).toBe(true);
+    await waitFor(() => expect(screen.getByText(story.answerFirst)).toBeOnTheScreen());
+    expect(api.getRealMemories).toHaveBeenCalledTimes(1); expect(api.getRealDrafts).toHaveBeenCalledTimes(1); noPaidActions();
+    await press(story.reviewFirst);
+    expect(screen.getByRole('tab', { name: copy.memories }).props.accessibilityState.selected).toBe(true);
+    expect(screen.getByText(realMemory().value)).toBeOnTheScreen();
     captureRenderedReview(`Memories after Finish / ${language}`);
-    await press(copy.keepTalking); expect(screen.getByRole('tab', { name: copy.chat }).props.accessibilityState.selected).toBe(true);
-    expect(screen.queryByText(copy.finishTitle)).toBeNull(); expect(api.getRealMessages).toHaveBeenCalledTimes(1);
-    expect(api.getRealTranscripts).toHaveBeenCalledTimes(1); noPaidActions();
+    await tab(copy.chat);
+    expect(api.getRealMessages).toHaveBeenCalledTimes(1); expect(api.getRealTranscripts).toHaveBeenCalledTimes(1); noPaidActions();
+  });
+  it.each(['en', 'sv'] as const)('leaves Talk when no memories were saved and offers a concrete way back in %s', async language => {
+    const copy = realCopy[language], story = storyContentCopy[language];
+    jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant')]);
+    await opened(language);
+    await press(conversationModeCopy[language].finishAndOpenStory);
+    await waitFor(() => expect(screen.getByText(copy.emptyBook)).toBeOnTheScreen());
+    expect(screen.queryByRole('button', { name: copy.generate })).toBeNull();
+    await press(story.shareMemory);
+    expect(screen.getByRole('tab', { name: copy.chat }).props.accessibilityState.selected).toBe(true);
+    expect(screen.getByText(realMessage('assistant').text)).toBeOnTheScreen();
+    expect(api.getRealMessages).toHaveBeenCalledTimes(1); noPaidActions();
   });
   it('keeps a successful message and its follow-up in Talk without demanding review or generating a story', async () => {
     await opened(); await fireEvent.changeText(screen.getByLabelText(t.input), 'We lived near the garden.'); await press(t.send);
@@ -133,24 +149,24 @@ describe('Talk → Memories → My Story product flow — synthetic services onl
     expect(api.getRealMemories).not.toHaveBeenCalled(); expect(api.getRealDrafts).not.toHaveBeenCalled(); expect(api.createRealSpeech).not.toHaveBeenCalled();
   });
   it('routes Finish with unsent words through the existing leave warning and keeps words when staying', async () => {
-    await opened(); await fireEvent.changeText(screen.getByLabelText(t.input), 'My private unfinished thought.'); await press(t.finish);
+    await opened(); await fireEvent.changeText(screen.getByLabelText(t.input), 'My private unfinished thought.'); await press(conversationModeCopy.en.finishAndOpenStory);
     expect(screen.getByText(leaveCopy.en.dirty)).toBeOnTheScreen(); expect(api.getRealMemories).not.toHaveBeenCalled();
     await press(leaveCopy.en.keep); expect(screen.getByLabelText(t.input)).toHaveDisplayValue('My private unfinished thought.');
     expect(screen.getByRole('tab', { name: t.chat }).props.accessibilityState.selected).toBe(true); noPaidActions();
   });
-  it('opens Memories at the top only after the guarded Finish transition is accepted', async () => {
+  it('opens My Story at the top only after the guarded Finish transition is accepted', async () => {
     await opened(); const scrollTo = jest.spyOn(nativeRef(getComponent(Screen).props.scrollViewRef), 'scrollTo'); scrollTo.mockClear();
-    await fireEvent.changeText(screen.getByLabelText(t.input), 'Unfinished words before leaving.'); await press(t.finish);
+    await fireEvent.changeText(screen.getByLabelText(t.input), 'Unfinished words before leaving.'); await press(conversationModeCopy.en.finishAndOpenStory);
     expect(screen.getByText(leaveCopy.en.dirty)).toBeOnTheScreen(); expect(scrollTo).not.toHaveBeenCalled();
     await press(leaveCopy.en.discard);
-    await waitFor(() => expect(screen.getByRole('tab', { name: t.memories }).props.accessibilityState.selected).toBe(true));
+    await waitFor(() => expect(screen.getByRole('tab', { name: t.book }).props.accessibilityState.selected).toBe(true));
     expect(scrollTo).toHaveBeenCalledWith({ y: 0, animated: false }); noPaidActions();
   });
   it('routes Finish after an uncertain message through existing recovery without another send or fake success', async () => {
     jest.mocked(api.sendRealTextMessage).mockRejectedValueOnce(new api.RealAiError('network', undefined, true));
     await opened(); await fireEvent.changeText(screen.getByLabelText(t.input), 'A message with an uncertain result.'); await press(t.send);
-    await waitFor(() => expect(screen.getByText(t.uncertain)).toBeOnTheScreen()); await press(t.finish);
-    expect(screen.getByText(leaveCopy.en.uncertain)).toBeOnTheScreen(); expect(screen.queryByText(t.finishTitle)).toBeNull();
+    await waitFor(() => expect(screen.getByText(t.uncertain)).toBeOnTheScreen()); await press(conversationModeCopy.en.finishAndOpenStory);
+    expect(screen.getByText(leaveCopy.en.uncertain)).toBeOnTheScreen(); expect(screen.getByRole('tab', { name: t.book }).props.accessibilityState.selected).toBe(false);
     expect(api.getRealMemories).not.toHaveBeenCalled(); await press(leaveCopy.en.keep);
     expect(api.sendRealTextMessage).toHaveBeenCalledTimes(1); expect(api.generateRealDraft).not.toHaveBeenCalled();
   });
@@ -176,7 +192,7 @@ describe('Talk → Memories → My Story product flow — synthetic services onl
     const composer = screen.getByTestId('conversation-composer');
     expect(within(composer).getByLabelText(t.input)).toBeOnTheScreen();
     const speak = within(composer).getByRole('button', { name: t.speakMode }), send = within(composer).getByRole('button', { name: t.send });
-    expect(speak).toHaveStyle({ minHeight: 56, minWidth: 94 }); expect(send).toHaveStyle({ minHeight: 56, minWidth: 56 });
+    expect(speak).toHaveStyle({ minHeight: 56 }); expect(send).toHaveStyle({ minHeight: 56, minWidth: 56 });
     expect(screen.getByTestId('conversation-composer-row')).toHaveStyle({ flexDirection: 'column' });
     expect(screen.getByLabelText(t.input).props.allowFontScaling).toBe(true); expect(screen.getByTestId('story-top-back')).toBeOnTheScreen();
     expect(within(screen.getByTestId('story-content-scroll')).queryByTestId('conversation-composer')).toBeNull(); noPaidActions();
@@ -228,7 +244,7 @@ describe('Talk → Memories → My Story product flow — synthetic services onl
     expect(StyleSheet.flatten(input.props.style).height).toBeUndefined();
     expect(input.props.multiline).toBe(true); expect(input.props.allowFontScaling).toBe(true); expect(input.props.placeholder).toBe(t.input);
     expect(screen.getByTestId('conversation-composer-row')).toHaveStyle({ flexDirection: 'row' });
-    expect(screen.getByRole('button', { name: t.speakMode })).toHaveStyle({ minHeight: 56, minWidth: 94 });
+    expect(screen.getByRole('button', { name: t.speakMode })).toHaveStyle({ minHeight: 56 });
     expect(screen.getByRole('button', { name: t.send })).toHaveStyle({ minHeight: 56, minWidth: 56 });
     const words = 'A first memory.\nA second detail.\nSomething else I remembered.';
     await fireEvent.changeText(input, words); expect(input).toHaveDisplayValue(words);

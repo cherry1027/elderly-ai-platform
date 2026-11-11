@@ -47,7 +47,7 @@ export const conversationCopy = {
       unavailable: 'Samtalstjänsten är tillfälligt otillgänglig. Försök igen senare.',
       network: 'Det gick inte att ansluta. Kontrollera din internetanslutning.',
       timeout: 'Det tog för lång tid för samtalstjänsten att svara.',
-      'invalid-response': 'Samtalsinformationen kunde inte läsas säkert. Gå tillbaka till din berättelse eller be Memy-teamet om hjälp.',
+      'invalid-response': 'Samtalsinformationen kunde inte läsas säkert. Gå tillbaka till din berättelse eller be teamet för Mina Minnen om hjälp.',
       cancelled: 'Förfrågan avbröts. Kontrollera samtalet för att se det senaste läget.',
     },
   },

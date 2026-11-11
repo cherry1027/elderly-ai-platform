@@ -10,7 +10,7 @@ import { RootTabBar } from '../src/components/RootTabBar';
 import { HomeScreen } from '../src/screens/HomeScreen';
 import { SettingsScreen } from '../src/screens/SettingsScreen';
 import { rootNavigationCopy } from '../src/root-navigation-copy';
-import { accessibilityLanguages, copy, type Language } from '../src/i18n';
+import { accessibilityLanguages, type Language } from '../src/i18n';
 
 jest.mock('../src/components/BrandArtwork', () => {
   const actual = jest.requireActual<typeof import('../src/components/BrandArtwork')>('../src/components/BrandArtwork');
@@ -25,10 +25,11 @@ afterEach(async () => {
   expect(AsyncStorage.setItem).not.toHaveBeenCalled();
 });
 
-it.each(languages)('refined %s Home retains Memy identity once, real actions and the original full artwork', async language => {
+it.each(languages)('refined %s Home shows localized identity once, real actions and the original full artwork', async language => {
   const open = jest.fn(), create = jest.fn(), text = rootNavigationCopy[language];
   await render(<HomeScreen language={language} onOpenStories={open} onCreateStory={create} />);
-  expect(screen.getByRole('header', { name: text.homeTitle })).toHaveTextContent(/Memy/);
+  expect(screen.getByRole('header', { name: text.homeTitle }))
+    .toHaveTextContent(language === 'sv' ? 'Välkommen till Mina Minnen' : 'Welcome to Memy');
   expect(maybeComponent(MemyBrand)).toBeNull();
   expect(screen.getByText(text.homeDescription)).toBeOnTheScreen();
   expect(screen.getByText(text.simulation)).toBeOnTheScreen();
@@ -114,9 +115,10 @@ it.each(languages.flatMap(language => [375, 390].map(width => ({language, width}
 it.each(languages)('compact %s Settings language choice preserves checked/focus semantics and default entrance details', async language => {
   const select = jest.fn();
   const view = await render(<LanguageSelector language={language} onSelectLanguage={select} />);
-  expect(screen.getByText(copy[language].selected)).toBeOnTheScreen();
+  if (language === 'en') expect(screen.getByText('Selected')).toBeOnTheScreen();
+  else expect(screen.queryByText('Valt')).toBeNull();
   await view.rerender(<LanguageSelector language={language} onSelectLanguage={select} density="compact" />);
-  expect(screen.queryByText(copy[language].selected)).toBeNull();
+  expect(screen.queryByText(/^(Selected|Valt)$/)).toBeNull();
   const current = screen.getByRole('radio', {name:language === 'en' ? 'English' : 'Svenska'});
   expect(current.props.accessibilityState.checked).toBe(true);
   await fireEvent.press(screen.getByRole('radio', {name:language === 'en' ? 'Svenska' : 'English'}));

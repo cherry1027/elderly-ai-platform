@@ -15,7 +15,7 @@ import { usePdfPrivacy } from '../exports/PdfPrivacy';
 import type { PrivatePdfStore } from '../exports/native-pdf';
 import { accessibilityLanguages, type Language } from '../i18n';
 import { useGuardedLeave } from '../navigation/useGuardedLeave';
-import { colors, headingFont, layout } from '../theme';
+import { colors, layout } from '../theme';
 import { createRealSpeech, downloadRealExport, editRealDraft, exportRealDraft, findRealOperation, generateRealDraft, getRealCapabilities, getRealDraftHistory, getRealExports,
   getRealDraft, getRealDrafts, getRealMemories, getRealMessages, getRealOperation, getRealSpeechAudio, getPreparedRealSpeech, getRealTranscripts,
   RealAiError, decodeRealTextTurn, hashRealText, reviewRealMemory, sendRealMessage, sendRealTextMessage, transcribeRealRecording,
@@ -24,7 +24,7 @@ import { createRealSpeech, downloadRealExport, editRealDraft, exportRealDraft, f
 import type { RealAiConfig } from './config';
 import { realCopy } from './copy';
 import { createRealPlayback, RealPlaybackError, type RealPlayback } from './native-playback';
-import { readConversationMode, saveConversationMode, type ConversationMode } from './conversation-mode';
+import { conversationModeCopy, readConversationMode, saveConversationMode, type ConversationMode } from './conversation-mode';
 import { mediaPrivacy } from './media-privacy';
 import { MemoriesContent, AutobiographyContent } from './StoryContent';
 import { ChatMessageHistory } from './ChatMessageHistory';
@@ -102,16 +102,18 @@ export function RealStoryWorkspace(props: Props) {
 function Workspace({ language, user, project, config, getAccessToken, onBack, onSignOut, initialTab = 'chat', initialDraftId, onAuthenticationFailure, onStoryDetails }: Props) {
   const t = realCopy[language], locale = accessibilityLanguages[language], privacy = usePdfPrivacy();
   const contentScroll = useRef<ComponentRef<typeof ScrollView>>(null);
-  const [finished, setFinished] = useState(false);
-  const [mode, setMode] = useState<ConversationMode>('write');
-  const modeRef = useRef<ConversationMode>('write'), choseMode = useRef(false);
+  const conversationCopy = conversationModeCopy[language];
+  // Undefined is still loading, null is a first visit, and a mode is a saved choice.
+  const [preferredMode, setPreferredMode] = useState<ConversationMode | null>();
+  const mode = preferredMode ?? 'write';
+  const modeRef = useRef<ConversationMode | null>(null);
   const nextSpokenReply = useRef<RealMessage | null>(null);
   useEffect(() => {
     let open = true;
     void readConversationMode().then(saved => {
-      if (!open || choseMode.current || !saved) return;
+      if (!open || modeRef.current !== null) return;
       modeRef.current = saved;
-      setMode(saved);
+      setPreferredMode(saved);
     });
     return () => { open = false; };
   }, []);
@@ -218,7 +220,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     setTranscripts([]); setMessages([]); setMemories([]); setDrafts([]); setHistory(null); setExports(null);
     currentDraft.current = null; editingDraft.current = null; correctionBases.current.clear(); setEditor(null); setCorrections({}); setLocalRecording(null); setRecording(false); setDuration(0);
     voiceConsent.current = null; consentIntent.current = null; setConsentOpen(false); setVoiceReplySending(false); setSafeReplyId(null);
-    setGenerationConsent(false); setPlaying(false); setFinished(false);
+    setGenerationConsent(false); setPlaying(false);
     setTextDraft(''); setTextSending(false);
     setPages(emptyPages());
   };
@@ -528,8 +530,10 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     if (!replyAllowed()) { setNotice(t.recordingSavedReplyLater); return; }
     await voiceReply(signal, check, result, createRecordingId());
   }
-  const stopCapture = () => {
+  const stopCapture = (userGesture = false) => {
     if (!capturing.current || !recorder.current || locked.current) return;
+    // A second gesture can restore browser playback permission after the mic dialog.
+    if (userGesture) playback.current?.prepare?.();
     capturing.current = false; setRecording(false);
     const key = createRecordingId();
     void run(async (signal, check) => {
@@ -600,7 +604,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     void run((signal, check) => voiceReply(signal, check, transcript, key), { key, kind: 'conversation', voiceTranscriptId: transcript.transcript_id });
   };
   const sendText = () => {
-    if (modeRef.current !== 'write' || currentSection.current !== 'chat' || suspended || !mounted.current || authenticationBlocked.current || bootstrap.current || locked.current || pending.current || !active.current || !capabilities?.conversation || unresolved || ambiguousEdit || recording || localRecording || usageBlocked || serviceBlocked || !textDraft.trim() || [...textDraft].length > 4000) return;
+    if (modeRef.current === 'voice' || currentSection.current !== 'chat' || suspended || !mounted.current || authenticationBlocked.current || bootstrap.current || locked.current || pending.current || !active.current || !capabilities?.conversation || unresolved || ambiguousEdit || recording || localRecording || usageBlocked || serviceBlocked || !textDraft.trim() || [...textDraft].length > 4000) return;
     const original = textDraft, key = createRecordingId();
     void run(async (signal, check) => {
       setTextSending(true); setOutbox({ key, text: original }); setTextDraft(''); clearLatestReply();
@@ -805,7 +809,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const navigate = (next: typeof tab, finishing = false) => {
     if (tab === next) return;
     const move = () => { stopVoice(); editingDraft.current = null; correctionBases.current.clear();
-      setEditor(null); setCorrections({}); setFinished(finishing); setTab(next); };
+      setEditor(null); setCorrections({}); setTab(next); };
     // Section changes retain the same owned runtime and unsent composer text.
     // Recordings, edits and uncertain requests still use the existing leave guard.
     if (!finishing && !localRecording && !recording && (editor === null || editor === draft?.content) &&
@@ -818,15 +822,16 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     return () => listener.remove();
   }, [requestLeave]);
   const blocked = busy || opening || suspended || !!unresolved || ambiguousEdit || recording || !!localRecording || mediaBlocked;
-  const chooseMode = (next: ConversationMode) => {
-    if (!active.current || locked.current || blocked) return;
-    if (!choseMode.current || next !== modeRef.current) saveConversationMode(next);
-    choseMode.current = true;
-    if (next === modeRef.current) return;
+  const rememberMode = (next: ConversationMode) => {
     modeRef.current = next;
+    setPreferredMode(next);
+    saveConversationMode(next);
+  };
+  const chooseMode = (next: ConversationMode) => {
+    if (!active.current || locked.current || blocked || next === modeRef.current) return;
     nextSpokenReply.current = null;
     stopVoice();
-    setMode(next);
+    rememberMode(next);
   };
   const chatReady = readStates.messages.loaded && readStates.transcripts.loaded;
   const inputBlocked = busy || suspended || !!unresolved || ambiguousEdit || recording || !!localRecording || mediaBlocked || !chatReady;
@@ -861,22 +866,20 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     {busy && !localRecording && !textSending && !voiceReplySending && <Text allowFontScaling accessibilityLiveRegion="polite" style={styles.note}>{busyLabel}</Text>}
     {recording ? <>
       <Text allowFontScaling accessibilityLiveRegion="polite" style={styles.speaker}>{t.recording} · {Math.floor(duration / 1000)}s / 60s</Text>
-      <ActionButton language={language} label={t.stop} onPress={stopCapture} disabled={busy} primary />
+      <ActionButton language={language} label={t.stop} onPress={() => stopCapture(true)} disabled={busy} primary />
     </> : localRecording ? <>
       {note(busy ? t.transcribing : t.recorded)}
       {!busy && !unresolved && !usageBlocked && !serviceBlocked && <ActionButton language={language} label={t.retry} onPress={retryRecording}
         disabled={usageBlocked || mediaBlocked || !capabilities?.transcription} primary />}
       <ActionButton language={language} label={t.discard} onPress={discardAudio} disabled={busy || !!unresolved} />
     </> : <>
-      <Text allowFontScaling accessibilityLanguage={locale} style={styles.speaker}>{t.chooseMode}</Text>
-      <View style={styles.modeChoices}>
-        {(['write', 'voice'] as const).map(value => <Pressable key={value} accessibilityRole="button"
-          accessibilityLanguage={locale} accessibilityState={{ selected: mode === value, disabled: blocked }}
-          onPress={() => chooseMode(value)} disabled={blocked}
-          style={[styles.modeChoice, mode === value && styles.modeSelected]}>
-          <Text allowFontScaling style={[styles.speaker, mode === value && styles.modeSelectedText]}>{value === 'write' ? t.writeMode : t.speakMode}</Text>
-        </Pressable>)}
-      </View>
+      {preferredMode === null && <>
+        <Text allowFontScaling accessibilityLanguage={locale} style={styles.speaker}>{t.chooseMode}</Text>
+        <View style={styles.modeChoices}>
+          <View style={styles.modeAction}><ActionButton {...actionDefaults} label={t.writeMode} onPress={() => chooseMode('write')} /></View>
+          <View style={styles.modeAction}><ActionButton {...actionDefaults} label={t.speakMode} onPress={() => chooseMode('voice')} /></View>
+        </View>
+      </>}
       {mode === 'voice' ? <ActionButton language={language} label={playing ? t.stopVoice : t.start}
         onPress={playing ? stopVoice : startCapture} primary
         disabled={!playing && (blocked || !chatReady || usageBlocked || serviceBlocked || !sessionId || !capabilities?.transcription)} />
@@ -884,8 +887,8 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         <TextInput testID="conversation-input" accessibilityLabel={t.input} accessibilityLanguage={locale} allowFontScaling placeholder={t.input} value={textDraft}
           multiline maxLength={8000} editable={!inputBlocked} style={styles.chatInput}
           onChangeText={value => {
-            if (locked.current || !active.current || modeRef.current !== 'write') return;
-            if (!choseMode.current) { choseMode.current = true; saveConversationMode('write'); }
+            if (locked.current || !active.current || modeRef.current === 'voice') return;
+            if (modeRef.current === null && value) rememberMode('write');
             setTextDraft(value);
           }} />
         <View testID="conversation-composer-actions" style={styles.composerActions}>
@@ -894,7 +897,16 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         </View>
       </View>}
     </>}
-    <ActionButton language={language} label={t.finish} onPress={() => navigate('memories', true)} disabled={busy || opening} />
+    <View style={styles.modeChoices}>
+      {preferredMode && !recording && !localRecording && <View style={styles.modeAction}>
+        <ActionButton {...actionDefaults} label={mode === 'voice' ? conversationCopy.switchToWrite : conversationCopy.switchToVoice}
+          onPress={() => chooseMode(mode === 'voice' ? 'write' : 'voice')} />
+      </View>}
+      <View style={styles.finishAction}>
+        <ActionButton language={language} label={conversationCopy.finishAndOpenStory}
+          onPress={() => navigate('book', true)} disabled={busy || opening} />
+      </View>
+    </View>
   </View>;
   const generationControls = <>
     {checkbox(t.generationConsent, generationConsent, () => setGenerationConsent(!generationConsent), blocked || editor !== null)}
@@ -948,13 +960,12 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
             <Text allowFontScaling accessibilityLiveRegion="polite" accessibilityLanguage={locale} style={styles.note}>{t.sending}</Text>
           </View>}
         </View>
-        {memories.some(item => item.status === 'pending') && <ActionButton {...actionDefaults} label={t.reviewSuggested} onPress={() => navigate('memories')} />}
-
+        {memories.some(item => item.status === 'pending') && <>
+          {hasOpenQuestions && note(conversationCopy.reviewQuestions)}
+          <ActionButton {...actionDefaults} label={t.reviewSuggested} onPress={() => navigate('memories')} />
+        </>}
       </>}
-      {tab === 'memories' && <>{finished && <View style={styles.finishSummary}>
-        <Text allowFontScaling accessibilityRole="header" accessibilityLanguage={locale} style={styles.finishTitle}>{t.finishTitle}</Text>
-        {note(t.finishHint)}<ActionButton language={language} label={t.keepTalking} onPress={() => navigate('chat')} />
-      </View>}{readFeedback(['memories'], t.loadingMemories)}{readStates.memories.loaded && <MemoriesContent language={language} storyLanguage={project.language} memories={memories}
+      {tab === 'memories' && <>{readFeedback(['memories'], t.loadingMemories)}{readStates.memories.loaded && <MemoriesContent language={language} storyLanguage={project.language} memories={memories}
         corrections={corrections} blocked={blocked} busy={busy}
         onBeginCorrection={memory => {
           if (!active.current || locked.current || authenticationBlocked.current || unresolved || ambiguousEdit) return;
@@ -1024,10 +1035,8 @@ const styles = StyleSheet.create({
   speaker: { fontSize: 18, lineHeight: 27, fontWeight: '600', color: colors.forest }, body: { color: colors.ink, fontSize: 21, lineHeight: 33 },
   composer: { gap: 5 },
   modeChoices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  modeChoice: { flex: 1, minWidth: 94, minHeight: layout.minimumTouchTarget, alignItems: 'center', justifyContent: 'center',
-    borderColor: colors.forest, borderWidth: 1, borderRadius: 12, backgroundColor: colors.paper, paddingHorizontal: 12 },
-  modeSelected: { backgroundColor: colors.forest },
-  modeSelectedText: { color: colors.paper },
+  modeAction: { flexGrow: 1, flexBasis: 128, maxWidth: '100%' },
+  finishAction: { flexGrow: 1, flexBasis: 190, maxWidth: '100%' },
   replyPreview: { gap: 8, padding: 14, marginBottom: 8, borderRadius: 16, backgroundColor: colors.selected },
   composerRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 4, padding: 8,
     backgroundColor: colors.paper, borderRadius: 18, borderWidth: 1, borderColor: colors.border },
@@ -1038,6 +1047,5 @@ const styles = StyleSheet.create({
   sendAction: { backgroundColor: colors.forest }, actionPressed: { opacity: 0.8 }, actionFocused: { borderColor: colors.ink }, actionDisabled: { opacity: 0.5 },
   chatInput: { flexGrow: 1, flexShrink: 1, minWidth: 0, minHeight: layout.minimumTouchTarget, maxHeight: 176, paddingHorizontal: 8, paddingVertical: 8,
     color: colors.ink, fontSize: 21, lineHeight: 33, textAlignVertical: 'top' },
-  finishSummary: { gap: 8, paddingVertical: 12 }, finishTitle: { fontFamily: headingFont, fontSize: 27, lineHeight: 37, color: colors.ink },
   checkbox: { minHeight: layout.minimumTouchTarget, paddingVertical: 8 },
 });

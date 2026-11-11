@@ -230,6 +230,17 @@ describe('confirmation callback route without live requests', () => {
     await screen.findByRole('header', { name: authCopy.en.title });
     expect(auth.signIn).not.toHaveBeenCalled();
   });
+  it('uses first-use language onboarding when a confirmed link reaches a fresh installation', async () => {
+    jest.mocked(registration.confirm).mockResolvedValueOnce();
+    await redirectSystemPath({ path: callback('synthetic-confirmed-code'), initial: true });
+    const flow = await renderRouter(routes, { initialUrl: '/auth/confirm' });
+    await screen.findByText(registrationCopy.sv.confirmationConfirmed);
+    await fireEvent.press(screen.getByRole('button', { name: registrationCopy.sv.login }));
+    await screen.findByRole('header', { name: copy.sv.languageTitle });
+    expect(flow.getPathname()).toBe('/language');
+    expect(screen.getByRole('radio', { name: 'Svenska' })).toBeChecked();
+    expect(auth.signIn).not.toHaveBeenCalled();
+  });
   it('preserves account A while a confirmation callback is handled separately', async () => {
     snapshot = { status: 'signed-in', user: { id: 'account-a', email: 'a@example.test' }, error: null };
     await redirectSystemPath({ path: callback('synthetic-account-b-code'), initial: true });

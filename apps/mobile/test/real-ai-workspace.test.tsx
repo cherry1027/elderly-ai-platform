@@ -10,7 +10,8 @@ import * as storyApi from '../src/api/story-projects';
 import { createNativeRecorder, createRecordingId } from '../src/audio/native-recorder';
 import { RealStoryWorkspace } from '../src/real-ai/RealStoryWorkspace';
 import { realCopy } from '../src/real-ai/copy';
-import { readConversationMode, saveConversationMode } from '../src/real-ai/conversation-mode';
+import { RealPlaybackError } from '../src/real-ai/native-playback';
+import { conversationModeCopy, readConversationMode, saveConversationMode } from '../src/real-ai/conversation-mode';
 import { storyContentCopy } from '../src/real-ai/StoryContent';
 import { realDraft, realIds as ids, realMemory, realMessage, realTranscript } from './real-ai-fixtures';
 import { mediaPrivacy } from '../src/real-ai/media-privacy';
@@ -35,12 +36,12 @@ jest.mock('../src/real-ai/api', () => ({ ...jest.requireActual('../src/real-ai/a
 }));
 jest.mock('../src/api/story-projects', () => ({ ...jest.requireActual('../src/api/story-projects'), listStorySessions: jest.fn(), continueStoryProject: jest.fn() }));
 jest.mock('../src/audio/native-recorder', () => ({ ...jest.requireActual('../src/audio/native-recorder'), createNativeRecorder: jest.fn(), createRecordingId: jest.fn() }));
-jest.mock('../src/real-ai/conversation-mode', () => ({ readConversationMode: jest.fn(), saveConversationMode: jest.fn() }));
+jest.mock('../src/real-ai/conversation-mode', () => ({ ...jest.requireActual('../src/real-ai/conversation-mode'), readConversationMode: jest.fn(), saveConversationMode: jest.fn() }));
 const mockPdfStore = { save: jest.fn(), share: jest.fn(), discard: jest.fn(), revoke: jest.fn() };
 const mockPrivacy = { ready: true, failed: false, createStore: jest.fn(() => mockPdfStore), release: jest.fn(), rememberReturn: jest.fn() };
 jest.mock('../src/exports/PdfPrivacy', () => ({ usePdfPrivacy: () => mockPrivacy }));
-const mockPlayback = { play: jest.fn(), stop: jest.fn(), dispose: jest.fn() };
-jest.mock('../src/real-ai/native-playback', () => ({ createRealPlayback: () => mockPlayback }));
+const mockPlayback = { prepare: jest.fn(), play: jest.fn(), stop: jest.fn(), dispose: jest.fn() };
+jest.mock('../src/real-ai/native-playback', () => ({ ...jest.requireActual('../src/real-ai/native-playback'), createRealPlayback: () => mockPlayback }));
 const t = realCopy.en;
 const project = { id: ids.project, language: 'en' as const, title: 'Synthetic UI contract story', description: null, status: 'draft', created_at: '2026-10-29T12:00:00Z', updated_at: '2026-10-29T12:00:00Z' };
 const user = { id: '80000000-0000-4000-8000-000000000001', email: 'synthetic@example.test' };
@@ -72,8 +73,10 @@ async function ready(tab: 'chat' | 'memories' | 'book' = 'chat') {
 }
 async function press(label: string) { await fireEvent.press(screen.queryByRole('button', { name: label }) ?? screen.getByText(label)); await act(async () => {}); }
 async function selectVoice(copy: typeof realCopy.en | typeof realCopy.sv = t) {
-  const speak = screen.queryByRole('button', { name: copy.speakMode });
-  if (speak && !speak.props.accessibilityState.selected) await press(copy.speakMode);
+  if (screen.queryByRole('button', { name: copy.start })) return;
+  const controls = conversationModeCopy[copy === realCopy.sv ? 'sv' : 'en'];
+  if (screen.queryByRole('button', { name: copy.speakMode })) await press(copy.speakMode);
+  else if (screen.queryByRole('button', { name: controls.switchToVoice })) await press(controls.switchToVoice);
 }
 async function listen(copy: typeof realCopy.en | typeof realCopy.sv = t) { await selectVoice(copy); await press(copy.speak); }
 async function startVoice(language: 'en' | 'sv' = 'en') {
@@ -123,7 +126,7 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     await render(<RealStoryWorkspace {...props} language={language} />); await ready();
     expect(screen.getByText(copy.disabled)).toBeOnTheScreen();
     expect(copy.disabled).toBe(language === 'en' ? 'Memy is unavailable right now. Your saved stories are still here.'
-      : 'Memy är inte tillgänglig just nu. Dina sparade berättelser finns kvar.');
+      : 'Minna är inte tillgänglig just nu. Dina sparade berättelser finns kvar.');
     expect(screen.queryByText(copy.disabledDetails)).toBeNull();
     const details = screen.getByRole('button', { name: copy.details });
     expect(details.props.accessibilityState.expanded).toBe(false); expect(details).toHaveStyle({ minHeight: 56 });
@@ -263,6 +266,19 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     expect(screen.queryByText(t.original)).toBeNull(); await press(t.moreActions); await press(t.yourWords);
     expect(screen.getByText(t.original)).toBeOnTheScreen();
   });
+  it('reuses the same verified audio when automatic browser playback needs a Listen tap', async () => {
+    jest.mocked(api.createRealSpeech).mockResolvedValue(speechMetadata());
+    jest.mocked(api.getRealSpeechAudio).mockResolvedValue(speechWave());
+    mockPlayback.play.mockRejectedValueOnce(new RealPlaybackError());
+    await render(<RealStoryWorkspace {...props} />); await ready(); await startVoice(); await press(t.stop);
+    expect(screen.getByText(t.spokenReplyReady)).toBeOnTheScreen();
+    expect(mockPlayback.prepare).toHaveBeenCalledTimes(2);
+    expect(api.createRealSpeech).toHaveBeenCalledTimes(1);
+    await listen();
+    expect(mockPlayback.play).toHaveBeenCalledTimes(2);
+    expect(api.getRealSpeechAudio).toHaveBeenCalledTimes(1);
+    expect(api.createRealSpeech).toHaveBeenCalledTimes(1);
+  });
   it('supports reviewed memories → generation → editing/history → private native PDF, each as an explicit action', async () => {
     jest.mocked(api.getRealMemories).mockResolvedValue([realMemory()]);
     await render(<RealStoryWorkspace {...props} initialTab="memories" />); await ready('memories');
@@ -287,7 +303,7 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     expect(screen.getByText(t.uncertain)).toBeTruthy();
     expect(screen.queryByRole('button', { name: t.process })).toBeNull();
     expect(screen.getByRole('button', { name: t.start })).toBeDisabled();
-    expect(screen.getByRole('button', { name: t.writeMode })).toBeDisabled();
+    expect(screen.getByRole('button', { name: conversationModeCopy.en.switchToWrite })).toBeDisabled();
     expect(api.sendRealMessage).toHaveBeenCalledTimes(1);
     jest.mocked(api.findRealOperation).mockResolvedValue({ operation_id: ids.memory, project_id: ids.project, session_id: ids.session,
       kind: 'conversation', status: 'uncertain', created_at: project.created_at, updated_at: project.created_at, error_code: null, result: null });
@@ -574,15 +590,17 @@ describe('native typed composer — synthetic UI only, no live provider or phone
     const copy = realCopy[language];
     jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant')]);
     await render(<RealStoryWorkspace {...props} language={language} />); await ready();
-    expect(screen.getByRole('button', { name: copy.writeMode })).toHaveProp('accessibilityState', { selected: true, disabled: false });
+    expect(screen.getByRole('button', { name: copy.writeMode })).toBeEnabled();
     expect(screen.queryByRole('button', { name: copy.speak })).toBeNull();
     expect(screen.queryByRole('button', { name: copy.start })).toBeNull();
     await fireEvent.changeText(screen.getByLabelText(copy.input), 'A memory to finish later.');
+    expect(screen.queryByText(copy.chooseMode)).toBeNull();
+    expect(screen.getByRole('button', { name: conversationModeCopy[language].switchToVoice })).toBeEnabled();
     await selectVoice(copy);
     expect(screen.queryByLabelText(copy.input)).toBeNull();
     expect(screen.getByRole('button', { name: copy.start })).toBeEnabled();
     expect(screen.getByRole('button', { name: copy.speak })).toBeOnTheScreen();
-    await press(copy.writeMode);
+    await press(conversationModeCopy[language].switchToWrite);
     expect(screen.getByLabelText(copy.input)).toHaveDisplayValue('A memory to finish later.');
     expect(screen.queryByRole('button', { name: copy.speak })).toBeNull();
     expect(jest.mocked(saveConversationMode).mock.calls).toEqual([['write'], ['voice'], ['write']]);
@@ -590,10 +608,15 @@ describe('native typed composer — synthetic UI only, no live provider or phone
     expect(api.createRealSpeech).not.toHaveBeenCalled(); expect(createNativeRecorder).not.toHaveBeenCalled();
   });
   it('restores a saved Speak preference without recording or preparing speech for earlier replies', async () => {
-    jest.mocked(readConversationMode).mockResolvedValue('voice');
+    const stored = deferred<'voice'>();
+    jest.mocked(readConversationMode).mockReturnValueOnce(stored.promise);
     jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant')]);
     await render(<RealStoryWorkspace {...props} />); await ready();
-    expect(screen.getByRole('button', { name: t.speakMode })).toHaveProp('accessibilityState', { selected: true, disabled: false });
+    expect(screen.queryByText(t.chooseMode)).toBeNull();
+    await act(async () => stored.resolve('voice'));
+    expect(screen.queryByText(t.chooseMode)).toBeNull();
+    expect(screen.getByRole('button', { name: conversationModeCopy.en.switchToWrite })).toBeEnabled();
+    expect(screen.getByRole('button', { name: t.start })).toBeEnabled();
     expect(screen.getByRole('button', { name: t.speak })).toBeOnTheScreen();
     expect(createNativeRecorder).not.toHaveBeenCalled(); expect(api.getPreparedRealSpeech).not.toHaveBeenCalled();
     expect(api.createRealSpeech).not.toHaveBeenCalled(); expect(saveConversationMode).not.toHaveBeenCalled();
@@ -621,6 +644,9 @@ describe('native typed composer — synthetic UI only, no live provider or phone
       message: realMessage('assistant', { source_transcript_id: null, source_text_input_id: ids.key }), memories: [], mode: 'real',
     }));
     expect(screen.getByText(original)).toBeTruthy();
+    expect(screen.queryByText(t.chooseMode)).toBeNull();
+    expect(screen.getByRole('button', { name: conversationModeCopy.en.switchToVoice })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: t.speak })).toBeNull();
     expect(screen.queryByText(t.originalTyped)).toBeNull();
     await press(t.moreActions); await press(t.yourWords); expect(screen.getByText(t.originalTyped)).toBeOnTheScreen();
     expect(screen.getByLabelText(t.input).props.value).toBe('');
@@ -1066,7 +1092,7 @@ it('shows the actual operation label while preparing speech and checking an unce
   await render(<RealStoryWorkspace {...props} />); await ready(); await listen();
   expect(screen.getByText(t.preparingVoice)).toBeOnTheScreen(); expect(screen.queryByText(t.busy)).toBeNull();
   await act(async () => prepared.reject(new api.RealAiError('unavailable', 503)));
-  await press(t.writeMode);
+  await press(conversationModeCopy.en.switchToWrite);
   jest.mocked(api.sendRealTextMessage).mockRejectedValueOnce(new api.RealAiError('network', undefined, true));
   await fireEvent.changeText(screen.getByLabelText(t.input), 'Uncertain words'); await press(t.send);
   const state = deferred<api.RealOperation>(); jest.mocked(api.findRealOperation).mockReturnValueOnce(state.promise);

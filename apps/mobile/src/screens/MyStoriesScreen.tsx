@@ -133,7 +133,7 @@ export function MyStoriesScreen({ language, user, state, onRefresh, onCreateStor
     </View>;
 
   return <Screen working={root}>
-    {!root && <MemyBrand />}
+    {!root && <MemyBrand language={language} />}
     <View style={[screenStyles.section, root && styles.rootSection]}>
       {root ? <RootScreenHeading language={language} title={text.title} /> : <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]}
         allowFontScaling style={[screenStyles.heading, styles.heading]}>{text.title}</Text>}

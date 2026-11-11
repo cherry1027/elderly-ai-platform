@@ -66,7 +66,7 @@ export function IntroductionScreen({
 
   return (
     <Screen>
-      <MemyBrand />
+      <MemyBrand language={language} />
       <Text
         allowFontScaling
         accessibilityLanguage={locale}

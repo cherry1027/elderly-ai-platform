@@ -31,7 +31,7 @@ export function LanguageScreen({
 
   return (
     <Screen>
-      <MemyBrand />
+      <MemyBrand language={language} />
       <View style={screenStyles.section}>
         <Text
           accessibilityRole="header"

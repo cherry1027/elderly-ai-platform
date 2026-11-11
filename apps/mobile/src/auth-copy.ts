@@ -23,13 +23,13 @@ export const authCopy = {
     },
   },
   sv: {
-    title: 'Logga in i Memy',
-    introduction: 'Använd ditt Memy-utvecklingskonto.',
+    title: 'Logga in i Mina Minnen',
+    introduction: 'Använd ditt utvecklingskonto för Mina Minnen.',
     email: 'E-post', password: 'Lösenord', showPassword: 'Visa lösenord', hidePassword: 'Dölj lösenord',
     signIn: 'Logga in', signingIn: 'Loggar in…', back: 'Tillbaka till Välkommen',
     required: 'Ange din e-postadress och ditt lösenord.', invalidEmail: 'Ange en giltig e-postadress.',
     retryCleanup: 'Försök med säker utloggning igen',
-    signedInTitle: 'Välkommen till Memy', signedIn: 'Du är inloggad.',
+    signedInTitle: 'Välkommen till Mina Minnen', signedIn: 'Du är inloggad.',
     authenticatedNote: 'Den här utvecklingsskärmen laddar inte berättelser eller inspelningar.',
     signOut: 'Logga ut', signingOut: 'Loggar ut…',
     errors: {

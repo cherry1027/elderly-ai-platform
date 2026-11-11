@@ -444,6 +444,8 @@ def test_current_realtime_speech_buffers_exact_transcript_then_returns_valid_pri
     assert "EXACTLY" in request["instructions"]
     if language == "sv":
         assert "sv-SE" in request["instructions"] and "å, ä and ö" in request["instructions"]
+        assert "dates, years and numbers" in request["instructions"]
+        assert "preserving their written forms in the transcript" in request["instructions"]
     else:
         assert "sv-SE" not in request["instructions"]
     with wave.open(io.BytesIO(audio.data), "rb") as stream:

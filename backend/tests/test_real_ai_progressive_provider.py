@@ -160,12 +160,12 @@ class ProgressiveScript(ScriptedClient):
 def combined(language='en',reply='What do you remember?'):
     return {'reply':{'language':language,'text':reply},'extraction':extracted(language)}
 
-def progressive(client,language='en',source='Lund'):
+def progressive(client,language='en',source='Lund',history=None):
     emitted=[]
     async def run():
         async def sink(event):emitted.append(event)
         token=turn_progress.set(sink)
-        try:return await RealAIProvider(client,transcription_model='gpt-transcribe',combined_turn=True).respond(source,language,[])
+        try:return await RealAIProvider(client,transcription_model='gpt-transcribe',combined_turn=True).respond(source,language,[],history)
         finally:turn_progress.reset(token)
     return run,emitted
 
@@ -197,6 +197,18 @@ def test_stream_preview_and_final_result_omit_the_same_fragment_question():
     assert result.text == "Tack för minnet."
     assert emitted == [{"type": "reply", "text": result.text}]
     assert result.facts and len(script.stream_calls) == 1
+
+
+def test_stream_preview_and_final_honor_pause_with_the_same_reply_and_grounded_memory():
+    script = ProgressiveScript(combined("sv", "Vad minns du mer om Lund?"))
+    run, emitted = progressive(script, "sv", "Lund. Jag vill pausa nu.")
+
+    result = asyncio.run(run())
+
+    assert result.text == "Självklart. Vi kan pausa här."
+    assert emitted == [{"type": "reply", "text": result.text}]
+    assert [item.value for item in result.facts] == ["Lund"]
+    assert not script.calls and len(script.stream_calls) == 1
 
 
 def test_final_extraction_rejection_never_turns_preview_into_a_verified_result():

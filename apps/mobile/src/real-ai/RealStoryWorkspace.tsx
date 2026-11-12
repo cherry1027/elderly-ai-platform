@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentRef } from 'react';
-import { AppState, BackHandler, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { AppState, BackHandler, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 import type { AuthUser } from '../auth/client';
 import { continueStoryProject, listStorySessions, StoryProjectsError, type StoryProject } from '../api/story-projects';
@@ -569,14 +569,12 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       playback.current ??= createRealPlayback();
       playback.current.prepare?.();
     }
-    recorder.current ??= createNativeRecorder();
-    recorder.current.prepare?.();
     void run(async (_signal, check) => {
       if (playback.current) await playback.current.stop(); check(); setPlaying(false);
       recorder.current ??= createNativeRecorder();
       const allowed = await recorder.current.requestPermission(); check();
       if (!allowed) { setNotice(t.permission); return; }
-      await recorder.current.start({ finishOnPause: true }); check(); capturing.current = true; setRecording(true); setDuration(0);
+      await recorder.current.start(); check(); capturing.current = true; setRecording(true); setDuration(0);
     });
   };
   const startCapture = () => {
@@ -1005,9 +1003,6 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       heading={<StoryHeading title={project.title} language={language} storyLanguage={project.language} />}>
       {onStoryDetails && <AccountAction language={language} quiet label={t.storyDetails}
         onPress={() => leave.requestLeave(() => latest.current.onStoryDetails?.())} />}
-      {tab === 'chat' && <StoryDisclosure language={language} label={t.yourWords}>
-          <OriginalWordsEvidence messages={messages} transcripts={transcripts} language={language} storyLanguage={project.language} />
-        </StoryDisclosure>}
       <StoryDisclosure language={language} label={t.privacy}>
         {note(t.textConsent)}{note(t.introduction)}{note(t.voice)}
       </StoryDisclosure>
@@ -1030,6 +1025,10 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       {tab !== 'chat' && checkSavedAction}
       {tab === 'chat' && <>
         {readFeedback(['messages', 'transcripts'], t.loadingChat)}
+        {(transcripts.length > 0 || messages.some(message => message.role === 'user')) &&
+          <StoryDisclosure language={language} label={t.yourWords}>
+            <OriginalWordsEvidence messages={messages} transcripts={transcripts} language={language} storyLanguage={project.language} />
+          </StoryDisclosure>}
         {mode === 'voice' && note(t.speakModeHint)}
         {!suspended && (recording || playing || activity === 'recording' || activity === 'speech' || voiceReplySending) && <RecordingWakeLock />}
         <View style={styles.thread} testID="real-ai-chat-thread" onLayout={event => { scrollOffsets.current.thread = event.nativeEvent.layout.y; }}>
@@ -1094,7 +1093,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       <Screen><View accessibilityViewIsModal style={styles.workspace}>
         <StoryHeading language={language} title={t.consentTitle} />
         <Text allowFontScaling accessibilityLanguage={locale} style={styles.body}>{t.consent}</Text>
-        {Platform.OS === 'web' && <Text allowFontScaling accessibilityLanguage={locale} style={styles.body}>{t.pauseConsent}</Text>}
+        <Text allowFontScaling accessibilityLanguage={locale} style={styles.body}>{t.recordingLimit}</Text>
         <ActionButton language={language} label={t.consentContinue} onPress={acceptConsent} primary />
         <ActionButton language={language} label={t.consentCancel} onPress={cancelConsent} />
       </View></Screen>

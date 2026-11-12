@@ -235,7 +235,7 @@ export function MemoriesContent(props: MemoriesContentProps) {
     {!!pending.length && <Note language={language}>{t.reviewNotice}</Note>}
     {!memories.length && <><Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.heading}>{copy.noMemories}</Text><Note language={language}>{t.emptyMemories}</Note>
       <Button language={language} label={copy.shareMemory} onPress={onShareMemory} disabled={blocked} primary /></>}
-    {confirmedCount === 0 && onUseSavedWords &&
+    {onUseSavedWords &&
       <Button language={language} label={copy.useSavedWords} onPress={onUseSavedWords} disabled={blocked} />}
     {!!pending.length && <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.heading}>{t.pendingStatus}</Text>}
     {reviewQueue.map(card)}

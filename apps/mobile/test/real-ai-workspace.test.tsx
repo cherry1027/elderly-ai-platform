@@ -263,7 +263,7 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     await waitFor(() => expect(mockPlayback.play).toHaveBeenCalledTimes(1));
     expect(api.createRealSpeech).toHaveBeenCalledTimes(1);
     expect(api.createRealSpeech).toHaveBeenCalledWith(expect.objectContaining({ sessionId: ids.session }), ids.assistant, expect.any(String));
-    expect(screen.queryByText(t.original)).toBeNull(); await press(t.moreActions); await press(t.yourWords);
+    expect(screen.queryByText(t.original)).toBeNull(); await press(t.yourWords);
     expect(screen.getByText(t.original)).toBeOnTheScreen();
   });
   it('reuses the same verified audio when automatic browser playback needs a Listen tap', async () => {
@@ -648,7 +648,7 @@ describe('native typed composer — synthetic UI only, no live provider or phone
     expect(screen.getByRole('button', { name: conversationModeCopy.en.switchToVoice })).toBeEnabled();
     expect(screen.queryByRole('button', { name: t.speak })).toBeNull();
     expect(screen.queryByText(t.originalTyped)).toBeNull();
-    await press(t.moreActions); await press(t.yourWords); expect(screen.getByText(t.originalTyped)).toBeOnTheScreen();
+    await press(t.yourWords); expect(screen.getByText(t.originalTyped)).toBeOnTheScreen();
     expect(screen.getByLabelText(t.input).props.value).toBe('');
     expect(api.createRealSpeech).not.toHaveBeenCalled(); expect(api.transcribeRealRecording).not.toHaveBeenCalled();
   });

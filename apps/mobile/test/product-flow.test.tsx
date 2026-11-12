@@ -247,6 +247,26 @@ describe('Talk → Memories → My Story product flow — synthetic services onl
     expect(api.saveRealMemoryFromMessage).toHaveBeenCalledTimes(1);
     expect(api.generateRealDraft).not.toHaveBeenCalled();
   });
+  it('keeps saved passages available in Memories after the first draft exists', async () => {
+    const copy = realCopy.sv, story = storyContentCopy.sv;
+    const earlier = realMessage('user', { language: 'sv', text: 'Jag minns den långa sommaren på Öland.' });
+    const later = realMessage('user', { id: ids.key, language: 'sv', text: 'Ett kort andra minne.' });
+    const saved = realMemory({ source_message_id: later.id, status: 'confirmed', uncertain: false,
+      value: later.text, evidence: later.text, clarification_question: null });
+    jest.mocked(api.getRealMessages).mockResolvedValue([earlier, later]);
+    jest.mocked(api.getRealMemories).mockResolvedValue([saved]);
+    jest.mocked(api.getRealDrafts).mockResolvedValue([realDraft({ language: 'sv' })]);
+    await render(<RealStoryWorkspace {...props} language="sv" project={{ ...project, language: 'sv' }} initialTab="book" />);
+    await screen.findByText(story.draftHeading);
+    await tab(copy.memories);
+    await screen.findByRole('button', { name: story.useSavedWords });
+    await press(story.useSavedWords);
+    expect(await screen.findByText(earlier.text)).toBeOnTheScreen();
+    expect(screen.getByText(story.savedAsMemory)).toBeOnTheScreen();
+    expect(screen.getAllByRole('button', { name: story.saveAsMemory })).toHaveLength(1);
+    expect(api.saveRealMemoryFromMessage).not.toHaveBeenCalled();
+    noPaidActions();
+  });
   it('reconciles an ambiguous saved-word write without posting it twice', async () => {
     const story = storyContentCopy.en;
     const original = realMessage();
@@ -348,19 +368,31 @@ describe('Talk → Memories → My Story product flow — synthetic services onl
     captureRenderedReview(`available Talk / ${language}`);
     await fireEvent.press(screen.getByTestId('story-top-back')); expect(props.onBack).toHaveBeenCalledTimes(1); noPaidActions();
   });
-  it.each(['en', 'sv'] as const)('keeps exact original words secondary without another read or provider action in %s', async language => {
-    const copy = realCopy[language], typed = '  My exact typed words.\n', spoken = 'My exact spoken words, including a hesitation.';
-    jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('user', { text: typed, source_transcript_id: null, source_text_input_id: ids.key })]);
-    jest.mocked(api.getRealTranscripts).mockResolvedValue([realTranscript({ text: spoken })]);
+  it.each(['en', 'sv'] as const)('shows all six saved recordings and typed words from Talk in %s', async language => {
+    const copy = realCopy[language], typed = '  My exact typed words.\n';
+    const recordings = Array.from({ length: 6 }, (_, index) => realTranscript({
+      transcript_id: `40000000-0000-4000-8000-00000000000${index + 1}`,
+      created_at: `2026-10-29T12:00:0${index}Z`,
+      text: `Saved recording ${index + 1}: ${'The complete original passage has more than one sentence. '.repeat(10).trim()}`,
+    }));
+    const messages = recordings.map((source, index) => realMessage('user', {
+      id: source.transcript_id, source_transcript_id: source.transcript_id,
+      text: source.text, created_at: source.created_at, sequence: index + 1,
+    }));
+    jest.mocked(api.getRealMessages).mockResolvedValue([...messages,
+      realMessage('user', { id: ids.key, text: typed, source_transcript_id: null, source_text_input_id: ids.key, sequence: 7 }),
+    ]);
+    jest.mocked(api.getRealTranscripts).mockResolvedValue([...recordings].reverse());
     await opened(language);
-    expect(screen.getByText(typed)).toBeOnTheScreen(); expect(screen.getByText(spoken)).toBeOnTheScreen();
-    expect(screen.queryByRole('button', { name: copy.yourWords })).toBeNull();
-    expect(screen.queryByText(copy.originalTyped)).toBeNull(); expect(screen.queryByText(copy.original)).toBeNull();
-    await press(copy.moreActions); expect(screen.getByRole('button', { name: copy.yourWords })).toBeOnTheScreen();
-    expect(screen.queryByText(copy.originalTyped)).toBeNull();
+    expect(screen.getByRole('button', { name: copy.yourWords })).toBeEnabled();
+    expect(screen.queryByTestId('saved-original-words')).toBeNull();
     await press(copy.yourWords);
-    expect(screen.getByText(copy.originalTyped)).toBeOnTheScreen(); expect(screen.getByText(copy.original)).toBeOnTheScreen();
-    expect(screen.getAllByText(typed)).toHaveLength(2); expect(screen.getAllByText(spoken)).toHaveLength(2);
+    const originals = within(screen.getByTestId('saved-original-words'));
+    expect(originals.getAllByText(copy.original)).toHaveLength(6);
+    expect(originals.getAllByText(copy.originalTyped)).toHaveLength(1);
+    expect(originals.getAllByText(/^Saved recording \d:/).map(nativeText)).toEqual(recordings.map(source => source.text));
+    expect(originals.getByText(typed)).toHaveProp('selectable', true);
+    expect(originals.getByText(recordings[0].text)).toHaveProp('selectable', true);
     captureRenderedReview(`original words disclosed / ${language}`);
     expect(api.getRealCapabilities).toHaveBeenCalledTimes(1); expect(projects.listStorySessions).toHaveBeenCalledTimes(1);
     expect(api.getRealMessages).toHaveBeenCalledTimes(1); expect(api.getRealTranscripts).toHaveBeenCalledTimes(1);

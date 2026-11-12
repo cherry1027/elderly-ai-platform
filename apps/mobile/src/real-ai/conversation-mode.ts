@@ -7,12 +7,14 @@ export const conversationModeCopy = {
     switchToWrite: 'Switch to writing',
     switchToVoice: 'Switch to speaking',
     finishAndOpenStory: 'Finish and go to My Story',
+    finishWaiting: 'My Story will open when the current step finishes.',
     reviewQuestions: 'Use Yes, Change, or Leave out in Memories to save your answer about a detail.',
   },
   sv: {
     switchToWrite: 'Byt till att skriva',
     switchToVoice: 'Byt till att berätta',
     finishAndOpenStory: 'Avsluta och gå till Min berättelse',
+    finishWaiting: 'Min berättelse öppnas när det pågående steget är klart.',
     reviewQuestions: 'Välj Ja, Ändra eller Utelämna under Minnen för att spara ditt svar om en detalj.',
   },
 } as const;

@@ -119,6 +119,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   }, []);
   const [tab, setTab] = useState(initialTab), [capabilities, setCapabilities] = useState<RealCapabilities | null>(null);
   const [savedWordsOpen, setSavedWordsOpen] = useState(false);
+  const [finishRequested, setFinishRequested] = useState(false);
   useEffect(() => { contentScroll.current?.scrollTo({ y: 0, animated: false }); }, [tab]);
   const [readStates, setReadStates] = useState(emptyReads), [opening, setOpening] = useState(false);
   const [continuationBusy, setContinuationBusy] = useState(false), [authenticationFailed, setAuthenticationFailed] = useState(false);
@@ -222,7 +223,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     setTranscripts([]); setMessages([]); setMemories([]); setDrafts([]); setHistory(null); setExports(null);
     currentDraft.current = null; editingDraft.current = null; correctionBases.current.clear(); setEditor(null); setCorrections({}); setLocalRecording(null); setRecording(false); setDuration(0);
     voiceConsent.current = null; consentIntent.current = null; setConsentOpen(false); setVoiceReplySending(false); setSafeReplyId(null);
-    setGenerationConsent(false); setPlaying(false); setSavedWordsOpen(false);
+    setGenerationConsent(false); setPlaying(false); setSavedWordsOpen(false); setFinishRequested(false);
     setTextDraft(''); setTextSending(false);
     setPages(emptyPages());
   };
@@ -314,7 +315,10 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     return false;
   }
   function loadResource(resource: Resource, force = false, id = session.current): Promise<void> {
-    if (!id || !mounted.current || !active.current || authenticationBlocked.current || locked.current || (resource === 'drafts' && editingDraft.current)) return Promise.resolve();
+    const readingStoryDuringSpeech = activity === 'speech' && currentSection.current === 'book' &&
+      (resource === 'drafts' || resource === 'memories');
+    if (!id || !mounted.current || !active.current || authenticationBlocked.current ||
+      (locked.current && !readingStoryDuringSpeech) || (resource === 'drafts' && editingDraft.current)) return Promise.resolve();
     const existing = readJobs.current.get(resource);
     if (existing) return existing.promise;
     if (reads.current[resource].loaded && !force) return Promise.resolve();
@@ -408,7 +412,9 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       if (bootstrap.current === abort) { bootstrap.current = null; if (mounted.current && stamp === epoch.current) { setOpening(false); setContinuationBusy(false); } }
     });
   };
-  useEffect(() => { if (!suspended && !busy && !opening) loadSection(tab); }, [tab, sessionId, suspended, busy, opening]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!suspended && !opening && (!busy || (tab === 'book' && activity === 'speech'))) loadSection(tab);
+  }, [tab, sessionId, suspended, busy, opening, activity]); // eslint-disable-line react-hooks/exhaustive-deps
   const draftIdentity = draft ? `${draft.draft_id}:${draft.revision}` : '';
   useLayoutEffect(() => {
     if (historyIdentity.current === draftIdentity) return;
@@ -639,6 +645,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     const cached = renewing ? undefined : speech.current.get(message.id), key = createRecordingId();
     void run(async (signal, check, beginOperation) => {
       if (playback.current) await playback.current.stop(); check(); setPlaying(false);
+      if (currentSection.current !== 'chat') return;
       const current = scope(signal);
       let metadata = cached, bytes: Uint8Array | undefined, fromCache = false;
       // One deliberate Listen may reuse owned audio or prepare one fresh clip.
@@ -665,6 +672,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
           }
         }
         if (!metadata) {
+          if (currentSection.current !== 'chat') return;
           if (!capabilities?.speech || usageBlocked || serviceBlocked) {
             setRenewSpeech(previous => new Set(previous).add(message.id));
             setNotice(usageBlocked ? t.usageLimit : t.serviceUnavailable); return;
@@ -689,12 +697,15 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         speech.current.set(message.id, metadata);
         setRenewSpeech(previous => { const next = new Set(previous); next.delete(message.id); return next; });
         if (!fromCache) speechBytes.put(metadata, bytes);
+        if (currentSection.current !== 'chat') return;
         playback.current ??= createRealPlayback();
         try {
           await playback.current.play(bytes, () => { if (mounted.current && active.current) setPlaying(false); });
-          check(); setPlaying(true);
+          check();
+          if (currentSection.current === 'chat') setPlaying(true);
         } catch (error) {
           check();
+          if (currentSection.current !== 'chat') return;
           if (!automatic || !(error instanceof RealPlaybackError)) throw error;
           setNotice(t.spokenReplyReady);
         }
@@ -703,13 +714,13 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   };
   useLayoutEffect(() => { speakCurrent.current = speak; });
   useEffect(() => {
-    if (busy || opening || recording || localRecording) return;
+    if (busy || opening || recording || localRecording || finishRequested) return;
     const reply = nextSpokenReply.current;
     if (!reply) return;
     nextSpokenReply.current = null;
     if (tab === 'chat' && mode === 'voice' && !suspended && !unresolved &&
         voiceConsent.current && capabilities?.speech && !usageBlocked && !serviceBlocked) speakCurrent.current(reply, true);
-  }, [busy, opening, recording, localRecording, tab, mode, suspended, unresolved, capabilities, usageBlocked, serviceBlocked]);
+  }, [busy, opening, recording, localRecording, finishRequested, tab, mode, suspended, unresolved, capabilities, usageBlocked, serviceBlocked]);
   const stopVoice = () => {
     if (!playback.current) return;
     // Stop is always available, including while a separate request is pending.
@@ -811,14 +822,45 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     onCheckSavedResult: checkSaved, checkDisabled: busy || !sessionId });
   const navigate = (next: typeof tab, finishing = false) => {
     if (tab === next) return;
-    const move = () => { stopVoice(); editingDraft.current = null; correctionBases.current.clear();
-      setEditor(null); setCorrections({}); setSavedWordsOpen(false); setTab(next); };
+    const move = () => {
+      currentSection.current = next;
+      nextSpokenReply.current = null;
+      stopVoice();
+      editingDraft.current = null;
+      correctionBases.current.clear();
+      setEditor(null);
+      setCorrections({});
+      setSavedWordsOpen(false);
+      setFinishRequested(false);
+      setTab(next);
+    };
     // Section changes retain the same owned runtime and unsent composer text.
-    // Recordings, edits and uncertain requests still use the existing leave guard.
-    if (!finishing && !localRecording && !recording && (editor === null || editor === draft?.content) &&
+    // Keep pending work available for recovery when Finish opens the same story.
+    if (finishing && !recording && (activity === 'speech' || unresolved || ambiguousEdit)) move();
+    else if (next === 'chat' && tab === 'book' && localRecording && !recording && !busy && editor === null) move();
+    else if (!finishing && !localRecording && !recording && (editor === null || editor === draft?.content) &&
       !Object.values(corrections).some(Boolean) && !unresolved && !ambiguousEdit && !busy && !continuationBusy) move();
     else leave.requestLeave(move);
   };
+  const finish = () => {
+    if (!active.current || suspended || authenticationBlocked.current) return;
+    if (opening || (busy && activity !== 'speech') || !session.current) {
+      setFinishRequested(true);
+      if (!session.current && !opening && !busy) open();
+      return;
+    }
+    navigate('book', true);
+  };
+  useEffect(() => {
+    if (!finishRequested || busy || opening || suspended) return;
+    let current = true;
+    void Promise.resolve().then(() => {
+      if (!current || !active.current || authenticationBlocked.current || locked.current || bootstrap.current) return;
+      setFinishRequested(false);
+      if (session.current) navigate('book', true);
+    });
+    return () => { current = false; };
+  }, [finishRequested, busy, opening, suspended]); // eslint-disable-line react-hooks/exhaustive-deps
   const { requestLeave } = leave;
   useEffect(() => {
     const listener = BackHandler.addEventListener('hardwareBackPress', () => { requestLeave(() => latest.current.onBack()); return true; });
@@ -928,7 +970,9 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       </View>}
       <View style={styles.finishAction}>
         <ActionButton language={language} label={conversationCopy.finishAndOpenStory}
-          onPress={() => navigate('book', true)} disabled={busy || opening} />
+          onPress={finish} disabled={finishRequested} />
+        {finishRequested && <Text accessibilityLiveRegion="polite" accessibilityLanguage={locale}
+          allowFontScaling style={styles.note}>{conversationCopy.finishWaiting}</Text>}
       </View>
     </View>
   </View>;
@@ -953,6 +997,8 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     {checkbox(t.generationConsent, generationConsent, () => setGenerationConsent(!generationConsent), blocked || editor !== null)}
     <ActionButton {...actionDefaults} label={t.generate} onPress={generate} disabled={blocked || usageBlocked || serviceBlocked || editor !== null || !generationConsent || hasOpenQuestions || !capabilities?.writing || !readStates.memories.loaded || !hasConfirmedMemories} primary />
   </>;
+  const checkSavedAction = (unresolved || ambiguousEdit) && <ActionButton language={language}
+    label={t.check} onPress={checkSaved} disabled={busy || recording || !sessionId} primary />;
   return <Screen scrollViewRef={contentScroll} onContentLayout={event => { scrollOffsets.current.body = event.nativeEvent.layout.y; }} working keyboardAware bottomKeyboardAware back={{ language, label: t.back, onPress: () => leave.requestLeave(() => latest.current.onBack()) }}
     bottomControls={composer}><View style={styles.workspace} testID="real-workspace-layout" onLayout={event => { scrollOffsets.current.workspace = event.nativeEvent.layout.y; }}>
     <StoryDisclosure language={language} label={t.moreActions} compact
@@ -981,6 +1027,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         disabled={busy} onPress={() => navigate(item)} style={[styles.tab, tab === item && styles.selectedTab]}>
         <Text allowFontScaling style={styles.tabText}>{t[item]}</Text></Pressable>)}</View>
       {capabilities && !capabilities.enabled && <AvailabilityNotice language={language} />}
+      {tab !== 'chat' && checkSavedAction}
       {tab === 'chat' && <>
         {readFeedback(['messages', 'transcripts'], t.loadingChat)}
         {mode === 'voice' && note(t.speakModeHint)}
@@ -1039,7 +1086,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
           {(pages[resource] ?? 0) >= 1000 ? note(t.pageLimit) : <ActionButton {...actionDefaults} label={`${t.loadMore}: ${t[resource]}`} onPress={() => loadMore(resource)}
             disabled={blocked || editor !== null || (savedWordsOpen && (readStates.messages.loading || !!readStates.messages.error))} />}
         </View>)}
-      {(unresolved || ambiguousEdit) && <ActionButton language={language} label={t.check} onPress={checkSaved} disabled={busy || recording || !sessionId} primary />}
+      {tab === 'chat' && checkSavedAction}
     </>}
     {busy && tab !== 'chat' && !localRecording && !textSending && !voiceReplySending && <Text allowFontScaling accessibilityLiveRegion="polite" style={styles.note}>{busyLabel}</Text>}
     {notice === t.auth && <AccountAction language={language} quiet label={t.signOut} onPress={() => leave.requestLeave(() => latest.current.onSignOut())} />}

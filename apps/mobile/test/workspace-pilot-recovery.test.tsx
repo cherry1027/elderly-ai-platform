@@ -104,6 +104,20 @@ beforeEach(() => {
 afterEach(async () => { await mediaPrivacy.retry(); jest.restoreAllMocks(); AppState.currentState = 'active'; });
 
 describe('prepared speech reads and paid operation boundaries', () => {
+  it('opens My Story immediately during speech preparation and keeps the completed audio off that page', async () => {
+    jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant')]);
+    const paid = deferred<api.SpeechMetadata>();
+    jest.mocked(api.createRealSpeech).mockReturnValueOnce(paid.promise);
+    await render(<RealStoryWorkspace {...props} />); await ready(); await listen();
+    await waitFor(() => expect(api.createRealSpeech).toHaveBeenCalledTimes(1));
+
+    await press(conversationModeCopy.en.finishAndOpenStory);
+    expect(screen.getByRole('tab', { name: t.book }).props.accessibilityState.selected).toBe(true);
+    await waitFor(() => expect(api.getRealDrafts).toHaveBeenCalledTimes(1));
+    await act(async () => paid.resolve(metadata()));
+    expect(api.createRealSpeech).toHaveBeenCalledTimes(1);
+    expect(mockPlayback.play).not.toHaveBeenCalled();
+  });
   it.each(['metadata', 'audio'] as const)('background during a free %s read never invents a paid operation', async phase => {
     jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant')]);
     jest.mocked(api.getRealCapabilities).mockResolvedValue(pausedCapabilities);

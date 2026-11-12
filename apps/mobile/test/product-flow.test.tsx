@@ -164,12 +164,30 @@ describe('Talk → Memories → My Story product flow — synthetic services onl
     await waitFor(() => expect(screen.getByRole('tab', { name: t.book }).props.accessibilityState.selected).toBe(true));
     expect(scrollTo).toHaveBeenCalledWith({ y: 0, animated: false }); noPaidActions();
   });
-  it('routes Finish after an uncertain message through existing recovery without another send or fake success', async () => {
+  it('keeps one Finish tap while a conversation save is in flight', async () => {
+    let complete!: (turn: api.RealTurn) => void;
+    jest.mocked(api.sendRealTextMessage).mockReturnValueOnce(new Promise(resolve => { complete = resolve; }));
+    await opened('sv');
+    const copy = realCopy.sv, controls = conversationModeCopy.sv;
+    await fireEvent.changeText(screen.getByLabelText(copy.input), 'Jag minns trädgården.');
+    await press(copy.send);
+    expect(api.sendRealTextMessage).toHaveBeenCalledTimes(1);
+    await press(controls.finishAndOpenStory);
+    expect(screen.getByText(controls.finishWaiting)).toBeOnTheScreen();
+    expect(screen.getByRole('tab', { name: copy.chat }).props.accessibilityState.selected).toBe(true);
+    await act(async () => complete({ user_message: realMessage(), message: realMessage('assistant'), memories: [], mode: 'real' }));
+    await screen.findByRole('button', { name: storyContentCopy.sv.useSavedWords });
+    expect(screen.getByRole('tab', { name: copy.book }).props.accessibilityState.selected).toBe(true);
+    expect(api.sendRealTextMessage).toHaveBeenCalledTimes(1);
+    expect(api.generateRealDraft).not.toHaveBeenCalled();
+  });
+  it('opens My Story after an uncertain message and keeps the saved-result check there', async () => {
     jest.mocked(api.sendRealTextMessage).mockRejectedValueOnce(new api.RealAiError('network', undefined, true));
     await opened(); await fireEvent.changeText(screen.getByLabelText(t.input), 'A message with an uncertain result.'); await press(t.send);
     await waitFor(() => expect(screen.getByText(t.uncertain)).toBeOnTheScreen()); await press(conversationModeCopy.en.finishAndOpenStory);
-    expect(screen.getByText(leaveCopy.en.uncertain)).toBeOnTheScreen(); expect(screen.getByRole('tab', { name: t.book }).props.accessibilityState.selected).toBe(false);
-    expect(api.getRealMemories).not.toHaveBeenCalled(); await press(leaveCopy.en.keep);
+    expect(screen.getByRole('tab', { name: t.book }).props.accessibilityState.selected).toBe(true);
+    expect(screen.getByRole('button', { name: t.check })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: storyContentCopy.en.useSavedWords })).toBeDisabled();
     expect(api.sendRealTextMessage).toHaveBeenCalledTimes(1); expect(api.generateRealDraft).not.toHaveBeenCalled();
   });
   it.each(['en', 'sv'] as const)('keeps privacy information available behind the quiet menu in %s', async language => {
@@ -188,9 +206,11 @@ describe('Talk → Memories → My Story product flow — synthetic services onl
     jest.mocked(api.getRealMessages).mockResolvedValue([original, reply]);
     jest.mocked(api.saveRealMemoryFromMessage).mockResolvedValueOnce(saved);
     jest.mocked(api.generateRealDraft).mockResolvedValueOnce(realDraft({ language: 'sv', content: 'Mitt första utkast.' }));
-    await render(<RealStoryWorkspace {...props} language="sv" project={{ ...project, language: 'sv' }} initialTab="book" />);
+    await render(<RealStoryWorkspace {...props} language="sv" project={{ ...project, language: 'sv' }} />);
+    await waitFor(() => expect(screen.getByLabelText(copy.input)).toBeEnabled());
+    await press(conversationModeCopy.sv.finishAndOpenStory);
     await screen.findByText(story.noMemoriesForDraft);
-    expect(api.getRealMessages).not.toHaveBeenCalled();
+    expect(api.getRealMessages).toHaveBeenCalledTimes(1);
     await press(story.useSavedWords);
     expect(await screen.findByText(excerpt)).toBeOnTheScreen();
     expect(screen.getByText(story.partialWords)).toBeOnTheScreen();

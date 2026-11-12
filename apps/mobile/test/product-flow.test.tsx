@@ -275,6 +275,47 @@ describe('Talk → Memories → My Story product flow — synthetic services onl
     captureRenderedReview('My Story result');
     expect(api.sendRealTextMessage).not.toHaveBeenCalled(); expect(api.createRealSpeech).not.toHaveBeenCalled();
   });
+  it.each(['en', 'sv'] as const)('shows five new memories alongside the older draft and requires consent to update it in %s', async language => {
+    const copy = realCopy[language], story = storyContentCopy[language];
+    const firstDraft = realDraft({ language, content: 'The first memory was a visit to a garden.' });
+    const firstSource = firstDraft.source_memories[0];
+    const confirmed = [realMemory({ status: 'confirmed', version: 2, clarification_question: null }),
+      ...Array.from({ length: 5 }, (_, index) => realMemory({
+        id: `60000000-0000-4000-8000-00000000000${index + 2}`, status: 'confirmed', version: 2,
+        value: `Another memory ${index + 2}`, clarification_question: null,
+      })),
+    ];
+    const updatedDraft = realDraft({
+      draft_id: '70000000-0000-4000-8000-000000000002', language, version: 2,
+      content: 'A new draft based on six confirmed memories.',
+      source_memories: confirmed.map(memory => ({ ...firstSource, memory_id: memory.id,
+        memory_version: memory.version, value: memory.value, sentence: memory.value })),
+    });
+    jest.mocked(api.getRealMemories).mockResolvedValue(confirmed);
+    jest.mocked(api.getRealDrafts).mockResolvedValue([firstDraft]);
+    jest.mocked(api.generateRealDraft).mockResolvedValueOnce(updatedDraft);
+    await opened(language);
+    await tab(copy.book);
+
+    expect(await screen.findByText(story.draftSourceCount(1))).toBeOnTheScreen();
+    expect(screen.getByText(story.draftMemoryUpdates(5))).toBeOnTheScreen();
+    expect(screen.getByText(firstDraft.content)).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: copy.createVersion })).toBeNull();
+    await press(story.updateMyStory);
+    expect(screen.getByRole('button', { name: copy.generate })).toBeDisabled();
+    expect(api.generateRealDraft).not.toHaveBeenCalled();
+    await fireEvent.press(screen.getByRole('checkbox', { name: copy.generationConsent }));
+    await press(copy.generate);
+
+    expect(await screen.findByText(story.draftSourceCount(6))).toBeOnTheScreen();
+    expect(screen.getByText(updatedDraft.content)).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: story.updateMyStory })).toBeNull();
+    expect(api.generateRealDraft).toHaveBeenCalledTimes(1);
+    await press(copy.historySection);
+    await press(`${copy.version} 1 · ${copy.revision} 1`);
+    expect(screen.getByText(firstDraft.content)).toBeOnTheScreen();
+    expect(api.generateRealDraft).toHaveBeenCalledTimes(1);
+  });
   it.each([{ width: 320, fontScale: 1 }, { width: 390, fontScale: 2.5 }])('keeps the integrated composer and Back reachable at $width points / fontScale $fontScale', async dimensions => {
     jest.spyOn(Dimensions, 'get').mockReturnValue({ ...dimensions, height: 700, scale: 2 }); await opened();
     const composer = screen.getByTestId('conversation-composer');

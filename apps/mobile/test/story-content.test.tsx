@@ -23,8 +23,11 @@ function MemoryHarness({ language, memories, onReview, onShareMemory = noop, onB
     onReview={onReview} onShareMemory={onShareMemory} onBeginCorrection={onBeginCorrection} onOpenStory={onOpenStory} />;
 }
 function bookProps(language: Language = 'en'): AutobiographyContentProps {
+  const draft = realDraft({ language });
+  draft.source_memories[0] = { ...draft.source_memories[0], memory_id: reviewed.id,
+    value: reviewed.value, evidence: reviewed.evidence, sentence: reviewed.value };
   return {
-    language, storyLanguage: language, draft: realDraft(), drafts: [realDraft()], memories: [reviewed],
+    language, storyLanguage: language, draft, drafts: [draft], memories: [reviewed],
     editor: null, history: null, exports: null, blocked: false, busy: false, ambiguousEdit: false, usageBlocked: false,
     writingAvailable: true, privacyReady: true, privacyFailed: false, generationControls: <Text allowFontScaling>Existing deliberate generation controls</Text>,
     onEdit: jest.fn(), onChangeEditor: jest.fn(), onSave: jest.fn(), onCancel: jest.fn(), onSelectDraft: jest.fn(),

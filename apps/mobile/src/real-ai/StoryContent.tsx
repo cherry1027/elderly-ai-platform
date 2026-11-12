@@ -33,6 +33,10 @@ export const storyContentCopy = {
     memorySaved: 'Memory confirmed and saved.', memoryOmitted: 'Saved. This memory is left out of new drafts.',
     reviewProgress: (count: number) => count === 1 ? '1 memory confirmed' : `${count} memories confirmed`,
     draftHeading: 'Your story draft', downloadPdf: 'Download PDF', downloadSavedPdf: 'Download saved PDF',
+    draftSourceCount: (count: number) => `Memy had ${count} confirmed ${count === 1 ? 'memory' : 'memories'} when it wrote this draft.`,
+    draftMemoryUpdates: (count: number) => count === 1 ? '1 confirmed memory is new or has changed since this draft.'
+      : `${count} confirmed memories are new or have changed since this draft.`,
+    updateMyStory: 'Update My Story',
     browserPdf: 'Look for the PDF in your browser’s downloads or Files on your phone.',
     aiUnavailable: 'Memy is unavailable right now. What you’ve saved is still here.',
     tryAgain: 'Try again', loading: 'Please wait…',
@@ -61,6 +65,10 @@ export const storyContentCopy = {
     memorySaved: 'Minnet har bekräftats och sparats.', memoryOmitted: 'Sparat. Minnet utelämnas från nya utkast.',
     reviewProgress: (count: number) => count === 1 ? '1 bekräftat minne' : `${count} bekräftade minnen`,
     draftHeading: 'Ditt berättelseutkast', downloadPdf: 'Ladda ner PDF', downloadSavedPdf: 'Ladda ner sparad PDF',
+    draftSourceCount: (count: number) => `Minna hade ${count} ${count === 1 ? 'bekräftat minne' : 'bekräftade minnen'} när det här utkastet skrevs.`,
+    draftMemoryUpdates: (count: number) => count === 1 ? '1 bekräftat minne har tillkommit eller ändrats sedan utkastet skrevs.'
+      : `${count} bekräftade minnen har tillkommit eller ändrats sedan utkastet skrevs.`,
+    updateMyStory: 'Uppdatera min berättelse',
     browserPdf: 'Leta efter PDF-filen bland hämtade filer i webbläsaren eller i Filer på mobilen.',
     aiUnavailable: 'Minna är inte tillgänglig just nu. Det du har sparat finns kvar.',
     tryAgain: 'Försök igen', loading: 'Vänta lite…',
@@ -335,10 +343,19 @@ export function AutobiographyContent(props: AutobiographyContentProps) {
     onDownloadExport, onReviewMemories, onShareMemory, onUseSavedWords } = props;
   const t = realCopy[language], copy = storyContentCopy[language];
   const web = Platform.OS === 'web';
+  const [versionOpen, setVersionOpen] = useState(false);
   const canCreate = writingAvailable && !usageBlocked;
   const confirmed = memories.some(memory => memory.status === 'confirmed');
   const pending = memories.filter(memory => memory.status === 'pending');
   const questionsOpen = pending.some(memory => memory.clarification_question !== null);
+  const updatedMemoryCount = useMemo(() => {
+    if (!draft || !memories.length) return 0;
+    const sourceVersions = new Map<string, number>();
+    for (const source of draft.source_memories) sourceVersions.set(source.memory_id, source.memory_version);
+    return memories.filter(memory => memory.status === 'confirmed' &&
+      memory.version > (sourceVersions.get(memory.id) ?? 0)).length;
+  }, [draft, memories]);
+  const showUpdate = updatedMemoryCount > 0 && !memoriesLoading && !memoriesUnavailable && editor === null;
   const savedWordsAction = onUseSavedWords &&
     <Button language={language} label={copy.useSavedWords} onPress={onUseSavedWords} disabled={blocked} primary={!memories.length} />;
   const creation = memoriesLoading ? <Note language={language}>{t.loadingMemories}</Note>
@@ -365,7 +382,12 @@ export function AutobiographyContent(props: AutobiographyContentProps) {
         <View style={styles.draftHeader}>
           <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.bookHeading}>{copy.draftHeading}</Text>
           <Note language={language}>{t.version} {draft.version} · {t.revision} {draft.revision}</Note>
+          <Note language={language}>{copy.draftSourceCount(draft.source_memories.length)}</Note>
         </View>
+        {showUpdate && <View style={styles.progress}>
+          <Note language={language}>{copy.draftMemoryUpdates(updatedMemoryCount)}</Note>
+          <Disclosure language={language} label={copy.updateMyStory} open={versionOpen} onChange={setVersionOpen}>{creation}</Disclosure>
+        </View>}
         {editor === null && <>
           <View style={styles.actions}>
             <View style={styles.action}><Button language={language} label={t.edit} onPress={onEdit} disabled={blocked} /></View>
@@ -398,7 +420,8 @@ export function AutobiographyContent(props: AutobiographyContentProps) {
         <SavedEditHistory history={history} language={language} storyLanguage={storyLanguage} />
       </ReadSection>
       <Disclosure language={language} label={copy.pdfDetails}><Note language={language}>{web ? copy.browserPdf : copy.pdfShort}</Note><Note language={language}>{t.pdfNotice}</Note></Disclosure>
-      {!memoriesUnavailable && <Disclosure language={language} label={t.createVersion}>{creation}</Disclosure>}
+      {!memoriesUnavailable && !showUpdate &&
+        <Disclosure language={language} label={t.createVersion} open={versionOpen} onChange={setVersionOpen}>{creation}</Disclosure>}
     </>}
     <ReadSection language={language} label={t.pdfVersions} loaded={exports !== null} busy={exportsLoading ?? busy}
       disabled={blocked || editor !== null} onLoad={onLoadExports}>

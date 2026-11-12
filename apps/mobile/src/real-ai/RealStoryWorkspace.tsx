@@ -18,7 +18,7 @@ import { useGuardedLeave } from '../navigation/useGuardedLeave';
 import { colors, layout } from '../theme';
 import { createRealSpeech, downloadRealExport, editRealDraft, exportRealDraft, findRealOperation, generateRealDraft, getRealCapabilities, getRealDraftHistory, getRealExports,
   getRealDraft, getRealDrafts, getRealMemories, getRealMessages, getRealOperation, getRealSpeechAudio, getPreparedRealSpeech, getRealTranscripts,
-  RealAiError, decodeRealTextTurn, hashRealText, reviewRealMemory, sendRealMessage, sendRealTextMessage, transcribeRealRecording,
+  RealAiError, decodeRealTextTurn, hashRealText, reviewRealMemory, saveRealMemoryFromMessage, sendRealMessage, sendRealTextMessage, transcribeRealRecording,
   type RealCapabilities, type RealDraft, type RealExport, type RealMemory, type RealMessage, type RealScope, type RealTranscript, type RealTurn,
   type SpeechMetadata, type RealConversationProgress } from './api';
 import type { RealAiConfig } from './config';
@@ -26,7 +26,7 @@ import { realCopy } from './copy';
 import { createRealPlayback, RealPlaybackError, type RealPlayback } from './native-playback';
 import { conversationModeCopy, readConversationMode, saveConversationMode, type ConversationMode } from './conversation-mode';
 import { mediaPrivacy } from './media-privacy';
-import { MemoriesContent, AutobiographyContent } from './StoryContent';
+import { MemoriesContent, AutobiographyContent, SavedWordsContent, isSavedMessageMemory, storyContentCopy } from './StoryContent';
 import { ChatMessageHistory } from './ChatMessageHistory';
 import { SpeechBytesCache } from './speech-bytes-cache';
 import { OriginalWordsEvidence } from './OriginalWordsEvidence';
@@ -102,7 +102,7 @@ export function RealStoryWorkspace(props: Props) {
 function Workspace({ language, user, project, config, getAccessToken, onBack, onSignOut, initialTab = 'chat', initialDraftId, onAuthenticationFailure, onStoryDetails }: Props) {
   const t = realCopy[language], locale = accessibilityLanguages[language], privacy = usePdfPrivacy();
   const contentScroll = useRef<ComponentRef<typeof ScrollView>>(null);
-  const conversationCopy = conversationModeCopy[language];
+  const conversationCopy = conversationModeCopy[language], storyCopy = storyContentCopy[language];
   // Undefined is still loading, null is a first visit, and a mode is a saved choice.
   const [preferredMode, setPreferredMode] = useState<ConversationMode | null>();
   const mode = preferredMode ?? 'write';
@@ -118,6 +118,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     return () => { open = false; };
   }, []);
   const [tab, setTab] = useState(initialTab), [capabilities, setCapabilities] = useState<RealCapabilities | null>(null);
+  const [savedWordsOpen, setSavedWordsOpen] = useState(false);
   useEffect(() => { contentScroll.current?.scrollTo({ y: 0, animated: false }); }, [tab]);
   const [readStates, setReadStates] = useState(emptyReads), [opening, setOpening] = useState(false);
   const [continuationBusy, setContinuationBusy] = useState(false), [authenticationFailed, setAuthenticationFailed] = useState(false);
@@ -168,6 +169,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const unplacedTranscripts = useMemo(() => transcripts.filter(source => !placedTranscriptIds.has(source.transcript_id)), [transcripts, placedTranscriptIds]);
   const draft = drafts.find(item => item.draft_id === selected) ?? drafts[0] ?? null;
   const hasOpenQuestions = memories.some(item => item.status === 'pending' && item.clarification_question);
+  const hasConfirmedMemories = memories.some(item => item.status === 'confirmed');
   useLayoutEffect(() => { latest.current = { onBack, onSignOut, privacy, onAuthenticationFailure, onStoryDetails }; voiceContext.current = { capabilities, usageBlocked, sessionId };
     currentSection.current = tab; chosenDraft.current = selected; currentDraft.current = draft; });
 
@@ -220,7 +222,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     setTranscripts([]); setMessages([]); setMemories([]); setDrafts([]); setHistory(null); setExports(null);
     currentDraft.current = null; editingDraft.current = null; correctionBases.current.clear(); setEditor(null); setCorrections({}); setLocalRecording(null); setRecording(false); setDuration(0);
     voiceConsent.current = null; consentIntent.current = null; setConsentOpen(false); setVoiceReplySending(false); setSafeReplyId(null);
-    setGenerationConsent(false); setPlaying(false);
+    setGenerationConsent(false); setPlaying(false); setSavedWordsOpen(false);
     setTextDraft(''); setTextSending(false);
     setPages(emptyPages());
   };
@@ -259,8 +261,9 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     try { await action(abort.signal, check, beginOperation); check(); if (startedOperation) { pending.current = null; setUnresolved(null); } }
     catch (error) {
       if (mounted.current && active.current && epoch.current === stamp) {
-        setNotice(error instanceof RealAiError && error.code === 'REAL_AI_CONFLICT' && activityLabel === 'saving' && currentSection.current === 'memories'
-          ? t.reviewConflict : failureMessage(error));
+        const memoryConflict = error instanceof RealAiError && error.code === 'REAL_AI_CONFLICT' && activityLabel === 'saving';
+        if (memoryConflict && savedWordsOpen) setNotice(storyCopy.savedWordsConflict);
+        else setNotice(memoryConflict && currentSection.current === 'memories' ? t.reviewConflict : failureMessage(error));
         if (allowanceError(error)) setUsageBlocked(true);
         if (error instanceof RealAiError && error.recovery === 'contact-operator' && error.code !== 'LIVE_AI_DISABLED' && !allowanceError(error)) setServiceBlocked(true);
         if (error instanceof RealAiError && error.code === 'LIVE_AI_DISABLED') {
@@ -391,7 +394,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       if (session.current && session.current !== id) {
         speechBytes.clear(); speech.current.clear(); setOutbox(null); clearLatestReply(); replyLayouts.current.clear();
         cancelReads(); reads.current = emptyReads(); setReadStates(reads.current); historyCache.current.clear();
-        setTranscripts([]); setMessages([]); setMemories([]); setDrafts([]); setHistory(null); setExports(null); setPages(emptyPages());
+        setTranscripts([]); setMessages([]); setMemories([]); setDrafts([]); setHistory(null); setExports(null); setPages(emptyPages()); setSavedWordsOpen(false);
       }
       session.current = id; setSessionId(id); setSuspended(false);
       loadSection(currentSection.current, force, id);
@@ -726,7 +729,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     }, undefined, 'saving');
   };
   const generate = () => {
-    if (!capabilities?.writing || !reads.current.memories.loaded || !generationConsent || hasOpenQuestions || unresolved || ambiguousEdit || usageBlocked || serviceBlocked || !memories.some(item => item.status === 'confirmed')) return;
+    if (!capabilities?.writing || !reads.current.memories.loaded || !generationConsent || hasOpenQuestions || unresolved || ambiguousEdit || usageBlocked || serviceBlocked || !hasConfirmedMemories) return;
     const key = createRecordingId();
     void run(async (signal, check) => { const result = await generateRealDraft(scope(signal), key); check();
       setDrafts(previous => [result, ...previous]); setSelected(result.draft_id); setHistory(null); setGenerationConsent(false); setNotice(t.bookCreated);
@@ -809,7 +812,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const navigate = (next: typeof tab, finishing = false) => {
     if (tab === next) return;
     const move = () => { stopVoice(); editingDraft.current = null; correctionBases.current.clear();
-      setEditor(null); setCorrections({}); setTab(next); };
+      setEditor(null); setCorrections({}); setSavedWordsOpen(false); setTab(next); };
     // Section changes retain the same owned runtime and unsent composer text.
     // Recordings, edits and uncertain requests still use the existing leave guard.
     if (!finishing && !localRecording && !recording && (editor === null || editor === draft?.content) &&
@@ -822,6 +825,27 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     return () => listener.remove();
   }, [requestLeave]);
   const blocked = busy || opening || suspended || !!unresolved || ambiguousEdit || recording || !!localRecording || mediaBlocked;
+  const openSavedWords = () => {
+    if (blocked || !active.current || locked.current || !sessionId || currentSection.current === 'chat') return;
+    setSavedWordsOpen(true);
+    contentScroll.current?.scrollTo({ y: 0, animated: false });
+    void loadResource('messages', !!reads.current.messages.error);
+  };
+  const saveMessageMemory = (message: RealMessage, excerpt: string) => {
+    if (!savedWordsOpen || blocked || !reads.current.messages.loaded || reads.current.messages.loading ||
+      reads.current.messages.error || message.role !== 'user' || message.session_id !== session.current ||
+      message.project_id !== project.id || !messages.includes(message) ||
+      memories.some(memory => isSavedMessageMemory(memory, message, excerpt))) return;
+    void run(async (signal, check) => {
+      const result = await saveRealMemoryFromMessage(scope(signal), message, excerpt); check();
+      setMemories(previous => [...previous.filter(memory => memory.id !== result.id), result]);
+      setNotice(t.memoryConfirmed);
+    }, undefined, 'saving');
+  };
+  const closeSavedWords = () => {
+    setSavedWordsOpen(false);
+    contentScroll.current?.scrollTo({ y: 0, animated: false });
+  };
   const rememberMode = (next: ConversationMode) => {
     modeRef.current = next;
     setPreferredMode(next);
@@ -908,9 +932,26 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       </View>
     </View>
   </View>;
+  const pageResources: Resource[] = savedWordsOpen ? ['messages'] : tab === 'chat' ? ['transcripts', 'messages']
+    : tab === 'memories' ? ['memories'] : ['drafts', 'history', 'exports'];
+  const savedWordsPanel = savedWordsOpen && <>
+    {readFeedback(['messages'], t.loadingChat)}
+    <SavedWordsContent language={language} storyLanguage={project.language}
+      messages={messages.filter(message => message.project_id === project.id && message.session_id === sessionId && message.language === project.language)}
+      memories={memories} blocked={blocked || readStates.messages.loading || !!readStates.messages.error}
+      loaded={readStates.messages.loaded && pages.messages === null} onSave={saveMessageMemory}
+      onShareMemory={() => navigate('chat')} />
+    {hasConfirmedMemories && note(hasOpenQuestions ? storyCopy.answerFirst
+      : capabilities?.writing && !usageBlocked && !serviceBlocked ? storyCopy.savedWordsNext : storyCopy.aiUnavailable)}
+    {hasConfirmedMemories && tab === 'memories' && <ActionButton {...actionDefaults}
+      label={storyCopy.startStory} onPress={() => navigate('book')} primary />}
+    <ActionButton {...actionDefaults}
+      label={tab === 'memories' ? storyCopy.backToMemories : hasConfirmedMemories ? storyCopy.startStory : storyCopy.backToStory}
+      onPress={closeSavedWords} primary={tab === 'book' && hasConfirmedMemories} />
+  </>;
   const generationControls = <>
     {checkbox(t.generationConsent, generationConsent, () => setGenerationConsent(!generationConsent), blocked || editor !== null)}
-    <ActionButton {...actionDefaults} label={t.generate} onPress={generate} disabled={blocked || usageBlocked || serviceBlocked || editor !== null || !generationConsent || hasOpenQuestions || !capabilities?.writing || !readStates.memories.loaded || !memories.some(item => item.status === 'confirmed')} primary />
+    <ActionButton {...actionDefaults} label={t.generate} onPress={generate} disabled={blocked || usageBlocked || serviceBlocked || editor !== null || !generationConsent || hasOpenQuestions || !capabilities?.writing || !readStates.memories.loaded || !hasConfirmedMemories} primary />
   </>;
   return <Screen scrollViewRef={contentScroll} onContentLayout={event => { scrollOffsets.current.body = event.nativeEvent.layout.y; }} working keyboardAware bottomKeyboardAware back={{ language, label: t.back, onPress: () => leave.requestLeave(() => latest.current.onBack()) }}
     bottomControls={composer}><View style={styles.workspace} testID="real-workspace-layout" onLayout={event => { scrollOffsets.current.workspace = event.nativeEvent.layout.y; }}>
@@ -965,7 +1006,8 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
           <ActionButton {...actionDefaults} label={t.reviewSuggested} onPress={() => navigate('memories')} />
         </>}
       </>}
-      {tab === 'memories' && <>{readFeedback(['memories'], t.loadingMemories)}{readStates.memories.loaded && <MemoriesContent language={language} storyLanguage={project.language} memories={memories}
+      {tab !== 'chat' && savedWordsPanel}
+      {tab === 'memories' && !savedWordsOpen && <>{readFeedback(['memories'], t.loadingMemories)}{readStates.memories.loaded && <MemoriesContent language={language} storyLanguage={project.language} memories={memories}
         corrections={corrections} blocked={blocked} busy={busy}
         onBeginCorrection={memory => {
           if (!active.current || locked.current || authenticationBlocked.current || unresolved || ambiguousEdit) return;
@@ -974,8 +1016,8 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
           if (!correctionBases.current.has(memory.id)) correctionBases.current.set(memory.id, memory);
         }}
         onCorrection={(id, value) => { if (!busy && active.current) setCorrections(previous => ({ ...previous, [id]: value })); }}
-        onReview={review} onShareMemory={() => navigate('chat')} onOpenStory={() => navigate('book')} />}</>}
-      {tab === 'book' && <>{readFeedback(['drafts'], t.loadingBook)}{readFeedback(['memories'], t.loadingMemories, false)}
+        onReview={review} onShareMemory={() => navigate('chat')} onOpenStory={() => navigate('book')} onUseSavedWords={openSavedWords} />}</>}
+      {tab === 'book' && !savedWordsOpen && <>{readFeedback(['drafts'], t.loadingBook)}{readFeedback(['memories'], t.loadingMemories, false)}
         {(['history', 'exports'] as const).map(resource => readStates[resource].error && <Text key={resource} allowFontScaling
           accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.note}>{readStates[resource].error}</Text>)}
         {readStates.drafts.loaded && <AutobiographyContent key={`${draft?.draft_id ?? 'empty'}:${draft?.revision ?? 0}`}
@@ -991,11 +1033,11 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         onCancel={() => leave.requestLeave(() => { editingDraft.current = null; setEditor(null); })}
         onSelectDraft={item => leave.requestLeave(() => { setSelected(item.draft_id); editingDraft.current = null; setEditor(null); })}
         onLoadHistory={showHistory} onLoadExports={showExports} onExport={sharePdf} onDownloadExport={shareSavedPdf}
-        onReviewMemories={() => navigate('memories')} onShareMemory={() => navigate('chat')} />}</>}
-      {(Object.keys(pages) as Resource[]).filter(resource => pages[resource] !== null &&
-        (tab === 'chat' ? ['transcripts', 'messages'].includes(resource) : tab === 'memories' ? resource === 'memories' : ['drafts', 'history', 'exports'].includes(resource))).map(resource =>
+        onReviewMemories={() => navigate('memories')} onShareMemory={() => navigate('chat')} onUseSavedWords={openSavedWords} />}</>}
+      {(Object.keys(pages) as Resource[]).filter(resource => pages[resource] !== null && pageResources.includes(resource)).map(resource =>
         <View key={resource} style={styles.card}>{note(`${t.moreSaved}: ${t[resource]}`)}
-          {(pages[resource] ?? 0) >= 1000 ? note(t.pageLimit) : <ActionButton {...actionDefaults} label={`${t.loadMore}: ${t[resource]}`} onPress={() => loadMore(resource)} disabled={blocked || editor !== null} />}
+          {(pages[resource] ?? 0) >= 1000 ? note(t.pageLimit) : <ActionButton {...actionDefaults} label={`${t.loadMore}: ${t[resource]}`} onPress={() => loadMore(resource)}
+            disabled={blocked || editor !== null || (savedWordsOpen && (readStates.messages.loading || !!readStates.messages.error))} />}
         </View>)}
       {(unresolved || ambiguousEdit) && <ActionButton language={language} label={t.check} onPress={checkSaved} disabled={busy || recording || !sessionId} primary />}
     </>}

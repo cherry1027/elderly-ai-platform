@@ -129,9 +129,9 @@ describe('progressive workspace reads — synthetic transports only', () => {
     expect(screen.getByText(t.emptyMemories)).toBeOnTheScreen();
   });
   it('retains an empty successful autobiography result across tab changes', async () => {
-    await opened(); await tab(t.book); await waitFor(() => expect(screen.getByText(t.emptyBook)).toBeOnTheScreen());
+    await opened(); await tab(t.book); await waitFor(() => expect(screen.getByText(storyContentCopy.en.noMemoriesForDraft)).toBeOnTheScreen());
     await tab(t.chat); await tab(t.book); expect(api.getRealDrafts).toHaveBeenCalledTimes(1);
-    expect(api.getRealMemories).toHaveBeenCalledTimes(1); expect(screen.getByText(t.emptyBook)).toBeOnTheScreen();
+    expect(api.getRealMemories).toHaveBeenCalledTimes(1); expect(screen.getByText(storyContentCopy.en.noMemoriesForDraft)).toBeOnTheScreen();
   });
   it('shows saved autobiography prose before related memories finish and reuses both completed reads', async () => {
     const memories = deferred<api.RealMemory[]>(); jest.mocked(api.getRealMemories).mockReturnValueOnce(memories.promise);

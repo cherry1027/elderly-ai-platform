@@ -3,7 +3,7 @@ import { digest } from 'expo-crypto';
 import { listSessionTranscripts, SIMULATED_TRANSCRIPT_NOTICE } from '../src/api/audio-transcripts';
 import { createRealSpeech, decodeCapabilities, decodeDraft, decodeMemory, decodeMessage, decodeTranscript, editRealDraft,
   exportRealDraft, findRealOperation, generateRealDraft, getRealCapabilities, getRealDrafts, getRealMemories, getRealMessages, getRealOperation,
-  getRealSpeechAudio, getPreparedRealSpeech, getRealTranscripts, reviewRealMemory, sendRealMessage, transcribeRealRecording } from '../src/real-ai/api';
+  getRealSpeechAudio, getPreparedRealSpeech, getRealTranscripts, reviewRealMemory, saveRealMemoryFromMessage, sendRealMessage, transcribeRealRecording } from '../src/real-ai/api';
 import { realDate, realDraft, realIds as ids, realMemory, realMessage, realScope, realTranscript } from './real-ai-fixtures';
 jest.mock('expo-crypto', () => ({ CryptoDigestAlgorithm: { SHA256: 'SHA-256' }, digest: jest.fn() }));
 
@@ -57,6 +57,35 @@ describe('real-v2 strict contracts with synthetic HTTP, no paid or hosted reques
   ])('never accepts auto-confirmation, cross-user turns or extra result envelopes %#', async changes => {
     const f = fixture({ user_message: realMessage(), message: realMessage('assistant'), memories: [realMemory()], mode: 'real', ...changes });
     await expect(sendRealMessage(f.scope, { source_transcript_id: ids.transcript }, ids.key)).rejects.toMatchObject({ kind: 'invalid-response', mayHaveWritten: true });
+  });
+  it('saves only a literal excerpt of an owned user message as a confirmed memory', async () => {
+    const message = realMessage(), excerpt = message.text.slice(0, 9);
+    const saved = realMemory({ value: excerpt, evidence: excerpt, status: 'confirmed', uncertain: false, clarification_question: null });
+    const f = fixture(saved);
+    await expect(saveRealMemoryFromMessage(f.scope, message, excerpt)).resolves.toEqual(saved);
+    const [url, init] = f.request.mock.calls[0];
+    expect(url).toBe(f.scope.baseUrl + '/api/v2/story-sessions/' + ids.session + '/memories/from-message');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(init!.body as string)).toEqual({ source_message_id: message.id, excerpt });
+    expect(init?.headers).not.toHaveProperty('Idempotency-Key');
+  });
+  it.each([
+    [realMessage('assistant'), 'Synthetic'],
+    [realMessage('user', { session_id: ids.project }), 'Synthetic'],
+    [realMessage('user', { text: '🙂'.repeat(1001) }), '🙂'.repeat(1001)],
+    [realMessage(), 'Not part of the original.'],
+  ] as const)('refuses unauthorized or out-of-bounds excerpts before HTTP %#', (message, excerpt) => {
+    const f = fixture();
+    expect(() => saveRealMemoryFromMessage(f.scope, message, excerpt)).toThrow();
+    expect(f.request).not.toHaveBeenCalled();
+  });
+  it.each([{ status: 'pending' }, { evidence: 'Changed original evidence' }, { source_message_id: ids.assistant }])
+  ('rejects a response that changes the excerpt, ownership or confirmation %#', async changes => {
+    const message = realMessage();
+    const saved = realMemory({ value: message.text, evidence: message.text, status: 'confirmed', uncertain: false, clarification_question: null });
+    const f = fixture({ ...saved, ...changes });
+    await expect(saveRealMemoryFromMessage(f.scope, message, message.text))
+      .rejects.toMatchObject({ kind: 'invalid-response', mayHaveWritten: true });
   });
   it('keeps source values/evidence immutable during an explicit versioned correction', async () => {
     const f = fixture(realMemory({ status: 'confirmed', corrected_value: 'A correction', version: 2 }));

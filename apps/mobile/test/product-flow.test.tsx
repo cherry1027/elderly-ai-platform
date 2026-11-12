@@ -23,7 +23,7 @@ jest.mock('../src/components/Screen', () => {
 });
 jest.mock('../src/real-ai/api', () => ({ ...jest.requireActual('../src/real-ai/api'),
   getRealCapabilities: jest.fn(), getRealTranscripts: jest.fn(), getRealMessages: jest.fn(), getRealMemories: jest.fn(), getRealDrafts: jest.fn(),
-  getRealDraftHistory: jest.fn(), getRealExports: jest.fn(), hashRealText: jest.fn(), sendRealTextMessage: jest.fn(), reviewRealMemory: jest.fn(),
+  getRealDraftHistory: jest.fn(), getRealExports: jest.fn(), hashRealText: jest.fn(), sendRealTextMessage: jest.fn(), reviewRealMemory: jest.fn(), saveRealMemoryFromMessage: jest.fn(),
   getRealOperation: jest.fn(), findRealOperation: jest.fn(), transcribeRealRecording: jest.fn(), sendRealMessage: jest.fn(),
   generateRealDraft: jest.fn(), editRealDraft: jest.fn(), exportRealDraft: jest.fn(), downloadRealExport: jest.fn(), createRealSpeech: jest.fn(),
 }));
@@ -132,8 +132,10 @@ describe('Talk → Memories → My Story product flow — synthetic services onl
     jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant')]);
     await opened(language);
     await press(conversationModeCopy[language].finishAndOpenStory);
-    await waitFor(() => expect(screen.getByText(copy.emptyBook)).toBeOnTheScreen());
+    await waitFor(() => expect(screen.getByText(story.noMemoriesForDraft)).toBeOnTheScreen());
     expect(screen.queryByRole('button', { name: copy.generate })).toBeNull();
+    await press(story.useSavedWords);
+    expect(await screen.findByText(story.savedWordsEmpty)).toBeOnTheScreen();
     await press(story.shareMemory);
     expect(screen.getByRole('tab', { name: copy.chat }).props.accessibilityState.selected).toBe(true);
     expect(screen.getByText(realMessage('assistant').text)).toBeOnTheScreen();
@@ -176,6 +178,72 @@ describe('Talk → Memories → My Story product flow — synthetic services onl
     await press(copy.moreActions); await press(copy.privacy);
     expect(screen.getByText(copy.textConsent)).toBeOnTheScreen(); expect(screen.getByText(copy.introduction)).toBeOnTheScreen();
     expect(screen.getByText(copy.voice)).toBeOnTheScreen(); expect(screen.getByRole('button', { name: copy.reload })).toBeOnTheScreen(); noPaidActions();
+  });
+  it('uses existing Swedish user words as a confirmed memory, then creates a draft only with consent', async () => {
+    const copy = realCopy.sv, story = storyContentCopy.sv;
+    const excerpt = 'Å'.repeat(999) + '🙂';
+    const original = realMessage('user', { language: 'sv', text: excerpt + 'Hela texten fortsätter här.' });
+    const reply = realMessage('assistant', { language: 'sv', text: 'Det här är assistentens svar.' });
+    const saved = realMemory({ source_message_id: original.id, status: 'confirmed', uncertain: false, value: excerpt, evidence: excerpt, clarification_question: null });
+    jest.mocked(api.getRealMessages).mockResolvedValue([original, reply]);
+    jest.mocked(api.saveRealMemoryFromMessage).mockResolvedValueOnce(saved);
+    jest.mocked(api.generateRealDraft).mockResolvedValueOnce(realDraft({ language: 'sv', content: 'Mitt första utkast.' }));
+    await render(<RealStoryWorkspace {...props} language="sv" project={{ ...project, language: 'sv' }} initialTab="book" />);
+    await screen.findByText(story.noMemoriesForDraft);
+    expect(api.getRealMessages).not.toHaveBeenCalled();
+    await press(story.useSavedWords);
+    expect(await screen.findByText(excerpt)).toBeOnTheScreen();
+    expect(screen.getByText(story.partialWords)).toBeOnTheScreen();
+    expect(screen.queryByText(original.text)).toBeNull();
+    expect(screen.queryByText(reply.text)).toBeNull();
+    await press(story.saveAsMemory);
+    expect(api.saveRealMemoryFromMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: ids.project, sessionId: ids.session, language: 'sv' }), original, excerpt,
+    );
+    expect(await screen.findByText(story.savedAsMemory)).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: story.saveAsMemory })).toBeNull();
+    expect(api.generateRealDraft).not.toHaveBeenCalled();
+    expect(api.sendRealTextMessage).not.toHaveBeenCalled();
+    expect(api.sendRealMessage).not.toHaveBeenCalled();
+    await press(story.startStory);
+    expect(screen.getByRole('button', { name: copy.generate })).toBeDisabled();
+    await fireEvent.press(screen.getByRole('checkbox', { name: copy.generationConsent }));
+    await press(copy.generate);
+    expect(await screen.findByText('Mitt första utkast.')).toBeOnTheScreen();
+    expect(api.generateRealDraft).toHaveBeenCalledTimes(1);
+    expect(api.saveRealMemoryFromMessage).toHaveBeenCalledTimes(1);
+  });
+  it('explains a saved-word conflict without claiming the excerpt was confirmed', async () => {
+    const story = storyContentCopy.en;
+    jest.mocked(api.getRealMessages).mockResolvedValue([realMessage()]);
+    jest.mocked(api.saveRealMemoryFromMessage).mockRejectedValueOnce(new api.RealAiError('conflict', 409, false, 'REAL_AI_CONFLICT'));
+    await render(<RealStoryWorkspace {...props} initialTab="book" />);
+    await screen.findByRole('button', { name: story.useSavedWords });
+    await press(story.useSavedWords);
+    await screen.findByRole('button', { name: story.saveAsMemory });
+    await press(story.saveAsMemory);
+    expect(await screen.findByText(story.savedWordsConflict)).toBeOnTheScreen();
+    expect(screen.queryByText(story.savedAsMemory)).toBeNull();
+    expect(api.saveRealMemoryFromMessage).toHaveBeenCalledTimes(1);
+    expect(api.generateRealDraft).not.toHaveBeenCalled();
+  });
+  it('reconciles an ambiguous saved-word write without posting it twice', async () => {
+    const story = storyContentCopy.en;
+    const original = realMessage();
+    const saved = realMemory({ status: 'confirmed', uncertain: false, value: original.text, evidence: original.text, clarification_question: null });
+    jest.mocked(api.getRealMessages).mockResolvedValue([original]);
+    jest.mocked(api.getRealMemories).mockResolvedValueOnce([]).mockResolvedValue([saved]);
+    jest.mocked(api.saveRealMemoryFromMessage).mockRejectedValueOnce(new api.RealAiError('network', undefined, true));
+    await render(<RealStoryWorkspace {...props} initialTab="book" />);
+    await screen.findByRole('button', { name: story.useSavedWords });
+    await press(story.useSavedWords);
+    await screen.findByRole('button', { name: story.saveAsMemory });
+    await press(story.saveAsMemory);
+    expect(screen.getByRole('button', { name: story.saveAsMemory })).toBeDisabled();
+    await press(t.check);
+    expect(await screen.findByText(story.savedAsMemory)).toBeOnTheScreen();
+    expect(api.saveRealMemoryFromMessage).toHaveBeenCalledTimes(1);
+    expect(api.generateRealDraft).not.toHaveBeenCalled();
   });
   it('creates My Story only after the explicit consent and Create action', async () => {
     jest.mocked(api.getRealMemories).mockResolvedValue([realMemory({ status: 'confirmed', version: 2, clarification_question: null })]);

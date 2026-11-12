@@ -499,6 +499,21 @@ export function sendRealTextMessage(scope: RealScope, original: string, key: str
 export function getRealMemories(scope: RealScope, offset = 0) {
   return execute(scope, scopePath(scope, `memories?${page(offset)}`), 'GET', value => list(value, v => decodeMemory(v, scope), v => v.id));
 }
+export const MAX_MEMORY_EXCERPT = 1000;
+
+export function saveRealMemoryFromMessage(scope: RealScope, message: RealMessage, excerpt: string) {
+  if (message.role !== 'user' || message.project_id !== scope.projectId || message.session_id !== scope.sessionId ||
+    message.language !== scope.language || !text(message.text, 32_000) || !text(excerpt, MAX_MEMORY_EXCERPT) || !message.text.includes(excerpt)) {
+    throw new RealAiError('validation');
+  }
+  const sourceId = validateStoryProjectId(message.id);
+  return execute(scope, scopePath(scope, 'memories/from-message'), 'POST', value => {
+    const result = decodeMemory(value, scope);
+    if (result.source_message_id !== sourceId || result.status !== 'confirmed' || result.value !== excerpt ||
+      result.evidence !== excerpt || result.corrected_value !== null || result.uncertain || result.clarification_question !== null) invalid();
+    return result;
+  }, JSON.stringify({ source_message_id: sourceId, excerpt }));
+}
 export function reviewRealMemory(scope: RealScope, memory: RealMemory, status: 'confirmed' | 'rejected', correction?: string) {
   if (memory.project_id !== scope.projectId || memory.session_id !== scope.sessionId || !['confirmed', 'rejected'].includes(status) ||
     (correction !== undefined && (!text(correction, 1000) || status !== 'confirmed'))) throw new RealAiError('validation');

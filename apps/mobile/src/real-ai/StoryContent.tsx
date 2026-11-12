@@ -5,7 +5,7 @@ import { useApiBackoff } from '../api/ApiBackoff';
 import { LargeButton } from '../components/LargeButton';
 import { accessibilityLanguages, type Language } from '../i18n';
 import { colors, headingFont, layout } from '../theme';
-import type { RealDraft, RealExport, RealMemory } from './api';
+import { MAX_MEMORY_EXCERPT, type RealDraft, type RealExport, type RealMemory, type RealMessage } from './api';
 import { realCopy } from './copy';
 
 export const storyContentCopy = {
@@ -21,6 +21,15 @@ export const storyContentCopy = {
     answerFirst: 'Answer the open questions in Memories before creating a new draft. Choose Yes, Change, or Leave out for each question.',
     confirmFirst: 'Confirm at least one memory before creating your story.',
     startStory: 'Go to My Story',
+    useSavedWords: 'Use your saved words',
+    savedWordsHelp: 'Choose words you have already shared. Saving an excerpt confirms it as a memory.',
+    savedWordsEmpty: 'There are no saved messages from you in this conversation yet.',
+    savedWordsConflict: 'This excerpt may already be saved, edited, or left out. Open Memories to check.',
+    saveAsMemory: 'Save as a memory', savedAsMemory: 'Saved as a memory',
+    partialWords: 'This shows up to the first 1,000 characters. Your full message stays saved.',
+    backToStory: 'Back to My Story', backToMemories: 'Back to Memories',
+    savedWordsNext: 'Go to My Story, confirm you want to use AI, then choose Create My Story.',
+    noMemoriesForDraft: 'A draft and PDF need at least one confirmed memory. You can use your saved words or share a new detail.',
     memorySaved: 'Memory confirmed and saved.', memoryOmitted: 'Saved. This memory is left out of new drafts.',
     reviewProgress: (count: number) => count === 1 ? '1 memory confirmed' : `${count} memories confirmed`,
     draftHeading: 'Your story draft', downloadPdf: 'Download PDF', downloadSavedPdf: 'Download saved PDF',
@@ -40,6 +49,15 @@ export const storyContentCopy = {
     answerFirst: 'Svara på öppna frågor under Minnen innan du skapar ett nytt utkast. Välj Ja, Ändra eller Utelämna för varje fråga.',
     confirmFirst: 'Bekräfta minst ett minne innan du skapar din berättelse.',
     startStory: 'Gå till Min berättelse',
+    useSavedWords: 'Använd dina sparade ord',
+    savedWordsHelp: 'Välj bland de ord du redan har delat. När du sparar ett utdrag bekräftas det som ett minne.',
+    savedWordsEmpty: 'Det finns ännu inga sparade meddelanden från dig i det här samtalet.',
+    savedWordsConflict: 'Utdraget kan redan ha sparats, ändrats eller utelämnats. Titta under Minnen.',
+    saveAsMemory: 'Spara som minne', savedAsMemory: 'Sparat som minne',
+    partialWords: 'Här visas upp till de första 1 000 tecknen. Hela meddelandet finns kvar.',
+    backToStory: 'Tillbaka till Min berättelse', backToMemories: 'Tillbaka till Minnen',
+    savedWordsNext: 'Gå till Min berättelse, bekräfta att du vill använda AI och välj Skapa min berättelse.',
+    noMemoriesForDraft: 'För att skapa ett utkast och en PDF behövs minst ett bekräftat minne. Använd dina sparade ord eller berätta något nytt.',
     memorySaved: 'Minnet har bekräftats och sparats.', memoryOmitted: 'Sparat. Minnet utelämnas från nya utkast.',
     reviewProgress: (count: number) => count === 1 ? '1 bekräftat minne' : `${count} bekräftade minnen`,
     draftHeading: 'Ditt berättelseutkast', downloadPdf: 'Ladda ner PDF', downloadSavedPdf: 'Ladda ner sparad PDF',
@@ -100,6 +118,45 @@ function ReadSection({ language, label, loaded, busy, disabled, onLoad, preview,
   </Disclosure>;
 }
 
+function messageExcerpt(text: string): { excerpt: string; partial: boolean } {
+  const characters = [...text.trim()];
+  return { excerpt: characters.slice(0, MAX_MEMORY_EXCERPT).join('').trimEnd(),
+    partial: characters.length > MAX_MEMORY_EXCERPT };
+}
+
+export function isSavedMessageMemory(memory: RealMemory, message: RealMessage, excerpt: string): boolean {
+  return memory.source_message_id === message.id && memory.status === 'confirmed' &&
+    memory.evidence === excerpt && memory.value === excerpt && memory.corrected_value === null;
+}
+
+export function SavedWordsContent({ language, storyLanguage, messages, memories, blocked, loaded, onSave, onShareMemory }: {
+  language: Language; storyLanguage: Language; messages: RealMessage[]; memories: RealMemory[];
+  blocked: boolean; loaded: boolean; onSave(message: RealMessage, excerpt: string): void; onShareMemory(): void;
+}) {
+  const copy = storyContentCopy[language];
+  const originals = messages.filter(message => message.role === 'user');
+  return <View style={styles.section}>
+    <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]}
+      allowFontScaling style={styles.heading}>{copy.useSavedWords}</Text>
+    <Note language={language}>{copy.savedWordsHelp}</Note>
+    {loaded && originals.length === 0 && <>
+      <Note language={language}>{copy.savedWordsEmpty}</Note>
+      <Button language={language} label={copy.shareMemory} onPress={onShareMemory} disabled={blocked} primary />
+    </>}
+    {originals.map(message => {
+      const { excerpt, partial } = messageExcerpt(message.text);
+      const saved = memories.some(memory => isSavedMessageMemory(memory, message, excerpt));
+      return <View key={message.id} style={styles.source}>
+        <Text accessibilityLanguage={accessibilityLanguages[storyLanguage]} allowFontScaling selectable style={styles.body}>{excerpt}</Text>
+        {partial && <Note language={language}>{copy.partialWords}</Note>}
+        {saved ? <Text accessibilityLiveRegion="polite" accessibilityLanguage={accessibilityLanguages[language]}
+          allowFontScaling style={styles.status}>{copy.savedAsMemory}</Text>
+          : <Button language={language} label={copy.saveAsMemory} onPress={() => onSave(message, excerpt)} disabled={blocked} />}
+      </View>;
+    })}
+  </View>;
+}
+
 export interface MemoriesContentProps {
   language: Language; storyLanguage: Language; memories: RealMemory[]; corrections: Record<string, string>;
   blocked: boolean; busy: boolean;
@@ -108,9 +165,10 @@ export interface MemoriesContentProps {
   onReview(memory: RealMemory, status: 'confirmed' | 'rejected'): void;
   onShareMemory(): void;
   onOpenStory?(): void;
+  onUseSavedWords?(): void;
 }
 export function MemoriesContent(props: MemoriesContentProps) {
-  const { language, storyLanguage, memories, corrections, blocked, busy, onShareMemory, onOpenStory } = props;
+  const { language, storyLanguage, memories, corrections, blocked, busy, onShareMemory, onOpenStory, onUseSavedWords } = props;
   const t = realCopy[language], copy = storyContentCopy[language];
   const [reviewedOpen, setReviewedOpen] = useState(() => !memories.some(memory => memory.status === 'pending'));
   const [lastReview, setLastReview] = useState<{ id: string; version: number; status: 'confirmed' | 'rejected' } | null>(null);
@@ -169,6 +227,8 @@ export function MemoriesContent(props: MemoriesContentProps) {
     {!!pending.length && <Note language={language}>{t.reviewNotice}</Note>}
     {!memories.length && <><Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.heading}>{copy.noMemories}</Text><Note language={language}>{t.emptyMemories}</Note>
       <Button language={language} label={copy.shareMemory} onPress={onShareMemory} disabled={blocked} primary /></>}
+    {confirmedCount === 0 && onUseSavedWords &&
+      <Button language={language} label={copy.useSavedWords} onPress={onUseSavedWords} disabled={blocked} />}
     {!!pending.length && <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.heading}>{t.pendingStatus}</Text>}
     {reviewQueue.map(card)}
     {!!memories.length && !pending.length && <Note language={language}>{copy.allReviewed}</Note>}
@@ -266,22 +326,26 @@ export interface AutobiographyContentProps {
   onEdit(): void; onChangeEditor(value: string): void; onSave(): void; onCancel(): void;
   onSelectDraft(draft: RealDraft): void; onLoadHistory(): void; onLoadExports(): void;
   onExport(): void; onDownloadExport(metadata: RealExport): void; onReviewMemories(): void; onShareMemory(): void;
+  onUseSavedWords?(): void;
 }
 export function AutobiographyContent(props: AutobiographyContentProps) {
   const { language, storyLanguage, draft, drafts, memories, editor, history, exports, blocked, busy, ambiguousEdit,
     usageBlocked, writingAvailable, privacyReady, privacyFailed, generationControls, memoriesLoading = false, memoriesUnavailable = false, historyLoading, exportsLoading,
     onEdit, onChangeEditor, onSave, onCancel, onSelectDraft, onLoadHistory, onLoadExports, onExport,
-    onDownloadExport, onReviewMemories, onShareMemory } = props;
+    onDownloadExport, onReviewMemories, onShareMemory, onUseSavedWords } = props;
   const t = realCopy[language], copy = storyContentCopy[language];
   const web = Platform.OS === 'web';
   const canCreate = writingAvailable && !usageBlocked;
   const confirmed = memories.some(memory => memory.status === 'confirmed');
   const pending = memories.filter(memory => memory.status === 'pending');
   const questionsOpen = pending.some(memory => memory.clarification_question !== null);
+  const savedWordsAction = onUseSavedWords &&
+    <Button language={language} label={copy.useSavedWords} onPress={onUseSavedWords} disabled={blocked} primary={!memories.length} />;
   const creation = memoriesLoading ? <Note language={language}>{t.loadingMemories}</Note>
     : questionsOpen || !confirmed ? <>
       <Note language={language}>{questionsOpen ? copy.answerFirst : copy.confirmFirst}</Note>
       <Button language={language} label={copy.reviewFirst} onPress={onReviewMemories} disabled={blocked} primary />
+      {!confirmed && savedWordsAction}
     </> : !canCreate ? <><Note language={language}>{copy.aiUnavailable}</Note>
       <Button language={language} label={t.memories} onPress={onReviewMemories} disabled={blocked} /></>
       : <>
@@ -292,8 +356,9 @@ export function AutobiographyContent(props: AutobiographyContentProps) {
         {generationControls}
       </>;
   return <View style={styles.section}>
-    {!draft && (memoriesUnavailable ? null : !memoriesLoading && !memories.length ? <><Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.bookHeading}>{copy.noStory}</Text><Note language={language}>{t.emptyBook}</Note>
-      <Button language={language} label={copy.shareMemory} onPress={onShareMemory} disabled={blocked} primary /></>
+    {!draft && (memoriesUnavailable ? null : !memoriesLoading && !memories.length ? <><Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.bookHeading}>{copy.noStory}</Text><Note language={language}>{onUseSavedWords ? copy.noMemoriesForDraft : t.emptyBook}</Note>
+      {savedWordsAction}
+      <Button language={language} label={copy.shareMemory} onPress={onShareMemory} disabled={blocked} primary={!onUseSavedWords} /></>
       : creation)}
     {draft && <>
       <View style={styles.book}>

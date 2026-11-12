@@ -9,6 +9,7 @@ import json
 import wave
 
 from fastapi.testclient import TestClient
+import httpx
 from pydantic import SecretStr
 import pytest
 
@@ -249,7 +250,7 @@ def test_draft_generation_requires_reviewed_memories_before_any_cost(harness):
     assert gateway.claim_count==provider.calls==0
 
 
-def test_all_twenty_private_v2_routes_require_authentication():
+def test_all_twenty_one_private_v2_routes_require_authentication():
     app=create_app(Settings(_env_file=None))
     protected=[]
     for path,item in app.openapi()["paths"].items():
@@ -257,7 +258,7 @@ def test_all_twenty_private_v2_routes_require_authentication():
             if path.startswith("/api/v2/") and path!="/api/v2/capabilities":
                 assert operation["security"]==[{"SupabaseBearer":[]}]
                 protected.append((method,path))
-    assert len(protected)==20
+    assert len(protected)==21
     with TestClient(app) as client:
         for method,path in protected:
             path=path.replace("{kind}","conversation")
@@ -265,6 +266,110 @@ def test_all_twenty_private_v2_routes_require_authentication():
                 path=path.replace("{"+name+"}",str(PROJECT))
             response=client.request(method,path)
             assert response.status_code==401,(method,path,response.text)
+
+
+@pytest.fixture
+def save_memory_client():
+    def build(response):
+        requests = []
+        token = "synthetic-test-user-token"
+        public_key = "synthetic-public"
+
+        def supabase(request):
+            assert request.method == "POST"
+            assert request.url.path == "/rest/v1/rpc/save_real_memory_from_message"
+            assert request.headers["apikey"] == public_key
+            assert request.headers["Authorization"] == f"Bearer {token}"
+            requests.append(json.loads(request.content))
+            return response
+
+        app = create_app(Settings(_env_file=None, supabase_url="https://synthetic.supabase.co",
+                                  supabase_publishable_key=public_key),
+                         transport=httpx.MockTransport(supabase))
+        app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(OWNER, SecretStr(token))
+        return TestClient(app), requests
+
+    return build
+
+
+def saved_excerpt(excerpt):
+    timestamp = NOW.replace("+00:00", "Z")
+    return {
+        "id": str(OTHER), "project_id": str(PROJECT), "session_id": str(SESSION),
+        "source_message_id": str(TRANSCRIPT), "fact_type": "event", "value": excerpt,
+        "evidence": excerpt, "year": None, "slot": None, "uncertain": False,
+        "status": "confirmed", "corrected_value": None, "version": 1,
+        "created_at": timestamp, "updated_at": timestamp,
+    }
+
+
+@pytest.mark.parametrize("excerpt", [" Åter till Öland 🐸\n", "🐸" * 1000], ids=["original", "maximum-codepoints"])
+def test_save_memory_preserves_exact_words_using_only_the_users_rpc(save_memory_client, excerpt):
+    row = saved_excerpt(excerpt)
+    client, requests = save_memory_client(httpx.Response(200, json=row))
+    with client:
+        response = client.post(f"/api/v2/story-sessions/{SESSION}/memories/from-message",
+                               json={"source_message_id": str(TRANSCRIPT), "excerpt": excerpt})
+    assert response.status_code == 200
+    assert response.json() == {**row, "clarification_question": None}
+    assert response.headers["cache-control"] == "no-store"
+    assert requests == [{"p_session_id": str(SESSION), "p_source_message_id": str(TRANSCRIPT),
+                         "p_excerpt": excerpt}]
+
+
+@pytest.mark.parametrize("change", [
+    {"source_message_id": "private-invalid-id"}, {"excerpt": ""}, {"excerpt": " \n\t "},
+    {"excerpt": "a\u0000b"}, {"excerpt": "🐸" * 1001}, {"excerpt": 123}, {"owner_id": str(OTHER)},
+])
+def test_save_memory_invalid_request_never_calls_supabase(save_memory_client, change):
+    client, requests = save_memory_client(httpx.Response(500))
+    with client:
+        response = client.post(f"/api/v2/story-sessions/{SESSION}/memories/from-message",
+                               json={"source_message_id": str(TRANSCRIPT), "excerpt": "Private words", **change})
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+    assert "Private words" not in response.text and "private-invalid-id" not in response.text
+    assert not requests
+
+
+@pytest.mark.parametrize("change", [
+    {"session_id": str(OTHER)}, {"source_message_id": str(OTHER)}, {"value": "Different value"},
+    {"evidence": "Different evidence"}, {"status": "pending"}, {"uncertain": True},
+    {"corrected_value": "Different correction"}, {"clarification_question": "Different question"},
+    {"owner_id": str(OTHER)},
+])
+def test_save_memory_rejects_a_mismatched_or_unsafe_rpc_result(save_memory_client, change):
+    excerpt = "Private words"
+    client, requests = save_memory_client(httpx.Response(200, json={**saved_excerpt(excerpt), **change}))
+    with client:
+        response = client.post(f"/api/v2/story-sessions/{SESSION}/memories/from-message",
+                               json={"source_message_id": str(TRANSCRIPT), "excerpt": excerpt})
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "SUPABASE_UNAVAILABLE"
+    assert excerpt not in response.text and "Different" not in response.text
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize("status,sqlstate,expected_status,error_code", [
+    (404, "P0002", 404, "RESOURCE_NOT_FOUND"),
+    (400, "22023", 422, "VALIDATION_ERROR"),
+    (409, "40001", 409, "REAL_AI_CONFLICT"),
+    (401, "PGRST301", 401, "INVALID_ACCESS_TOKEN"),
+    (403, "42501", 403, "ACCESS_DENIED"),
+    (500, "PGRST202", 503, "SUPABASE_UNAVAILABLE"),
+])
+def test_save_memory_rpc_failures_do_not_expose_originals_or_upstream_details(
+    save_memory_client, status, sqlstate, expected_status, error_code,
+):
+    excerpt = "Private words"
+    client, requests = save_memory_client(httpx.Response(status, json={"code": sqlstate, "message": excerpt}))
+    with client:
+        response = client.post(f"/api/v2/story-sessions/{SESSION}/memories/from-message",
+                               json={"source_message_id": str(TRANSCRIPT), "excerpt": excerpt})
+    assert response.status_code == expected_status
+    assert response.json()["error"]["code"] == error_code
+    assert excerpt not in response.text and sqlstate not in response.text
+    assert len(requests) == 1
 
 
 def test_v2_binary_docs_keep_errors_json_and_wav_pdf_success_types():

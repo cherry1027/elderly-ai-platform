@@ -21,7 +21,7 @@ from app.schemas.conversations import MemoryPatch
 from app.schemas.real_ai import (
     RealTranscript, RealMessage, RealMemory, RealTurn, RealDraft, RealSpeech,
     RealMessageCreate, RealTextMessageCreate, RealSpeechRequest, RealOperation, RealExportRequest,
-    RealExportMetadata, RealSavedExport,
+    RealExportMetadata, RealSavedExport, RealMemoryFromMessageCreate,
 )
 from app.schemas.story_drafts import StoryDraftPatch, StoryEditResponse, StoryGenerationRequest
 from app.schemas.errors import ErrorResponse
@@ -360,6 +360,29 @@ async def _send_text_message(session_id: UUID, payload: RealTextMessageCreate, r
 @router.get("/story-sessions/{session_id}/memories", response_model=list[RealMemory])
 async def memories(session_id: UUID, gateway: Gateway, limit: Limit = 50, offset: Offset = 0):
     return await gateway.memories(session_id, limit, offset)
+
+
+@router.post("/story-sessions/{session_id}/memories/from-message", response_model=RealMemory)
+async def save_memory_from_message(session_id: UUID, payload: RealMemoryFromMessageCreate, gateway: Gateway):
+    """Save a user's exact excerpt as a confirmed memory without using AI."""
+    row = await gateway.rpc("save_real_memory_from_message", {
+        "p_session_id": str(session_id),
+        "p_source_message_id": str(payload.source_message_id),
+        "p_excerpt": payload.excerpt,
+    })
+    memory = validated(RealMemory, {"clarification_question": None, **row})
+    if (
+        memory["session_id"] != str(session_id)
+        or memory["source_message_id"] != str(payload.source_message_id)
+        or memory["value"] != payload.excerpt
+        or memory["evidence"] != payload.excerpt
+        or memory["status"] != "confirmed"
+        or memory["uncertain"]
+        or memory["corrected_value"] is not None
+        or memory["clarification_question"] is not None
+    ):
+        raise unavailable()
+    return memory
 
 
 @router.patch("/memories/{memory_id}", response_model=RealMemory)

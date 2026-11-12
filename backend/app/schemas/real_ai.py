@@ -98,6 +98,21 @@ class RealTextMessageCreate(StrictRequest):
         return original_text(value)
 
 
+class RealMemoryFromMessageCreate(StrictRequest):
+    source_message_id: UUID
+    excerpt: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("source_message_id", mode="before")
+    @classmethod
+    def uuid_text(cls, value):
+        return UUID(value) if isinstance(value, str) else value
+
+    @field_validator("excerpt")
+    @classmethod
+    def original_excerpt(cls, value):
+        return original_text(value)
+
+
 class RealMemory(MemoryResponse):
     clarification_question: str | None = Field(max_length=1000)
 

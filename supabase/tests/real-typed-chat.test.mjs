@@ -254,6 +254,58 @@ test('typed originals and existing voice share an owned immutable conversation l
       assert.equal(audio.assistant_message_id,english.turn.message.id);assert.deepEqual(audio.provenance,provider);
     });
 
+    await t.test('a Swedish owner can save original words with no extracted memories and use them through draft, edit and PDF',async()=>{
+      const words='På Öland såg jag en groda. 🐸';
+      const voiceTurn=await voice(db,'Vi var på semester. '+words,{owner:B,project:PB,session:SB});
+      const before=await user(db,B,()=>rpc(db,'get_real_story_context',[PB],['uuid']));
+      assert.equal(before.confirmed_count,0);
+      const save=(owner,session,message,excerpt)=>user(db,owner,()=>rpc(db,'save_real_memory_from_message',
+        [session,message,excerpt],['uuid','uuid','text']));
+      const id=voiceTurn.turn.user_message.id;
+      await assert.rejects(()=>save(A,SB,id,words),errorCode('P0002'));
+      await assert.rejects(()=>save(B,SA,id,words),errorCode('P0002'));
+      await assert.rejects(()=>save(B,SB,legacy.turn.user_message.id,words),errorCode('P0002'));
+      await assert.rejects(()=>save(B,SB,voiceTurn.turn.message.id,'Tell me more.'),errorCode('P0002'));
+      await assert.rejects(()=>role(db,'anon',null,()=>rpc(db,'save_real_memory_from_message',
+        [SB,id,words],['uuid','uuid','text'])),errorCode('42501'));
+      await assert.rejects(()=>user(db,null,()=>rpc(db,'save_real_memory_from_message',
+        [SB,id,words],['uuid','uuid','text'])),errorCode('42501'));
+      for(const invalid of [null,'',' ','\t','london','x'.repeat(1001)])
+        await assert.rejects(()=>save(B,SB,id,invalid),errorCode('22023'));
+
+      const saved=await save(B,SB,id,words);
+      assert.equal(saved.source_message_id,id);
+      assert.equal(saved.project_id,PB);
+      assert.equal(saved.session_id,SB);
+      assert.equal(saved.value,words);
+      assert.equal(saved.evidence,words);
+      assert.equal(saved.status,'confirmed');
+      assert.equal(saved.clarification_question,null);
+      assert.equal(saved.owner_id,undefined);
+      assert.deepEqual(await save(B,SB,id,words),saved);
+      assert.equal((await user(db,A,()=>db.query('SELECT id FROM public.real_memories WHERE id=$1',[saved.id]))).rows.length,0);
+      await assert.rejects(()=>user(db,B,()=>db.exec('SELECT * FROM memy_private.user_selected_story_memories')),errorCode('42501'));
+
+      const context=await user(db,B,()=>rpc(db,'get_real_story_context',[PB],['uuid']));
+      assert.equal(context.confirmed_count,1);
+      assert.equal(context.source_memories[0].evidence,words);
+      const op=await claim(db,{kind:'generation',owner:B,project:PB,session:null});
+      const draft=await complete(db,op,{content:words,source_memories:context.source_memories,
+        model_review:{unsupported_claims:[]}},B);
+      assert.equal(draft.language,'sv');
+      const edited=await user(db,B,()=>rpc(db,'edit_real_story_draft',[draft.draft_id,1,'Jag såg en groda på Öland.'],
+        ['uuid','integer','text']));
+      const exported=await user(db,B,()=>rpc(db,'record_real_story_export',
+        [draft.draft_id,edited.revision,'Svenska minnen',true,true,1,1024,'memy-svenska-minnen.pdf','memy_real_pdf_v1'],
+        ['uuid','integer','text','boolean','boolean','integer','integer','text','text']));
+      assert.equal(exported.draft_id,draft.draft_id);
+
+      await user(db,B,()=>rpc(db,'review_real_memory',[saved.id,1,'rejected',null],['uuid','integer','text','text']));
+      await assert.rejects(()=>save(B,SB,id,words),errorCode('40001'));
+      await db.query('DELETE FROM public.real_conversation_messages WHERE id=$1',[id]);
+      assert.equal((await db.query('SELECT memory_id FROM memy_private.user_selected_story_memories WHERE memory_id=$1',[saved.id])).rows.length,0);
+    });
+
     await t.test('source/session/account cascades leave no typed-message or memory orphans',async()=>{
       const temporary=await typed(db,'I remember Lund.',{memories:[{fact_type:'location',value:'Lund',evidence:'Lund'}]});
       await db.query('DELETE FROM public.real_text_inputs WHERE input_id=$1',[temporary.op.operation_id]);

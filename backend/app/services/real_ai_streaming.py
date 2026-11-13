@@ -4,6 +4,7 @@ A single worker owns the existing workflow/claim/governor. Cancellation joins
 that worker; this module never resubmits, retries, or writes provider data.
 """
 import asyncio
+from base64 import b64encode
 import json
 from uuid import UUID
 
@@ -16,16 +17,18 @@ from app.services.real_ai_progress import turn_progress
 from app.services.real_ai_resources import validated
 
 MAX_EVENT_BYTES = 1_000_000
+# The verified Realtime WAV is bounded by 45 seconds of 24kHz mono PCM.
+MAX_SPEECH_EVENT_BYTES = 3_000_000
 
 
-def _frame(event):
+def _frame(event, maximum=MAX_EVENT_BYTES):
     data = json.dumps(event, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
-    if len(data) > MAX_EVENT_BYTES:
+    if len(data) > maximum:
         raise APIError(503, "REAL_AI_UNCERTAIN", "Check the saved result before trying again.")
     return b"data: " + data + b"\n\n"
 
 
-async def stream_turn_response(request, action):
+async def stream_turn_response(request, action, prepare_speech=None):
     queue = asyncio.Queue(maxsize=4)
     operation = None
     reply = None
@@ -65,7 +68,26 @@ async def stream_turn_response(request, action):
             result = validated(RealTurn, await action())
             if reply is not None and result["message"]["text"] != reply:
                 raise APIError(503, "REAL_AI_UNCERTAIN", "Check the saved result before trying again.")
-            await queue.put(("result", result))
+            if prepare_speech is not None and operation is not None:
+                # The conversation claim and workflow are already complete.
+                # A speech failure must never change the saved turn's status.
+                await queue.put(("event", {"type": "saved", "result": result}))
+                try:
+                    metadata, audio = await prepare_speech(result)
+                    speech = _frame({"type": "speech", "metadata": metadata,
+                                     "audio": b64encode(audio).decode("ascii")}, MAX_SPEECH_EVENT_BYTES)
+                except asyncio.CancelledError:
+                    if closing:
+                        raise
+                    await queue.put(("speech-error", APIError(503, "REAL_AI_UNCERTAIN", "Check the saved reply.")))
+                except APIError as error:
+                    await queue.put(("speech-error", error))
+                except Exception:
+                    await queue.put(("speech-error", APIError(503, "REAL_AI_UNCERTAIN", "Check the saved reply.")))
+                else:
+                    await queue.put(("speech", speech))
+            else:
+                await queue.put(("result", result))
         except asyncio.CancelledError:
             if closing:
                 raise
@@ -110,11 +132,15 @@ async def stream_turn_response(request, action):
             if kind == "result":
                 yield _frame({"type": "completed", "result": item})
                 return
-            if kind == "error":
+            if kind == "speech":
+                yield item
+                return
+            if kind in ("error", "speech-error"):
                 error_response = await api_error_handler(request, item)
                 body = json.loads(error_response.body)
-                event = {"type": "error", "status": error_response.status_code, "error": body["error"],
-                    "operation_id": error_response.headers.get("x-memy-operation-id", operation["operation_id"]),
+                default_id = operation["operation_id"] if kind == "error" else None
+                event = {"type": kind, "status": error_response.status_code, "error": body["error"],
+                    "operation_id": error_response.headers.get("x-memy-operation-id", default_id),
                     "recovery": error_response.headers.get("x-memy-recovery"),
                     "retry_after": error_response.headers.get("retry-after")}
                 yield _frame(event)

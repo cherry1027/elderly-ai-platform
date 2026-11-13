@@ -247,12 +247,21 @@ async def verify_source_transcript(gateway, transcript_id, session_id, session):
 
 
 @router.post("/story-sessions/{session_id}/messages", response_model=RealTurn)
-async def send_message(session_id: UUID, payload: RealMessageCreate, request: Request, gateway: Gateway, idempotency_key: Key):
+async def send_message(session_id: UUID, payload: RealMessageCreate, request: Request, gateway: Gateway, idempotency_key: Key,
+                       autoplay: bool = False):
     if (request.headers.get("accept") == "text/event-stream"
         and request.app.state.settings.real_ai_stream_turn_enabled
         and request.app.state.settings.real_ai_combined_turn_enabled):
+        async def prepare_reply(result):
+            message = result["message"]
+            # Stable across reconnects and manual first playback. Never
+            # synthesize a provisional reply or renew an expired clip here.
+            metadata, audio = await prepare_speech(request, gateway, message, UUID(message["id"]))
+            return metadata, audio
+
         return await stream_turn_response(request,
-            lambda: _send_message(session_id, payload, request, gateway, idempotency_key))
+            lambda: _send_message(session_id, payload, request, gateway, idempotency_key),
+            prepare_reply if autoplay else None)
     return await _send_message(session_id, payload, request, gateway, idempotency_key)
 
 
@@ -487,6 +496,19 @@ async def speak(message_id: UUID, payload: RealSpeechRequest, request: Request, 
     if message["role"] != "assistant":
         raise APIError(422, "ASSISTANT_MESSAGE_REQUIRED", "Choose an interviewer reply.")
     language_matches(payload.language, message)
+    result, data = await prepare_speech(request, gateway, message, idempotency_key)
+    if request.headers.get("accept") == "audio/wav":
+        return wav_response(data, result, {
+            "Vary": "Accept",
+            "X-Memy-Speech-Metadata": json.dumps(result, ensure_ascii=True, separators=(",", ":")),
+        })
+    response.headers["Vary"] = "Accept"
+    return result
+
+
+async def prepare_speech(request, gateway, message, idempotency_key):
+    message_id = UUID(message["id"])
+    language = message["language"]
     check_operation_policy(request, kind="speech")
     audio = None
 
@@ -499,10 +521,10 @@ async def speak(message_id: UUID, payload: RealSpeechRequest, request: Request, 
 
     result = await execute(request, gateway, project_id=UUID(message["project_id"]),
         session_id=UUID(message["session_id"]), kind="speech", key=idempotency_key,
-        fingerprint=digest({"assistant_id":str(message_id),"text_sha256":hashlib.sha256(message["text"].encode()).hexdigest(),"language":payload.language}),
+        fingerprint=digest({"assistant_id":str(message_id),"text_sha256":hashlib.sha256(message["text"].encode()).hexdigest(),"language":language}),
         produce=produce, model=request.app.state.settings.real_ai_speech_model, speech_assistant=message)
     cache = request.app.state.real_ai.cache
-    if result["assistant_message_id"] != str(message_id) or result["language"] != payload.language:
+    if result["assistant_message_id"] != str(message_id) or result["language"] != language:
         raise unavailable()
     speech_id = UUID(result["speech_id"])
     expires = datetime.fromisoformat(result["expires_at"])
@@ -512,19 +534,12 @@ async def speak(message_id: UUID, payload: RealSpeechRequest, request: Request, 
         cache.put(gateway.user.id, speech_id, audio.data, result["audio_sha256"], expires_at=expires.timestamp())
     if expires <= datetime.now(timezone.utc):
         raise APIError(410, "SPEECH_EXPIRED", "Spoken reply expired. Request a new reply explicitly.")
-    if request.headers.get("accept") == "audio/wav":
-        # Fresh bytes have just passed the same private cache write and hash
-        # check. Same-key replays must recover those bytes from the owned cache.
-        data = audio.data if audio is not None else cache.get(gateway.user.id, speech_id, result["audio_sha256"])
-        if len(data) != result["audio_size"]:
-            raise unavailable()
-        return wav_response(data, result, {
-            "Vary": "Accept",
-            "X-Memy-Speech-Metadata": json.dumps(result, ensure_ascii=True, separators=(",", ":")),
-        })
-    cache.get(gateway.user.id, speech_id, result["audio_sha256"])
-    response.headers["Vary"] = "Accept"
-    return result
+    # Fresh bytes passed the cache write and hash check. Same-key replays
+    # recover bytes from the owned cache without entering the provider.
+    data = audio.data if audio is not None else cache.get(gateway.user.id, speech_id, result["audio_sha256"])
+    if len(data) != result["audio_size"]:
+        raise unavailable()
+    return result, data
 
 
 def wav_response(data, metadata, headers=None):

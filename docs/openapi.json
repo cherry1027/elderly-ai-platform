@@ -9388,6 +9388,16 @@
             }
           },
           {
+            "in": "query",
+            "name": "autoplay",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Autoplay",
+              "type": "boolean"
+            }
+          },
+          {
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,

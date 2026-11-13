@@ -1,8 +1,10 @@
 """Opt-in early reply UI transport, never a replacement for atomic completion."""
 import asyncio
+from base64 import b64decode
+from hashlib import sha256
 import json
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,9 +13,12 @@ from starlette.requests import Request
 from app.api.real_ai import get_real_gateway
 from app.core.errors import APIError
 from app.services.real_ai_progress import emit_progress, turn_progress
+from app.services.openai_client import mark_ai_dispatched
+from app.services.real_ai_provider import SpeechAudio
 from app.services.real_ai_streaming import stream_turn_response
 from tests.test_real_ai_api import harness, PROJECT, SESSION, TRANSCRIPT, OTHER
 from tests.test_real_text_chat import text_harness, send, ORIGINAL
+from tests.test_real_ai_reconciliation import ReconciliationGateway, install_gateway, wav_bytes
 
 
 def enable(app):
@@ -110,6 +115,62 @@ def test_voice_route_uses_same_stream_and_source_contract(harness):
     events=frames(response)
     assert events[-1]['result']['user_message']['source_transcript_id']==str(TRANSCRIPT)
     assert provider.calls==gateway.claim_count==1
+
+
+@pytest.mark.parametrize('language', ['en', 'sv'])
+@pytest.mark.parametrize('speech_outcome', ['ready', 'timeout', 'disabled'])
+def test_recorded_turn_saves_text_before_single_speech_attempt(harness, language, speech_outcome):
+    app, _, provider = harness(language)
+    enable(app)
+    app.state.settings.real_ai_speech_enabled = speech_outcome != 'disabled'
+    class VoiceGateway(ReconciliationGateway):
+        async def complete(self, claim, payload, provenance):
+            result = await super().complete(claim, payload, provenance)
+            if claim['kind'] == 'conversation':
+                result.update(clarifications=[], requires_clarification=False)
+            return result
+
+    gateway = VoiceGateway(language)
+    install_gateway(app, gateway)
+    spoken = []
+    data = wav_bytes()
+
+    async def synthesize(text, spoken_language):
+        turn = next(row['result'] for row in gateway.claims.values()
+                    if row['kind'] == 'conversation' and row['status'] == 'completed')
+        assert turn['message']['text'] == text
+        assert ('speech', UUID(turn['message']['id'])) in gateway.claims
+        spoken.append((text, spoken_language))
+        mark_ai_dispatched()
+        if speech_outcome == 'timeout':
+            raise APIError(504, 'AI_PROVIDER_TIMEOUT', 'The AI provider timed out.')
+        return SpeechAudio(data, 'audio/wav', sha256(data).hexdigest(), 0.01, 'fixture', 'fixture')
+
+    provider.synthesize = synthesize
+    url = f'/api/v2/story-sessions/{SESSION}/messages?autoplay=true'
+    payload = {'source_transcript_id': str(TRANSCRIPT), 'language': language}
+    headers = {'Accept': 'text/event-stream', 'Idempotency-Key': str(uuid4())}
+    with TestClient(app) as client:
+        response = client.post(url, json=payload, headers=headers)
+        replay = client.post(url, json=payload, headers=headers)
+    events = frames(response)
+    assert [event['type'] for event in events[:3]] == ['operation', 'saving', 'saved']
+    assert len(events) == 4
+    saved = events[2]['result']
+    assert replay.json() == saved and provider.calls == 1
+    if speech_outcome == 'ready':
+        assert events[3]['type'] == 'speech'
+        assert events[3]['metadata']['assistant_message_id'] == saved['message']['id']
+        assert events[3]['metadata']['language'] == language
+        assert b64decode(events[3]['audio']) == data
+        assert gateway.failures == 0
+    else:
+        assert events[3]['type'] == 'speech-error'
+        assert events[3]['error']['code'] == ('AI_PROVIDER_TIMEOUT' if speech_outcome == 'timeout' else 'LIVE_AI_DISABLED')
+        assert events[3]['operation_id'] != events[0]['operation_id']
+        assert gateway.failures == (speech_outcome == 'timeout')
+    assert spoken == ([(saved['message']['text'], language)] if speech_outcome != 'disabled' else [])
+    assert [row['status'] for row in gateway.claims.values() if row['kind'] == 'conversation'] == ['completed']
 
 
 def test_response_cancellation_joins_worker_and_clears_progress_context():

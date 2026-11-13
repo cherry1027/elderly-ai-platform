@@ -28,6 +28,7 @@ import { conversationModeCopy, readConversationMode, saveConversationMode, type 
 import { mediaPrivacy } from './media-privacy';
 import { MemoriesContent, AutobiographyContent, SavedWordsContent, isSavedMessageMemory, storyContentCopy } from './StoryContent';
 import { ChatMessageHistory } from './ChatMessageHistory';
+import { VoiceAction, VoiceRecordingControls } from './VoiceRecordingControls';
 import { SpeechBytesCache } from './speech-bytes-cache';
 import { OriginalWordsEvidence } from './OriginalWordsEvidence';
 
@@ -539,17 +540,28 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     if (!replyAllowed()) { setNotice(t.recordingSavedReplyLater); return; }
     await voiceReply(signal, check, result, createRecordingId());
   }
+  const discardCapture = () => {
+    if (!capturing.current || !recorder.current || locked.current) return;
+    const capturedBy = recorder.current;
+    recorder.current = null; capturing.current = false; setRecording(false); setDuration(0);
+    // Local retirement uses the existing privacy owner and creates no write.
+    void run(async (_signal, check) => { await mediaPrivacy.retire(capturedBy); check(); });
+  };
   const stopCapture = (userGesture = false) => {
     if (!capturing.current || !recorder.current || locked.current) return;
     // A second gesture can restore browser playback permission after the mic dialog.
     if (userGesture) playback.current?.prepare?.();
     capturing.current = false; setRecording(false);
-    const key = createRecordingId();
-    void run(async (signal, check) => {
+    void run(async (signal, check, beginOperation) => {
       const recorded = await recorder.current!.stop(); check(); audio.current = recorded;
       setLocalRecording(recorded); setDuration(recorded.durationMs);
-      await transcribeAndReply(signal, check, recorded, key);
-    }, { key, kind: 'transcription', voice: true }, 'recording');
+      // A time limit retains the clip. Only the arrow authorizes a write.
+      if (userGesture) {
+        const key = createRecordingId();
+        beginOperation({ key, kind: 'transcription', voice: true });
+        await transcribeAndReply(signal, check, recorded, key);
+      }
+    }, undefined, userGesture ? 'recording' : null);
   };
   useLayoutEffect(() => { stopRecordingAction.current = stopCapture; });
   useEffect(() => {
@@ -578,7 +590,8 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     });
   };
   const startCapture = () => {
-    if (modeRef.current !== 'voice' || currentSection.current !== 'chat' || suspended || !mounted.current || authenticationBlocked.current || bootstrap.current || !active.current || capturing.current || locked.current || !sessionId || !capabilities?.transcription || audio.current || unresolved || ambiguousEdit || usageBlocked || serviceBlocked || mediaPrivacy.isBlocked()) return;
+    if ( currentSection.current !== 'chat' || suspended || !mounted.current || authenticationBlocked.current || bootstrap.current || !active.current || capturing.current || locked.current || !sessionId || !capabilities?.transcription || audio.current || unresolved || ambiguousEdit || usageBlocked || serviceBlocked || mediaPrivacy.isBlocked()) return;
+    rememberMode('voice');
     if (voiceConsent.current !== voiceScope()) {
       consentIntent.current = { epoch: epoch.current, scope: voiceScope() }; setConsentOpen(true); return;
     }
@@ -592,6 +605,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   };
   const retryRecording = () => {
     if (!audio.current || locked.current || unresolved || ambiguousEdit || usageBlocked || serviceBlocked || voiceConsent.current !== voiceScope()) return;
+    playback.current?.prepare?.();
     const captured = audio.current, key = createRecordingId();
     void run((signal, check) => transcribeAndReply(signal, check, captured, key), { key, kind: 'transcription', voice: true }, 'recording');
   };
@@ -611,7 +625,8 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     void run((signal, check) => voiceReply(signal, check, transcript, key), { key, kind: 'conversation', voiceTranscriptId: transcript.transcript_id });
   };
   const sendText = () => {
-    if (modeRef.current === 'voice' || currentSection.current !== 'chat' || suspended || !mounted.current || authenticationBlocked.current || bootstrap.current || locked.current || pending.current || !active.current || !capabilities?.conversation || unresolved || ambiguousEdit || recording || localRecording || usageBlocked || serviceBlocked || !textDraft.trim() || [...textDraft].length > 4000) return;
+    if ( currentSection.current !== 'chat' || suspended || !mounted.current || authenticationBlocked.current || bootstrap.current || locked.current || pending.current || !active.current || !capabilities?.conversation || unresolved || ambiguousEdit || recording || localRecording || usageBlocked || serviceBlocked || !textDraft.trim() || [...textDraft].length > 4000) return;
+    rememberMode('write');
     const original = textDraft, key = createRecordingId();
     void run(async (signal, check) => {
       setTextSending(true); setOutbox({ key, text: original }); setTextDraft(''); clearLatestReply();
@@ -900,7 +915,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const chatReady = readStates.messages.loaded && readStates.transcripts.loaded;
   const inputBlocked = busy || suspended || !!unresolved || ambiguousEdit || recording || !!localRecording || mediaBlocked || !chatReady;
   const actionDefaults = { language, disabled: blocked };
-  const busyLabel = activity === 'recording' ? t.transcribing : activity === 'speech' ? t.preparingVoice : activity === 'story' ? t.creatingStory
+  const busyLabel = activity === 'recording' ? t.thinking : activity === 'speech' ? t.preparingVoice : activity === 'story' ? t.creatingStory
     : activity === 'pdf' ? t.preparingPdf : activity === 'checking' ? t.checkingSaved : activity === 'saving' ? t.savingChanges : t.busy;
   const note = (value: string) => <Text allowFontScaling accessibilityLanguage={locale} style={styles.note}>{value}</Text>;
   const checkbox = (label: string, checked: boolean, action: () => void, disabled: boolean) => <Pressable accessibilityRole="checkbox"
@@ -928,14 +943,11 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       <ActionButton language={language} label={t.viewLatestReply} onPress={viewLatestReply} disabled={blocked} />}
     {(textSending || voiceReplySending) && !replyPreview && <Text allowFontScaling accessibilityLiveRegion="polite" style={styles.note}>{t.thinking}</Text>}
     {busy && !localRecording && !textSending && !voiceReplySending && <Text allowFontScaling accessibilityLiveRegion="polite" style={styles.note}>{busyLabel}</Text>}
-    {recording ? <>
-      <Text allowFontScaling accessibilityLiveRegion="polite" style={styles.speaker}>{t.recording} · {Math.floor(duration / 1000)}s / 60s</Text>
-      <ActionButton language={language} label={t.stop} onPress={() => stopCapture(true)} disabled={busy} primary />
-    </> : localRecording ? <>
-      {note(busy ? t.transcribing : t.recorded)}
-      {!busy && !unresolved && !usageBlocked && !serviceBlocked && <ActionButton language={language} label={t.retry} onPress={retryRecording}
-        disabled={usageBlocked || mediaBlocked || !capabilities?.transcription} primary />}
-      <ActionButton language={language} label={t.discard} onPress={discardAudio} disabled={busy || !!unresolved} />
+    {recording || localRecording ? <>
+      {busy && note(t.thinking)}
+      <VoiceRecordingControls language={language} duration={duration} retained={!recording}
+        disabled={busy || !!unresolved} sendDisabled={usageBlocked || serviceBlocked || mediaBlocked || !capabilities?.transcription}
+        onDiscard={recording ? discardCapture : discardAudio} onSend={recording ? () => stopCapture(true) : retryRecording} />
     </> : <>
       {preferredMode === null && <>
         <Text allowFontScaling accessibilityLanguage={locale} style={styles.speaker}>{t.chooseMode}</Text>
@@ -944,22 +956,22 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
           <View style={styles.modeAction}><ActionButton {...actionDefaults} label={t.speakMode} onPress={() => chooseMode('voice')} /></View>
         </View>
       </>}
-      {mode === 'voice' ? <ActionButton language={language} label={playing ? t.stopVoice : t.start}
-        onPress={playing ? stopVoice : startCapture} primary
-        disabled={!playing && (blocked || !chatReady || usageBlocked || serviceBlocked || !sessionId || !capabilities?.transcription)} />
-      : <View testID="conversation-composer-row" style={[styles.composerRow, Math.min(width - layout.screenPadding * 2, layout.contentWidth) / Math.max(1, fontScale) < 320 && styles.stackedComposer]}>
+      <View testID="conversation-composer-row" style={[styles.composerRow, Math.min(width - layout.screenPadding * 2, layout.contentWidth) / Math.max(1, fontScale) < 320 && styles.stackedComposer]}>
         <TextInput testID="conversation-input" accessibilityLabel={t.input} accessibilityLanguage={locale} allowFontScaling placeholder={t.input} value={textDraft}
           multiline maxLength={8000} editable={!inputBlocked} style={styles.chatInput}
           onChangeText={value => {
-            if (locked.current || !active.current || modeRef.current === 'voice') return;
-            if (modeRef.current === null && value) rememberMode('write');
+            if (locked.current || !active.current) return;
+            if (value && modeRef.current !== 'write') chooseMode('write');
             setTextDraft(value);
           }} />
         <View testID="conversation-composer-actions" style={styles.composerActions}>
+          <VoiceAction language={language} label={playing ? t.stopVoice : t.start} icon={playing ? 'stop' : 'mic'}
+            onPress={playing ? stopVoice : startCapture}
+            disabled={!playing && (blocked || !chatReady || usageBlocked || serviceBlocked || !sessionId || !capabilities?.transcription)} />
           <SendAction language={language} label={t.send} onPress={sendText}
             disabled={blocked || !chatReady || usageBlocked || serviceBlocked || !sessionId || !capabilities?.conversation || !textDraft.trim() || [...textDraft].length > 4000} />
         </View>
-      </View>}
+      </View>
     </>}
     <View style={styles.modeChoices}>
       {preferredMode && !recording && !localRecording && <View style={styles.modeAction}>

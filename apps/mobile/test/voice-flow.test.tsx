@@ -1,20 +1,20 @@
+import { VoiceRecordingControls } from '../src/real-ai/VoiceRecordingControls';
+import { getComponents } from './component-probe';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { AppState, type AppStateStatus } from 'react-native';
 import * as api from '../src/real-ai/api';
 import * as projects from '../src/api/story-projects';
 import { createNativeRecorder, createRecordingId } from '../src/audio/native-recorder';
 import { RealStoryWorkspace } from '../src/real-ai/RealStoryWorkspace';
-import { LargeButton } from '../src/components/LargeButton';
-import { getComponents } from './component-probe';
 import { realCopy } from '../src/real-ai/copy';
 import { conversationModeCopy } from '../src/real-ai/conversation-mode';
 import { mediaPrivacy } from '../src/real-ai/media-privacy';
 import { realIds as ids, realMessage, realTranscript } from './real-ai-fixtures';
 
-jest.mock('../src/components/LargeButton', () => {
-  const actual = jest.requireActual<typeof import('../src/components/LargeButton')>('../src/components/LargeButton');
+jest.mock('../src/real-ai/VoiceRecordingControls', () => {
+  const actual = jest.requireActual<typeof import('../src/real-ai/VoiceRecordingControls')>('../src/real-ai/VoiceRecordingControls');
   const { observeComponent } = jest.requireActual<typeof import('./component-probe')>('./component-probe');
-  return { ...actual, LargeButton: observeComponent(actual.LargeButton) };
+  return { ...actual, VoiceRecordingControls: observeComponent(actual.VoiceRecordingControls) };
 });
 jest.mock('../src/real-ai/api', () => ({ ...jest.requireActual('../src/real-ai/api'),
   getRealCapabilities: jest.fn(), getRealTranscripts: jest.fn(), getRealMessages: jest.fn(), getRealMemories: jest.fn(), getRealDrafts: jest.fn(),
@@ -74,6 +74,7 @@ beforeEach(() => {
   jest.mocked(createNativeRecorder).mockReturnValue(recorder);
   jest.mocked(createRecordingId).mockImplementation(() => `30000000-0000-4000-8000-${String(++keyNumber).padStart(12, '0')}`);
   jest.mocked(api.transcribeRealRecording).mockResolvedValue(transcript); jest.mocked(api.sendRealMessage).mockResolvedValue(turn);
+  recorder.getStatus.mockReturnValue({ durationMs: 1000, isRecording: true, interrupted: false });
   recorder.requestPermission.mockResolvedValue(true); recorder.start.mockResolvedValue(undefined); recorder.stop.mockResolvedValue(clip);
   recorder.discard.mockResolvedValue(undefined); recorder.dispose.mockResolvedValue(undefined);
 });
@@ -184,14 +185,67 @@ describe('voice consent and automatic chaining — synthetic transports only', (
     expect(screen.getByLabelText(t.input).props.value).toBe('Keep my unsent typed words.'); expect(api.sendRealTextMessage).not.toHaveBeenCalled();
     expect(api.createRealSpeech).not.toHaveBeenCalled();
   });
-  it('treats duplicate Stop presses as one transcription and one conversation', async () => {
-    await opened(); await permitVoice(); const stop = getComponents(LargeButton).find(button => button.props.label === t.stop);
+  it('treats duplicate send-arrow presses as one transcription and one conversation', async () => {
+    await opened(); await permitVoice(); const stop = getComponents(VoiceRecordingControls)[0];
     expect(stop).toBeDefined();
-    const stopCapture = stop!.props.onPress;
+    const stopCapture = stop!.props.onSend;
     await act(() => { stopCapture(); stopCapture(); });
     await waitFor(() => expect(api.sendRealMessage).toHaveBeenCalledTimes(1));
     expect(recorder.stop).toHaveBeenCalledTimes(1); expect(api.transcribeRealRecording).toHaveBeenCalledTimes(1);
     expect(api.createRealSpeech).not.toHaveBeenCalled();
+  });
+  it.each(['en', 'sv'] as const)('starts from the microphone and exposes accessible discard/send controls in %s', async language => {
+    const copy = realCopy[language];
+    await render(<RealStoryWorkspace {...props} language={language} />); await ready();
+    await press(copy.start); await press(copy.consentContinue);
+    expect(recorder.start).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: copy.stop })).toBeEnabled();
+    expect(screen.getByRole('button', { name: copy.discard })).toBeEnabled();
+    expect(screen.queryByText(copy.start)).toBeNull();
+    expect(screen.queryByText(copy.stop)).toBeNull();
+    await press(copy.discard);
+    expect(api.transcribeRealRecording).not.toHaveBeenCalled();
+    expect(mockPlayback.play).not.toHaveBeenCalled();
+  });
+  it('keeps recording across quiet status polls without ending or sending', async () => {
+    await opened(); await permitVoice();
+    await waitFor(() => expect(recorder.getStatus.mock.calls.length).toBeGreaterThanOrEqual(2));
+    expect(screen.getByRole('button', { name: t.stop })).toBeEnabled();
+    expect(recorder.stop).not.toHaveBeenCalled();
+    expect(api.transcribeRealRecording).not.toHaveBeenCalled();
+    await press(t.discard);
+  });
+  it('discards active capture locally without transcription, conversation, or a paid operation', async () => {
+    await opened(); await permitVoice(); await press(t.discard);
+    await waitFor(() => expect(screen.getByRole('button', { name: t.start })).toBeEnabled());
+    expect(recorder.dispose).toHaveBeenCalledTimes(1);
+    expect(recorder.stop).not.toHaveBeenCalled();
+    expect(createRecordingId).not.toHaveBeenCalled();
+    expect(api.transcribeRealRecording).not.toHaveBeenCalled();
+    expect(api.sendRealMessage).not.toHaveBeenCalled();
+    expect(api.createRealSpeech).not.toHaveBeenCalled();
+  });
+  it('retains the 60-second clip until one explicit send, even after duplicate arrow presses', async () => {
+    await opened(); await permitVoice();
+    recorder.stop.mockResolvedValueOnce({ ...clip, durationMs: 60000 });
+    recorder.getStatus.mockReturnValue({ durationMs: 60000, isRecording: false, interrupted: false });
+    await waitFor(() => expect(screen.getByText(t.recordingReady)).toBeOnTheScreen());
+    expect(api.transcribeRealRecording).not.toHaveBeenCalled();
+    expect(createRecordingId).not.toHaveBeenCalled();
+    const send = getComponents(VoiceRecordingControls)[0]!.props.onSend;
+    await act(() => { send(); send(); });
+    await waitFor(() => expect(api.sendRealMessage).toHaveBeenCalledTimes(1));
+    expect(api.transcribeRealRecording).toHaveBeenCalledTimes(1);
+    expect(recorder.stop).toHaveBeenCalledTimes(1);
+  });
+  it('allows discarding the retained limit clip without sending', async () => {
+    await opened(); await permitVoice();
+    recorder.getStatus.mockReturnValue({ durationMs: 60000, isRecording: false, interrupted: false });
+    await waitFor(() => expect(screen.getByText(t.recordingReady)).toBeOnTheScreen());
+    await press(t.discard);
+    expect(recorder.discard).toHaveBeenCalledWith(clip);
+    expect(api.transcribeRealRecording).not.toHaveBeenCalled();
+    expect(api.sendRealMessage).not.toHaveBeenCalled();
   });
   it('does not touch the microphone or ask voice consent while real AI is off', async () => {
     jest.mocked(api.getRealCapabilities).mockResolvedValue({ contract: 'real-v2', mode: 'real', enabled: false,

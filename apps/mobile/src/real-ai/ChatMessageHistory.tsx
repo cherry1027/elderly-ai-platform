@@ -5,6 +5,7 @@ import { accessibilityLanguages, type Language } from '../i18n';
 import { colors } from '../theme';
 import type { RealMessage } from './api';
 import { realCopy } from './copy';
+import { VoiceAction } from './VoiceRecordingControls';
 interface RowProps {
   message: RealMessage; language: Language; storyLanguage: Language; disabled: boolean;
   renewing: boolean; showAudio: boolean; onSpeak(message: RealMessage): void; onMessageLayout?(id: string, y: number): void;
@@ -16,8 +17,9 @@ const MessageBubble = memo(function MessageBubble({ message, language, storyLang
     <Text allowFontScaling accessibilityLanguage={accessibilityLanguages[language]} style={styles.speaker}>{message.role === 'user' ? t.you : t.assistant}</Text>
     {message.role === 'user' && message.source_transcript_id && <Text allowFontScaling accessibilityLanguage={accessibilityLanguages[language]} style={styles.note}>{t.voiceMessage}</Text>}
     <Text allowFontScaling selectable accessibilityLanguage={accessibilityLanguages[storyLanguage]} style={styles.body}>{message.text}</Text>
-    {message.role === 'assistant' && showAudio && <LargeButton language={language} density="compact" variant="tertiary"
-      label={renewing ? t.renewSpeech : t.speak} onPress={() => onSpeak(message)} disabled={disabled} />}
+    {message.role === 'assistant' && showAudio && (renewing
+      ? <LargeButton language={language} density="compact" variant="tertiary" label={t.renewSpeech} onPress={() => onSpeak(message)} disabled={disabled} />
+      : <VoiceAction language={language} icon="speaker" label={t.speak} onPress={() => onSpeak(message)} disabled={disabled} />)}
   </View>;
 });
 interface Props {

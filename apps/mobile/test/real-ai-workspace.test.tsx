@@ -73,7 +73,6 @@ async function ready(tab: 'chat' | 'memories' | 'book' = 'chat') {
 }
 async function press(label: string) { await fireEvent.press(screen.queryByRole('button', { name: label }) ?? screen.getByText(label)); await act(async () => {}); }
 async function selectVoice(copy: typeof realCopy.en | typeof realCopy.sv = t) {
-  if (screen.queryByRole('button', { name: copy.start })) return;
   const controls = conversationModeCopy[copy === realCopy.sv ? 'sv' : 'en'];
   if (screen.queryByRole('button', { name: copy.speakMode })) await press(copy.speakMode);
   else if (screen.queryByRole('button', { name: controls.switchToVoice })) await press(controls.switchToVoice);
@@ -168,11 +167,11 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     await press(t.consentCancel); await startVoice();
     expect(controls().getByRole('button', { name: t.stop })).toBeOnTheScreen();
     await press(t.stop);
-    expect(controls().getByText(t.transcribing)).toBeOnTheScreen();
+    expect(controls().getByText(t.thinking)).toBeOnTheScreen();
     expect(controls().getByRole('button', { name: t.discard })).toBeDisabled();
     // A proven unsuccessful upload retains only the local recording and its explicit recovery actions.
     await act(async () => transcript.reject(new api.RealAiError('unavailable', 503)));
-    expect(controls().getByRole('button', { name: t.retry })).toBeEnabled();
+    expect(controls().getByRole('button', { name: t.stop })).toBeEnabled();
     await fireEvent.press(controls().getByRole('button', { name: t.discard })); await act(async () => {});
     expect(recorder.discard).toHaveBeenCalledWith(clip);
     expect(controls().getByRole('button', { name: t.start })).toBeOnTheScreen();
@@ -550,7 +549,8 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     }
     await completeEdgeSwipe(screen.getByTestId('story-gesture-surface'));
     expect(screen.getByText(leaveCopy.en.dirty)).toBeOnTheScreen(); expect(props.onBack).not.toHaveBeenCalled();
-    await press(leaveCopy.en.keep); expect(screen.getByText(mode === 'active' ? t.stop : t.recorded)).toBeOnTheScreen();
+    await press(leaveCopy.en.keep); expect(screen.getByRole('button', { name: t.stop })).toBeOnTheScreen();
+    if (mode === 'local') expect(screen.getByText(t.recordingReady)).toBeOnTheScreen();
     expect(api.transcribeRealRecording).toHaveBeenCalledTimes(mode === 'local' ? 1 : 0);
     expect(api.sendRealMessage).not.toHaveBeenCalled();
   });
@@ -586,18 +586,18 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
 
 
 describe('native typed composer — synthetic UI only, no live provider or phone certification', () => {
-  it.each(['en', 'sv'] as const)('keeps Write and Speak separate without sending or losing unsent words in %s', async language => {
+  it.each(['en', 'sv'] as const)('keeps microphone and text available without sending or losing unsent words in %s', async language => {
     const copy = realCopy[language];
     jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant')]);
     await render(<RealStoryWorkspace {...props} language={language} />); await ready();
     expect(screen.getByRole('button', { name: copy.writeMode })).toBeEnabled();
     expect(screen.queryByRole('button', { name: copy.speak })).toBeNull();
-    expect(screen.queryByRole('button', { name: copy.start })).toBeNull();
+    expect(screen.getByRole('button', { name: copy.start })).toBeEnabled();
     await fireEvent.changeText(screen.getByLabelText(copy.input), 'A memory to finish later.');
     expect(screen.queryByText(copy.chooseMode)).toBeNull();
     expect(screen.getByRole('button', { name: conversationModeCopy[language].switchToVoice })).toBeEnabled();
     await selectVoice(copy);
-    expect(screen.queryByLabelText(copy.input)).toBeNull();
+    expect(screen.getByLabelText(copy.input)).toHaveDisplayValue('A memory to finish later.');
     expect(screen.getByRole('button', { name: copy.start })).toBeEnabled();
     expect(screen.getByRole('button', { name: copy.speak })).toBeOnTheScreen();
     await press(conversationModeCopy[language].switchToWrite);

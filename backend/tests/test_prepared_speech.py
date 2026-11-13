@@ -68,6 +68,12 @@ def test_prepared_speech_get_recovers_latest_owned_metadata_with_paid_gate_close
         "assistant_message_id": f"eq.{assistant}", "project_id": f"eq.{PROJECT}",
         "session_id": f"eq.{SESSION}",
     }, 1, "created_at.desc,speech_id.desc")] * 2
+    assert gateway.reads == [
+        ("real_conversation_messages", "id", assistant),
+        ("real_conversation_messages", "id", assistant),
+        ("real_speech", "speech_id", speech),
+        ("real_conversation_messages", "id", assistant),
+    ]
     assert provider.calls == gateway.claim_count == gateway.failures == 0
     assert gateway.rpc_calls == []
 
@@ -141,8 +147,8 @@ def test_prepared_speech_rejects_normalized_language_mismatch(harness):
     app, gateway, provider, assistant, *_ = prepared_fixture(harness)
     normalize = gateway.normalize_result
 
-    async def wrong_language(kind, row):
-        return {**await normalize(kind, row), "language": "sv"}
+    async def wrong_language(kind, row, *, speech_assistant=None):
+        return {**await normalize(kind, row, speech_assistant=speech_assistant), "language": "sv"}
 
     gateway.normalize_result = wrong_language
     with TestClient(app) as client:

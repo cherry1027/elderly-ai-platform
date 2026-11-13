@@ -26,6 +26,7 @@ import certifi
 from pydantic import SecretStr, ValidationError
 
 from app.core.errors import APIError
+from app.services.audio_upload import Recording
 from app.services.conversation_provider import MAX_SOURCE_TEXT_LENGTH, ProviderResult
 from app.services.interview_turn import plan_interview_turn, suggest_explicit_memory
 from app.services.openai_client import MAX_JSON_BYTES, MODEL_NAME, mark_ai_dispatched, strict_object, structured_body
@@ -348,6 +349,10 @@ class RealAIProvider:
         # The shared client probes a private immutable snapshot before upload.
         return await self._client.transcribe(path, language, self.transcription_model)
 
+    async def transcribe_recording(self, recording: Recording) -> str:
+        return await self._client.transcribe(recording.path, recording.language, self.transcription_model,
+                                             validated_recording=recording)
+
     def _prepare_turn_input(self, text, language, prior_facts, recent_messages):
         try:
             if language not in {"en", "sv"}:
@@ -397,18 +402,24 @@ class RealAIProvider:
         if governor is not None and getattr(governor, "budget_policy_path", None) is not None:
             governor.check_request_group([(self.text_model, size, _COMBINED_OUTPUT_TOKENS)])
         try:
-            early_reply = None
+            streamed_model_reply = None
             if streamed:
+                # The local plan already fixes the exact reply for these turns.
+                # Keep it provisional until the provider and the save complete.
+                if turn.reply is not None:
+                    await emit_progress({"type": "reply", "text": turn.reply})
+
                 async def on_text(prefix):
-                    nonlocal early_reply
-                    if early_reply is None:
+                    nonlocal streamed_model_reply
+                    if streamed_model_reply is None:
                         candidate = _provisional_reply(prefix, language)
                         if candidate is not None:
-                            early_reply = candidate
-                            await emit_progress({
-                                "type": "reply",
-                                "text": turn.render_reply(_without_fragment_question(candidate, language), MAX_SPEECH_CHARACTERS),
-                            })
+                            streamed_model_reply = candidate
+                            if turn.reply is None:
+                                await emit_progress({
+                                    "type": "reply",
+                                    "text": turn.render_reply(_without_fragment_question(candidate, language), MAX_SPEECH_CHARACTERS),
+                                })
                 raw = await self._client.structured_streamed(
                     operation="conversation", instructions=_STREAMED_INSTRUCTIONS,
                     payload=payload, schema=STREAMED_TURN_SCHEMA,
@@ -424,7 +435,7 @@ class RealAIProvider:
                 raise ValueError
             candidates = _turn_memories(raw["extraction"], text, language, known, turn)
             reply = _interviewer_reply(raw["reply"], language)
-            if early_reply is not None and early_reply != reply:
+            if streamed_model_reply is not None and streamed_model_reply != reply:
                 raise ValueError
             return ProviderResult(text=turn.render_reply(_without_fragment_question(reply, language), MAX_SPEECH_CHARACTERS),
                                   facts=candidates)

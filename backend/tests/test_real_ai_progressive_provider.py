@@ -211,6 +211,61 @@ def test_stream_preview_and_final_honor_pause_with_the_same_reply_and_grounded_m
     assert not script.calls and len(script.stream_calls) == 1
 
 
+@pytest.mark.parametrize(("language", "source", "questions", "expected"), [
+    ("sv", "Lund. Jag vill pausa nu.", (), "Självklart. Vi kan pausa här."),
+    ("en", "Can we move on?", (), "Of course. What other memory would you like to share?"),
+    ("en", "Yes, exactly.", ("Was that in Lund?",),
+     "Could you tell me that detail in your own words so I can capture it accurately?"),
+    ("sv", "Lund", ("Vad minns du?", "Vad hände sedan?", "Vem var med?"),
+     "Vill du berätta mer om det här eller gå vidare till ett annat minne?"),
+])
+def test_known_interview_reply_is_previewed_before_any_provider_output(language, source, questions, expected):
+    async def scenario():
+        started, finish = asyncio.Event(), asyncio.Event()
+        body = combined(language, "Vad minns du från Lund?" if language == "sv" else "What do you remember?")
+        if "Lund" not in source:
+            body["extraction"]["facts"] = []
+
+        class DelayedReply(ProgressiveScript):
+            async def structured_streamed(self, **kwargs):
+                started.set()
+                await finish.wait()
+                return await super().structured_streamed(**kwargs)
+
+        script = DelayedReply(body)
+        script.governor = Budget()
+        history = [{"role": "assistant", "text": question} for question in questions]
+        run, emitted = progressive(script, language, source, history)
+        task = asyncio.create_task(run())
+        try:
+            await asyncio.wait_for(started.wait(), 1)
+            assert not task.done() and script.governor.groups
+            assert emitted == [{"type": "reply", "text": expected}]
+        finally:
+            finish.set()
+            result = await task
+        assert result.text == expected
+        assert [fact.value for fact in result.facts] == (["Lund"] if "Lund" in source else [])
+        assert emitted == [{"type": "reply", "text": expected}]
+        assert len(script.stream_calls) == 1 and not script.calls
+
+    asyncio.run(scenario())
+
+
+def test_denied_request_group_has_no_known_preview_or_provider_attempt():
+    class ClosedBudget(Budget):
+        def check_request_group(self, calls):
+            raise APIError(429, "AI_USAGE_LIMIT", "Closed")
+
+    script = ProgressiveScript(combined("sv"))
+    script.governor = ClosedBudget()
+    run, emitted = progressive(script, "sv", "Jag vill pausa nu.")
+    with pytest.raises(APIError) as error:
+        asyncio.run(run())
+    assert error.value.code == "AI_USAGE_LIMIT"
+    assert emitted == script.stream_calls == script.calls == []
+
+
 def test_final_extraction_rejection_never_turns_preview_into_a_verified_result():
     body=combined();body['extraction']=extracted('en',evidence='Not in source')
     script=ProgressiveScript(body);run,emitted=progressive(script)

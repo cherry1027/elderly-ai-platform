@@ -91,7 +91,7 @@ def require_provider(request, *, kind, typed=False):
 
 
 async def execute(request, gateway, *, project_id, session_id, kind, key, fingerprint, produce, model,
-                  typed=False):
+                  typed=False, speech_assistant=None):
     require_pilot_member(request.app.state.settings, gateway.user.id)
     # Bind only the validated Supabase identity, never a caller-supplied user_id.
     subject = ai_budget_subject.set(str(gateway.user.id))
@@ -99,13 +99,14 @@ async def execute(request, gateway, *, project_id, session_id, kind, key, finger
         governor = getattr(request.app.state.real_ai, "governor", None)
         with governor.workflow() if governor is not None else nullcontext():
             return await _execute(request, gateway, project_id=project_id, session_id=session_id,
-                kind=kind, key=key, fingerprint=fingerprint, produce=produce, model=model, typed=typed)
+                kind=kind, key=key, fingerprint=fingerprint, produce=produce, model=model, typed=typed,
+                speech_assistant=speech_assistant)
     finally:
         ai_budget_subject.reset(subject)
 
 
 async def _execute(request, gateway, *, project_id, session_id, kind, key, fingerprint, produce, model,
-                   typed=False):
+                   typed=False, speech_assistant=None):
     provider = require_provider(request, kind=kind, typed=typed)
     slots = request.app.state.real_ai_slots
     if slots.locked():
@@ -114,8 +115,8 @@ async def _execute(request, gateway, *, project_id, session_id, kind, key, finge
         claim = await gateway.claim(project_id, session_id, kind, key, fingerprint)
         if not claim["claimed"]:
             if claim["status"] == "completed":
-                return result_scope(kind, await gateway.normalize_result(kind, claim["result"]), project_id, session_id,
-                                    claim["operation_id"])
+                result = await gateway.normalize_result(kind, claim["result"], speech_assistant=speech_assistant)
+                return result_scope(kind, result, project_id, session_id, claim["operation_id"])
             error = APIError(409, "AI_OPERATION_" + claim["status"].upper(),
                              "This action has already been submitted. Reload its saved result before retrying.")
             error.operation_id = claim["operation_id"]
@@ -143,8 +144,8 @@ async def _execute(request, gateway, *, project_id, session_id, kind, key, finge
                 row = await gateway.complete(claim, payload, {
                     "mode": "real", "provider": "openai", "model": model, "version": 1,
                 })
-                return result_scope(kind, await gateway.normalize_result(kind, row), project_id, session_id,
-                                    claim["operation_id"])
+                result = await gateway.normalize_result(kind, row, speech_assistant=speech_assistant)
+                return result_scope(kind, result, project_id, session_id, claim["operation_id"])
         except BaseException as cause:
             code = cause.code if isinstance(cause, APIError) else "REAL_AI_UNCERTAIN"
             draft_rejected = (kind == "generation" and not save_started and isinstance(cause, APIError)
@@ -217,7 +218,10 @@ async def transcribe(session_id: UUID, request: Request, gateway: Gateway, idemp
             recording = await read_recording(request, Path(directory), session["language"])
 
             async def produce(provider):
-                return {"text": await provider.transcribe(recording.path, session["language"])}
+                transcribe_recording = getattr(provider, "transcribe_recording", None)
+                if transcribe_recording is not None:
+                    return {"text": await transcribe_recording(recording)}
+                return {"text": await provider.transcribe(recording.path, recording.language)}
 
             result = await execute(request, gateway, project_id=UUID(session["project_id"]),
                 session_id=session_id, kind="transcription", key=idempotency_key,
@@ -465,7 +469,7 @@ async def prepared_speech(message_id: UUID, request: Request, gateway: Gateway):
     if (not isinstance(row, dict) or row.get("assistant_message_id") != str(message_id)
         or row.get("project_id") != message["project_id"] or row.get("session_id") != message["session_id"]):
         raise unavailable()
-    metadata = await gateway.normalize_result("speech", row)
+    metadata = await gateway.normalize_result("speech", row, speech_assistant=message)
     if metadata["assistant_message_id"] != str(message_id) or metadata["language"] != message["language"]:
         raise unavailable()
     if datetime.fromisoformat(metadata["expires_at"]) <= datetime.now(timezone.utc):
@@ -476,7 +480,8 @@ async def prepared_speech(message_id: UUID, request: Request, gateway: Gateway):
 
 
 @router.post("/conversation-messages/{message_id}/speech", response_model=RealSpeech)
-async def speak(message_id: UUID, payload: RealSpeechRequest, request: Request, gateway: Gateway, idempotency_key: Key):
+async def speak(message_id: UUID, payload: RealSpeechRequest, request: Request, response: Response,
+                gateway: Gateway, idempotency_key: Key):
     require_pilot_member(request.app.state.settings, gateway.user.id)
     message = validated(RealMessage, await gateway.one("real_conversation_messages", "id", message_id))
     if message["role"] != "assistant":
@@ -495,17 +500,40 @@ async def speak(message_id: UUID, payload: RealSpeechRequest, request: Request, 
     result = await execute(request, gateway, project_id=UUID(message["project_id"]),
         session_id=UUID(message["session_id"]), kind="speech", key=idempotency_key,
         fingerprint=digest({"assistant_id":str(message_id),"text_sha256":hashlib.sha256(message["text"].encode()).hexdigest(),"language":payload.language}),
-        produce=produce, model=request.app.state.settings.real_ai_speech_model)
+        produce=produce, model=request.app.state.settings.real_ai_speech_model, speech_assistant=message)
     cache = request.app.state.real_ai.cache
     if result["assistant_message_id"] != str(message_id) or result["language"] != payload.language:
         raise unavailable()
+    speech_id = UUID(result["speech_id"])
+    expires = datetime.fromisoformat(result["expires_at"])
     if audio is not None:
-        cache.put(gateway.user.id, UUID(result["speech_id"]), audio.data, result["audio_sha256"],
-                  expires_at=datetime.fromisoformat(result["expires_at"]).timestamp())
-    if datetime.fromisoformat(result["expires_at"]) <= datetime.now(timezone.utc):
+        if len(audio.data) != result["audio_size"]:
+            raise unavailable()
+        cache.put(gateway.user.id, speech_id, audio.data, result["audio_sha256"], expires_at=expires.timestamp())
+    if expires <= datetime.now(timezone.utc):
         raise APIError(410, "SPEECH_EXPIRED", "Spoken reply expired. Request a new reply explicitly.")
-    cache.get(gateway.user.id, UUID(result["speech_id"]), result["audio_sha256"])
+    if request.headers.get("accept") == "audio/wav":
+        # Fresh bytes have just passed the same private cache write and hash
+        # check. Same-key replays must recover those bytes from the owned cache.
+        data = audio.data if audio is not None else cache.get(gateway.user.id, speech_id, result["audio_sha256"])
+        if len(data) != result["audio_size"]:
+            raise unavailable()
+        return wav_response(data, result, {
+            "Vary": "Accept",
+            "X-Memy-Speech-Metadata": json.dumps(result, ensure_ascii=True, separators=(",", ":")),
+        })
+    cache.get(gateway.user.id, speech_id, result["audio_sha256"])
+    response.headers["Vary"] = "Accept"
     return result
+
+
+def wav_response(data, metadata, headers=None):
+    return WAVResponse(data, headers={
+        "Cache-Control": "private, no-store",
+        "X-Memy-Speech-Id": metadata["speech_id"],
+        "X-Memy-Audio-Sha256": metadata["audio_sha256"],
+        **(headers or {}),
+    })
 
 
 @router.get("/spoken-replies/{speech_id}/audio", response_class=WAVResponse)
@@ -515,8 +543,7 @@ async def audio(speech_id: UUID, request: Request, gateway: Gateway):
     if datetime.fromisoformat(metadata["expires_at"]) <= datetime.now(timezone.utc):
         raise APIError(410, "SPEECH_EXPIRED", "Spoken reply expired. Request a new reply explicitly.")
     data = request.app.state.real_ai.cache.get(gateway.user.id, speech_id, metadata["audio_sha256"])
-    return Response(data, media_type="audio/wav", headers={"Cache-Control":"private, no-store",
-        "X-Memy-Speech-Id":str(speech_id),"X-Memy-Audio-Sha256":metadata["audio_sha256"]})
+    return wav_response(data, metadata)
 
 
 @router.post("/story-drafts/{draft_id}/export", status_code=201, response_class=PDFResponse)

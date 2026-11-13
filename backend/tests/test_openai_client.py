@@ -1,6 +1,7 @@
 """Transport fixtures only: no live OpenAI request or usable secret."""
 
 import asyncio
+from hashlib import sha256
 import json
 from pathlib import Path
 import wave
@@ -338,3 +339,41 @@ def test_replaced_audio_source_cannot_change_the_validated_private_snapshot(tmp_
     monkeypatch.setattr(audio_upload, "probe_duration", probe)
     assert asyncio.run(client(handler).transcribe(source, "en", "gpt-4o-mini-transcribe")) == "Fictional result."
     assert snapshots and not snapshots[0].exists()
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_validated_recording_skips_second_decode_only_for_the_same_bytes(tmp_path, monkeypatch, changed):
+    from app.services import audio_upload
+
+    class TranscriptionReservations(Reservations):
+        def reserve_transcription(self, model, seconds):
+            self.calls.append((model, seconds))
+            return "synthetic-reservation"
+
+    source = tmp_path / "recording.wav"
+    with wave.open(str(source), "wb") as audio:
+        audio.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+        audio.writeframes(b"\0\0" * 1600)
+    original = source.read_bytes()
+    recording = audio_upload.Recording(source, "sv", sha256(original).hexdigest(),
+                                       asyncio.run(audio_upload.probe_duration(source, ".wav")))
+
+    async def forbidden_probe(*args):
+        pytest.fail("The already validated recording must not be decoded again")
+
+    def handler(request):
+        assert not changed
+        assert original in request.content
+        return httpx.Response(200, json={"text": "Ett minne."})
+
+    monkeypatch.setattr(audio_upload, "probe_duration", forbidden_probe)
+    budget = TranscriptionReservations()
+    transport = client(handler, budget)
+    if changed:
+        source.write_bytes(original[:-2] + b"\xff\x00")
+        with pytest.raises(APIError, match="valid local recording"):
+            asyncio.run(transport.transcribe(source, "sv", "gpt-transcribe", validated_recording=recording))
+        assert not budget.calls
+    else:
+        assert asyncio.run(transport.transcribe(source, "sv", "gpt-transcribe", validated_recording=recording)) == "Ett minne."
+        assert budget.calls == [("gpt-transcribe", recording.duration_seconds)]

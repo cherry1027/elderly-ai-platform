@@ -327,13 +327,13 @@ class RealAIGateway(AudioGateway):
         context = await self._context_for_owned_project(project_id)
         return [self._draft_with_context(draft, context) for draft in drafts]
 
-    async def normalize_result(self, kind, row):
+    async def normalize_result(self, kind, row, *, speech_assistant=None):
         try:
-            return await self._normalize_result(kind, row)
+            return await self._normalize_result(kind, row, speech_assistant=speech_assistant)
         except (KeyError, TypeError, ValueError, AttributeError):
             raise unavailable() from None
 
-    async def _normalize_result(self, kind, row):
+    async def _normalize_result(self, kind, row, *, speech_assistant=None):
         if kind == "conversation":
             clarifications = [validated(ClarificationResponse, c) for c in row.get("clarifications", [])]
             memory_ids = {m["id"] for m in row["memories"]}
@@ -344,8 +344,15 @@ class RealAIGateway(AudioGateway):
             row = {"user_message": row["user_message"], "message": row["message"], "mode": row["mode"],
                    "memories": [{**m, "clarification_question": questions.get(m["id"])} for m in row["memories"]]}
         if kind == "speech":
+            assistant = speech_assistant
+            if assistant is None:
+                assistant = await self.one("real_conversation_messages", "id", UUID(row["assistant_message_id"]))
+            elif (row["assistant_message_id"] != assistant["id"] or row["project_id"] != assistant["project_id"]
+                or row["session_id"] != assistant["session_id"]):
+                raise unavailable()
+            if assistant["role"] != "assistant":
+                raise unavailable()
             row = {k: row[k] for k in ("speech_id", "assistant_message_id", "media_type", "audio_sha256", "audio_size", "expires_at")}
-            # Language is read from the owned assistant, not client-supplied metadata.
-            assistant = await self.one("real_conversation_messages", "id", UUID(row["assistant_message_id"]))
+            # Language comes from the assistant verified in this request.
             row.update(language=assistant["language"], status="ready")
         return validated(MODELS[kind], row)

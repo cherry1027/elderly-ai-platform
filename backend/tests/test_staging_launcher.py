@@ -260,7 +260,7 @@ def test_web_stream_recovery_headers_are_exposed_only_to_exact_origin(staging):
         accepted = client.get("/api/v2/capabilities", headers={"Origin": "https://memy-web.example.com"})
         assert accepted.headers["Access-Control-Allow-Origin"] == "https://memy-web.example.com"
         exposed = {part.strip().lower() for part in accepted.headers["Access-Control-Expose-Headers"].split(",")}
-        assert {"x-memy-operation-id", "x-memy-recovery"} <= exposed
+        assert {"x-memy-operation-id", "x-memy-recovery", "x-memy-speech-metadata"} <= exposed
         assert "Access-Control-Allow-Credentials" not in accepted.headers
         denied = client.get("/api/v2/capabilities", headers={"Origin": "https://unrelated.example.com"})
         assert "Access-Control-Allow-Origin" not in denied.headers

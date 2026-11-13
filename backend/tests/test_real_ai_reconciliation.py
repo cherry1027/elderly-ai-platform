@@ -19,7 +19,7 @@ from app.api.real_ai import digest, get_real_gateway
 from app.core.errors import APIError
 from app.services.auth import AuthenticatedUser
 from app.services.openai_client import OpenAIClient, mark_ai_dispatched
-from app.services.real_ai_provider import RealAIProvider
+from app.services.real_ai_provider import RealAIProvider, SpeechAudio
 from app.services.real_ai_resources import RealAIGateway
 from app.services.real_ai_runtime import SpeechCache
 from tests.test_real_ai_api import (
@@ -76,6 +76,17 @@ class ReconciliationGateway(FakeGateway):
             assert payload == {"p_kind": self.operation["kind"], "p_action_key": str(self.operation_key)}
             return deepcopy(self.operation)
         raise AssertionError("Unexpected offline RPC")
+
+    async def complete(self, claim, payload, provenance):
+        if claim["kind"] != "speech":
+            return await super().complete(claim, payload, provenance)
+        result = {**payload, "speech_id": str(uuid4()), "project_id": str(PROJECT),
+                  "session_id": str(SESSION), "provenance": provenance, "created_at": NOW}
+        self.local_rows[("real_speech", UUID(result["speech_id"]))] = deepcopy(result)
+        for row in self.claims.values():
+            if row["operation_id"] == claim["operation_id"]:
+                row.update(status="completed", result=result)
+        return result
 
     async def context(self, project_id):
         self.context_reads.append(project_id)
@@ -174,6 +185,70 @@ def test_completed_speech_with_valid_cache_replays_actual_sql_shape_without_cost
     assert audio.headers["cache-control"] == "private, no-store"
     assert audio.headers["x-memy-audio-sha256"] == saved["audio_sha256"]
     assert provider.calls == gateway.failures == 0
+    assert gateway.reads == [
+        ("real_conversation_messages", "id", assistant_id),  # POST uses its already-verified assistant.
+        ("real_speech", "speech_id", speech_id),
+        ("real_conversation_messages", "id", assistant_id),  # Independent WAV GET still verifies ownership.
+    ]
+
+
+def test_speech_replay_rejects_another_session_before_audio_is_read(harness):
+    app, _, provider = harness()
+    gateway = ReconciliationGateway()
+    install_gateway(app, gateway)
+    key = uuid4()
+    data = wav_bytes()
+    assistant_id, speech_id, saved = seed_completed_speech(
+        gateway, expires_at=(datetime.now(timezone.utc) + timedelta(seconds=300)).isoformat(), data=data, key=key,
+    )
+    gateway.claims[("speech", key)]["result"]["session_id"] = str(uuid4())
+    app.state.real_ai.cache.put(OWNER, speech_id, data, saved["audio_sha256"])
+    with TestClient(app) as client:
+        response = client.post(f"/api/v2/conversation-messages/{assistant_id}/speech",
+                               json={"language": "en"}, headers={"Idempotency-Key": str(key)})
+    assert response.status_code == 503
+    assert provider.calls == gateway.failures == 0
+    assert gateway.reads == [("real_conversation_messages", "id", assistant_id)]
+
+
+def test_speech_post_can_deliver_verified_audio_and_replay_with_one_provider_call(harness):
+    app, _, provider = harness("sv")
+    gateway = ReconciliationGateway("sv")
+    install_gateway(app, gateway)
+    assistant_id = uuid4()
+    assistant = message(assistant_id, "sv")
+    gateway.local_rows[("real_conversation_messages", assistant_id)] = assistant
+    data = wav_bytes()
+    audio_hash = sha256(data).hexdigest()
+    synth_calls = []
+
+    async def synthesize(text, language):
+        synth_calls.append((text, language))
+        return SpeechAudio(data, "audio/wav", audio_hash, 0.01, "gpt-test", "marin")
+
+    provider.synthesize = synthesize
+    key = str(uuid4())
+    path = f"/api/v2/conversation-messages/{assistant_id}/speech"
+    request = {"json": {"language": "sv"}}
+    with TestClient(app) as client:
+        first = client.post(path, **request, headers={"Idempotency-Key": key, "Accept": "audio/wav"})
+        repeat = client.post(path, **request, headers={"Idempotency-Key": key, "Accept": "audio/wav"})
+        legacy = client.post(path, **request, headers={"Idempotency-Key": key, "Accept": "application/json"})
+        app.state.real_ai.cache.clear()
+        expired = client.post(path, **request, headers={"Idempotency-Key": key, "Accept": "audio/wav"})
+    assert first.status_code == repeat.status_code == legacy.status_code == 200
+    assert synth_calls == [(assistant["text"], "sv")]
+    assert gateway.reads == [("real_conversation_messages", "id", assistant_id)] * 4
+    for response in (first, repeat):
+        assert response.content == data
+        assert response.headers["content-type"] == "audio/wav"
+        assert response.headers["cache-control"] == "private, no-store"
+        assert "Accept" in response.headers["vary"].split(", ")
+        assert response.headers["x-memy-speech-id"] == legacy.json()["speech_id"]
+        assert response.headers["x-memy-audio-sha256"] == audio_hash
+        assert json.loads(response.headers["x-memy-speech-metadata"]) == legacy.json()
+    assert "Accept" in legacy.headers["vary"].split(", ")
+    assert expired.status_code == 410 and expired.json()["error"]["code"] == "SPEECH_EXPIRED"
 
 
 def test_review_of_memory_beyond_first_hundred_fetches_exact_updated_resource(harness):

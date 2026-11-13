@@ -8,7 +8,9 @@ durably before transmission. Creating a key is NOT spending approval.
 from __future__ import annotations
 
 import asyncio
+from hashlib import sha256
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -22,6 +24,7 @@ import httpx
 from pydantic import SecretStr
 
 from app.core.errors import APIError
+from app.services.audio_upload import Recording
 
 MAX_JSON_BYTES = 128_000
 MAX_RESPONSE_BYTES = 512_000
@@ -406,7 +409,7 @@ class OpenAIClient:
                 self.governor.settle(reservation_id, operation, self.text_model, reported_usage,
                     status=outcome, service_tier=service_tier)
 
-    async def transcribe(self, path: Path, language: str, model: str) -> str:
+    async def transcribe(self, path: Path, language: str, model: str, *, validated_recording: Recording | None = None) -> str:
         if language not in {"en", "sv"} or not MODEL_NAME.fullmatch(model):
             raise APIError(422, "AI_INPUT_LIMIT", "The AI request exceeds approved limits.")
         # Snapshot through a no-follow descriptor BEFORE awaiting a decoder.
@@ -419,6 +422,17 @@ class OpenAIClient:
             try:
                 if suffix not in MIME_TYPES or path.is_symlink():
                     raise ValueError
+                # Only the real upload route provides the result of the bounded
+                # decoder. A mismatch fails before reservation or transmission.
+                digest = None
+                if validated_recording is not None:
+                    if (type(validated_recording) is not Recording or validated_recording.path != path
+                        or validated_recording.language != language
+                        or type(validated_recording.duration_seconds) not in {int, float}
+                        or not math.isfinite(validated_recording.duration_seconds)
+                        or not 0 < validated_recording.duration_seconds <= 90):
+                        raise ValueError
+                    digest = sha256()
                 descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
                 with os.fdopen(descriptor, "rb") as source:
                     info = os.fstat(source.fileno())
@@ -430,8 +444,15 @@ class OpenAIClient:
                             total += len(chunk)
                             if total > MAX_AUDIO_BYTES:
                                 raise ValueError
+                            if digest is not None:
+                                digest.update(chunk)
                             target.write(chunk)
-                duration_seconds = await probe_duration(snapshot, suffix)
+                if digest is None:
+                    duration_seconds = await probe_duration(snapshot, suffix)
+                else:
+                    if digest.hexdigest() != validated_recording.content_sha256:
+                        raise ValueError
+                    duration_seconds = validated_recording.duration_seconds
                 fields = {"model": model, "response_format": "json"}
                 fields.update({"languages[]": language} if model == "gpt-transcribe" else {"language": language})
                 mime = {".wav": "audio/wav", ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".webm": "audio/webm"}[suffix]

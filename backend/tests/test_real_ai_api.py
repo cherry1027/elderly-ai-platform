@@ -19,6 +19,7 @@ from app.core.config import Settings
 from app.core.errors import APIError
 from app.main import create_app
 from app.schemas.real_ai import RealTranscript, RealMessage, RealDraft, RealTurn
+from app.services.audio_upload import Recording
 from app.services.auth import AuthenticatedUser
 from app.services.conversation_provider import ProviderResult
 from app.services.real_ai_resources import validated
@@ -109,7 +110,7 @@ class FakeGateway:
                 row.update(status="completed",result=result)
         return result
 
-    async def normalize_result(self, kind, row):
+    async def normalize_result(self, kind, row, *, speech_assistant=None):
         return validated({"transcription":RealTranscript,"conversation":RealTurn,"generation":RealDraft}[kind],row)
 
     async def fail(self, claim, code, *, uncertain=True):
@@ -240,6 +241,30 @@ def test_transcription_completes_real_original_and_replays_without_provider(harn
     assert first.status_code==repeat.status_code==200
     assert first.json()==repeat.json()
     assert first.json()["provenance"]["mode"]=="real" and provider.calls==1
+
+
+def test_upload_passes_one_owned_recording_validation_to_real_provider(harness, monkeypatch, tmp_path):
+    app, gateway, provider = harness("sv")
+    checked = Recording(tmp_path / "recording.wav", "sv", "b" * 64, 1.0)
+    accepted = []
+
+    async def read(request, directory, language):
+        assert language == "sv"
+        return checked
+
+    async def transcribe_recording(recording):
+        accepted.append(recording)
+        return "Jag växte upp i Malmö."
+
+    monkeypatch.setattr("app.api.real_ai.read_recording", read)
+    provider.transcribe_recording = transcribe_recording
+    headers = {"Idempotency-Key": str(uuid4())}
+    with TestClient(app) as client:
+        first = client.post(f"/api/v2/story-sessions/{SESSION}/transcribe", headers=headers)
+        replay = client.post(f"/api/v2/story-sessions/{SESSION}/transcribe", headers=headers)
+    assert first.status_code == replay.status_code == 200
+    assert first.json() == replay.json()
+    assert accepted == [checked] and provider.calls == 0
 
 
 def test_draft_generation_requires_reviewed_memories_before_any_cost(harness):

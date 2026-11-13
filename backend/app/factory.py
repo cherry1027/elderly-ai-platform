@@ -129,7 +129,8 @@ def create_app(
         allow_headers=["Authorization", "Content-Type", "Accept-Language", "Idempotency-Key"],
         expose_headers=["Retry-After", "Content-Disposition", "Content-Length", "X-Memy-Export-Id",
                         "X-Memy-Draft-Version", "X-Memy-Draft-Revision", "X-Memy-Page-Count",
-                        "X-Memy-Operation-Id", "X-Memy-Speech-Id", "X-Memy-Audio-Sha256", "X-Memy-Recovery"],
+                        "X-Memy-Operation-Id", "X-Memy-Speech-Id", "X-Memy-Audio-Sha256",
+                        "X-Memy-Speech-Metadata", "X-Memy-Recovery"],
     )
     application.include_router(health_router)
     application.include_router(readiness_router)

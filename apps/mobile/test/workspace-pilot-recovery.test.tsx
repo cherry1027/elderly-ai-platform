@@ -16,7 +16,6 @@ jest.mock('../src/real-ai/api', () => ({ ...jest.requireActual('../src/real-ai/a
   getRealMemories: jest.fn(), getRealDrafts: jest.fn(), sendRealTextMessage: jest.fn(), getPreparedRealSpeech: jest.fn(),
   createRealSpeech: jest.fn(), getRealSpeechAudio: jest.fn(), getRealOperation: jest.fn(), findRealOperation: jest.fn(),
 }));
-jest.mock('../src/real-ai/conversation-mode', () => ({ ...jest.requireActual('../src/real-ai/conversation-mode'), readConversationMode: async () => null, saveConversationMode: jest.fn() }));
 jest.mock('../src/api/story-projects', () => ({ ...jest.requireActual('../src/api/story-projects'),
   listStorySessions: jest.fn(), continueStoryProject: jest.fn() }));
 jest.mock('../src/audio/native-recorder', () => ({ ...jest.requireActual('../src/audio/native-recorder'), createRecordingId: jest.fn() }));
@@ -49,10 +48,7 @@ function metadata(): api.SpeechMetadata {
 async function press(label: string) {
   await fireEvent.press(screen.getByRole('button', { name: label })); await act(async () => {});
 }
-async function listen() {
-  if (!screen.queryByRole('button', { name: t.speak })) await press(t.speakMode);
-  await press(t.speak);
-}
+async function listen() { await press(t.speak); }
 async function ready() {
   await waitFor(() => {
     expect(api.getRealTranscripts).toHaveBeenCalled();
@@ -155,8 +151,8 @@ describe('prepared speech reads and paid operation boundaries', () => {
     await emit('background'); await act(async () => paid.reject(new api.RealAiError('network', undefined, true)));
     await emit('active'); await press(t.resume);
     await waitFor(() => expect(screen.getByRole('button', { name: t.check })).toBeOnTheScreen()); await press(t.check);
-    expect(api.findRealOperation).toHaveBeenCalledWith(expect.anything(), 'speech', ids.key);
-    expect(screen.getByRole('button', { name: conversationModeCopy.en.switchToWrite })).toBeDisabled();
+    expect(api.findRealOperation).toHaveBeenCalledWith(expect.anything(), 'speech', ids.assistant);
+    expect(screen.getByLabelText(t.input).props.editable).toBe(false);
     expect(api.createRealSpeech).toHaveBeenCalledTimes(1); expect(mockPlayback.play).not.toHaveBeenCalled();
   });
 
@@ -166,7 +162,6 @@ describe('prepared speech reads and paid operation boundaries', () => {
     await render(<RealStoryWorkspace {...props} />); await ready(); await listen();
     expect(api.createRealSpeech).not.toHaveBeenCalled(); expect(api.findRealOperation).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: t.check })).toBeNull();
-    await press(conversationModeCopy.en.switchToWrite);
     expect(screen.getByLabelText(t.input).props.editable).toBe(true);
   });
 

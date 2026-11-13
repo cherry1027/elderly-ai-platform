@@ -39,6 +39,6 @@ describe('English and Swedish wording', () => {
   });
 
   it('uses the agreed Swedish interviewer, conversation, and recording labels', () => {
-    expect(realCopy.sv).toMatchObject({ assistant: 'Minna', chat: 'Berätta', speakMode: 'Berätta', start: 'Spela in' });
+    expect(realCopy.sv).toMatchObject({ assistant: 'Minna', chat: 'Berätta', start: 'Spela in med mikrofonen', stop: 'Skicka inspelningen', speak: 'Spela upp svaret' });
   });
 });

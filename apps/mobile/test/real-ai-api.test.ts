@@ -338,3 +338,39 @@ it('reads owned prepared speech metadata with no paid request or key', async () 
   expect(f.request.mock.calls[0][1]?.method).toBe('GET');
   expect(f.request.mock.calls[0][1]?.headers).not.toHaveProperty('Idempotency-Key');
 });
+
+const inlineSpeech = { speech_id: ids.draft, assistant_message_id: ids.assistant, language: 'en', media_type: 'audio/wav',
+  audio_sha256: '0'.repeat(64), audio_size: 44, expires_at: '2099-01-01T00:00:00Z', status: 'ready' };
+function inlineSpeechResponse(overrides: Record<string, string> = {}) {
+  const wave = new Uint8Array(44);
+  const encoder = new TextEncoder(); wave.set(encoder.encode('RIFF')); wave.set(encoder.encode('WAVE'), 8);
+  return new Response(wave, { headers: { 'Content-Type': 'audio/wav', 'Cache-Control': 'private, no-store',
+    'X-Memy-Speech-Metadata': JSON.stringify(inlineSpeech), 'X-Memy-Speech-Id': inlineSpeech.speech_id,
+    'X-Memy-Audio-Sha256': inlineSpeech.audio_sha256, ...overrides } });
+}
+
+it('receives verified speech metadata and WAV in a single paid POST', async () => {
+  const f = fixture(); f.request.mockResolvedValueOnce(inlineSpeechResponse());
+  jest.mocked(digest).mockResolvedValueOnce(new Uint8Array(32).buffer);
+  await expect(createRealSpeech(f.scope, ids.assistant, ids.key)).resolves.toEqual({ ...inlineSpeech, audio: expect.any(Uint8Array) });
+  expect(f.request).toHaveBeenCalledTimes(1);
+  expect(f.request.mock.calls[0][1]).toMatchObject({ method: 'POST', headers: { Accept: 'audio/wav', 'Idempotency-Key': ids.key } });
+});
+
+it('accepts metadata-only JSON from an older server without repeating the POST', async () => {
+  const f = fixture(inlineSpeech);
+  await expect(createRealSpeech(f.scope, ids.assistant, ids.key)).resolves.toEqual(inlineSpeech);
+  expect(f.request).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  ['the wrong assistant', { 'X-Memy-Speech-Metadata': JSON.stringify({ ...inlineSpeech, assistant_message_id: ids.memory }) }, 0],
+  ['a contradictory speech ID', { 'X-Memy-Speech-Id': ids.memory }, 0],
+  ['a public cache policy', { 'Cache-Control': 'public' }, 0],
+  ['corrupted audio', {}, 1],
+] as const)('keeps an inline speech response with %s uncertain without retrying', async (_case, headers, hashByte) => {
+  const f = fixture(); f.request.mockResolvedValueOnce(inlineSpeechResponse(headers));
+  if (hashByte) jest.mocked(digest).mockResolvedValueOnce(new Uint8Array(32).fill(hashByte).buffer);
+  await expect(createRealSpeech(f.scope, ids.assistant, ids.key)).rejects.toMatchObject({ kind: 'invalid-response', mayHaveWritten: true });
+  expect(f.request).toHaveBeenCalledTimes(1);
+});

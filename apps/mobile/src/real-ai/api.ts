@@ -212,7 +212,7 @@ class StreamTerminalFailure extends Error {
 const MAX_CONVERSATION_STREAM_BYTES = 2_000_000, MAX_CONVERSATION_EVENT_BYTES = 1_000_000;
 
 async function readConversationStream<T>(response: Response, stream: ConversationStream,
-  decode: (value: unknown, operationId?: string) => T, operationId: string | undefined, check: () => void,
+  decode: (value: unknown, operationId?: string) => T | Promise<T>, operationId: string | undefined, check: () => void,
   register: (reader: ReadableStreamDefaultReader<Uint8Array>) => void, cancel: () => Promise<void>, release: () => void, interrupt: Promise<never>, settled: () => void,
   failure: (status: number, code: string | undefined, recovery: string | null, retry: string | null) => RealAiError): Promise<T> {
   if (!operationId || operationId !== operationId.toLowerCase() || !response.body?.getReader ||
@@ -250,7 +250,7 @@ async function readConversationStream<T>(response: Response, stream: Conversatio
       saving = true; await notify({ type: 'saving' }); return;
     }
     if (kind === 'completed') {
-      const v = row(value, ['type', 'result']), result = decode(v.result, operationId);
+      const v = row(value, ['type', 'result']), result = await decode(v.result, operationId);
       const reply = (result as unknown as RealTurn).message?.text;
       if (!text(reply, 32_000) || (preview !== undefined && reply !== preview)) invalid();
       terminal = { result }; settled(); return;
@@ -316,7 +316,8 @@ async function readConversationStream<T>(response: Response, stream: Conversatio
 
 /** Separate v2 transport: fixed relative paths only, owner-fenced tokens, no redirect or automatic retry. */
 async function execute<T>(options: ListStoryProjectsOptions, path: string, method: 'GET' | 'POST' | 'PATCH',
-  decode: (value: unknown, operationId?: string) => T, body?: string | FormData, key?: string, binary?: 'pdf' | 'wav', stream?: ConversationStream): Promise<T> {
+  decode: (value: unknown, operationId?: string) => T | Promise<T>, body?: string | FormData, key?: string,
+  binary?: 'pdf' | 'wav' | 'wav-or-json', stream?: ConversationStream): Promise<T> {
   const origin = normalizeMobileApiBaseUrl(options.baseUrl), lease = apiBackoff.capture();
   if (key !== undefined) validateStoryProjectId(key);
   const timeout = options.timeoutMs ?? 60_000;
@@ -382,7 +383,7 @@ async function execute<T>(options: ListStoryProjectsOptions, path: string, metho
     dispatched = true;
     let response: Response;
     try { response = await request(`${origin}/api/v2/${path}`, { method, headers: {
-      Authorization: `Bearer ${token}`, Accept: binary === 'pdf' ? 'application/pdf' : binary === 'wav' ? 'audio/wav' : stream ? 'text/event-stream' : 'application/json',
+      Authorization: `Bearer ${token}`, Accept: binary === 'pdf' ? 'application/pdf' : binary ? 'audio/wav' : stream ? 'text/event-stream' : 'application/json',
       ...(typeof body === 'string' ? { 'Content-Type': 'application/json' } : {}), ...(key ? { 'Idempotency-Key': key } : {}),
     }, ...(body !== undefined ? { body } : {}), credentials: 'omit', cache: 'no-store', redirect: 'error', signal: controller.signal }); }
     catch { check(); throw new RealAiError('network', undefined, method !== 'GET'); }
@@ -399,21 +400,24 @@ async function execute<T>(options: ListStoryProjectsOptions, path: string, metho
     }
     let value: unknown, privateBytes: Uint8Array | undefined;
     try {
-      const maximum = binary === 'wav' ? 10_000_000 : binary === 'pdf' ? 2_000_000 : 2_000_000;
+      const contentType = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase();
+      const expectedType = binary === 'pdf' ? 'application/pdf' : binary === 'wav' ||
+        (binary === 'wav-or-json' && contentType !== 'application/json') ? 'audio/wav' : undefined;
+      const maximum = expectedType === 'audio/wav' ? 10_000_000 : 2_000_000;
       const length = response.headers.get('content-length');
       if (length && (!/^\d+$/.test(length) || Number(length) > maximum)) invalid();
-      if (stream && response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() === 'text/event-stream') {
+      if (stream && contentType === 'text/event-stream') {
         const result = await readConversationStream(response, stream, decode, operationId, check,
           reader => { streamReader = reader; }, cancelStream, releaseStream, interrupted, () => clearTimeout(timer), responseError);
         check(); return result;
       }
-      if (binary) {
+      if (expectedType) {
+        if (contentType !== expectedType || !response.headers.get('cache-control')?.toLowerCase().includes('no-store')) invalid();
         const bytes = new Uint8Array(await response.arrayBuffer()); privateBytes = bytes; check();
-        if (!bytes.length || bytes.length > maximum || response.headers.get('content-type')?.split(';')[0].trim() !== (binary === 'pdf' ? 'application/pdf' : 'audio/wav') ||
-          !response.headers.get('cache-control')?.toLowerCase().includes('no-store')) invalid();
+        if (!bytes.length || bytes.length > maximum) invalid();
         value = { bytes, headers: response.headers };
       } else { const raw = await response.text(); check(); if (raw.length > maximum) invalid(); value = JSON.parse(raw); }
-      const result = decode(value, operationId); check(); return result;
+      const result = await decode(value, operationId); check(); return result;
     } catch (error) { privateBytes?.fill(0); if (stream) controller.abort(); check(); if (error instanceof StreamTerminalFailure) throw error.failure;
       if (error instanceof RealAiError && method === 'GET') throw error;
       throw new RealAiError('invalid-response', undefined, method !== 'GET', undefined, undefined, operationId); }
@@ -631,16 +635,34 @@ export function getPreparedRealSpeech(scope: RealScope, assistantId: string) {
     value => decodeSpeech(value, scope, assistantId));
 }
 export function createRealSpeech(scope: RealScope, assistantId: string, key: string) {
-  return execute(scope, `conversation-messages/${validateStoryProjectId(assistantId)}/speech`, 'POST',
-    value => decodeSpeech(value, scope, assistantId), JSON.stringify({ language: scope.language }), key);
+  return execute<SpeechMetadata & { audio?: Uint8Array }>(scope, `conversation-messages/${validateStoryProjectId(assistantId)}/speech`, 'POST',
+    async value => {
+      const inline = value as { bytes?: Uint8Array; headers?: Headers } | null;
+      if (!(inline?.bytes instanceof Uint8Array) || !inline.headers) return decodeSpeech(value, scope, assistantId);
+      const { bytes, headers } = inline;
+      const raw = headers.get('x-memy-speech-metadata');
+      if (!raw || raw.length > 1024) invalid();
+      const metadata = decodeSpeech(JSON.parse(raw!), scope, assistantId);
+      if (headers.get('x-memy-speech-id') !== metadata.speech_id || headers.get('x-memy-audio-sha256') !== metadata.audio_sha256) invalid();
+      checkSpeechBytes(bytes, metadata);
+      await verifySpeechHash(scope, bytes, metadata);
+      if (Date.parse(metadata.expires_at) <= Date.now()) invalid();
+      return { ...metadata, audio: bytes };
+    }, JSON.stringify({ language: scope.language }), key, 'wav-or-json');
+}
+function checkSpeechBytes(bytes: Uint8Array, metadata: SpeechMetadata) {
+  if (bytes.length !== metadata.audio_size || bytes.length < 44 || String.fromCharCode(...bytes.subarray(0, 4)) !== 'RIFF' ||
+      String.fromCharCode(...bytes.subarray(8, 12)) !== 'WAVE') invalid();
 }
 export async function getRealSpeechAudio(scope: RealScope, metadata: SpeechMetadata) {
   if (Date.parse(metadata.expires_at) <= Date.now()) throw new RealAiError('not-found', 410, false, 'SPEECH_EXPIRED');
   const bytes = await execute(scope, `spoken-replies/${validateStoryProjectId(metadata.speech_id)}/audio`, 'GET', value => {
     const { bytes } = value as { bytes: Uint8Array };
-    if (bytes.length !== metadata.audio_size || bytes.length < 44 || String.fromCharCode(...bytes.subarray(0, 4)) !== 'RIFF' ||
-      String.fromCharCode(...bytes.subarray(8, 12)) !== 'WAVE') invalid(); return bytes;
+    checkSpeechBytes(bytes, metadata); return bytes;
   }, undefined, undefined, 'wav');
+  return verifySpeechHash(scope, bytes, metadata);
+}
+async function verifySpeechHash(scope: RealScope, bytes: Uint8Array, metadata: SpeechMetadata) {
   const digestInput = Uint8Array.from(bytes); let verified = false;
   try {
     const hash = new Uint8Array(await digest(CryptoDigestAlgorithm.SHA256, digestInput.buffer));

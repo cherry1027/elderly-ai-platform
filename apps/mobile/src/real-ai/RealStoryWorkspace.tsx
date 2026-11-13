@@ -677,9 +677,11 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
           }
           check(); beginOperation({ key, kind: 'speech', assistantId: message.id });
           try {
-            metadata = await createRealSpeech(current, message.id, key); check();
+            const { audio: inlineAudio, ...prepared } = await createRealSpeech(current, message.id, key);
+            bytes = inlineAudio; check();
+            metadata = prepared;
             speech.current.set(message.id, metadata);
-            bytes = await getRealSpeechAudio(current, metadata); check();
+            if (!bytes) { bytes = await getRealSpeechAudio(current, metadata); check(); }
           } catch (error) {
             check();
             // A paid attempt has already begun. Never start another synthesis
@@ -727,10 +729,11 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   };
   const review = (memory: RealMemory, status: 'confirmed' | 'rejected') => {
     if (unresolved || ambiguousEdit) return;
-    const correction = status === 'confirmed' ? corrections[memory.id]?.trim() : undefined;
+    const enteredValue = status === 'confirmed' ? corrections[memory.id]?.trim() : undefined;
+    const before = enteredValue ? correctionBases.current.get(memory.id) ?? memory : memory;
+    const correction = enteredValue && enteredValue !== (before.corrected_value ?? before.value).trim() ? enteredValue : undefined;
     void run(async (signal, check) => {
-      const before = correction ? correctionBases.current.get(memory.id) ?? memory : memory;
-      const result = await reviewRealMemory(scope(signal), before, status, correction || undefined); check();
+      const result = await reviewRealMemory(scope(signal), before, status, correction); check();
       setMemories(previous => previous.map(item => item.id === result.id ? result : item));
       correctionBases.current.delete(memory.id);
       setCorrections(previous => { const next = { ...previous }; delete next[memory.id]; return next; });

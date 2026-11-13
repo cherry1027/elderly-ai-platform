@@ -279,6 +279,15 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     expect(api.getRealSpeechAudio).toHaveBeenCalledTimes(1);
     expect(api.createRealSpeech).toHaveBeenCalledTimes(1);
   });
+  it('plays and reuses inline audio without a separate WAV download', async () => {
+    jest.mocked(api.createRealSpeech).mockResolvedValue({ ...speechMetadata(), audio: speechWave() });
+    await render(<RealStoryWorkspace {...props} />); await ready(); await startVoice(); await press(t.stop);
+    expect(mockPlayback.play).toHaveBeenCalledTimes(1);
+    await listen();
+    expect(mockPlayback.play).toHaveBeenCalledTimes(2);
+    expect(api.createRealSpeech).toHaveBeenCalledTimes(1);
+    expect(api.getRealSpeechAudio).not.toHaveBeenCalled();
+  });
   it('supports reviewed memories → generation → editing/history → private native PDF, each as an explicit action', async () => {
     jest.mocked(api.getRealMemories).mockResolvedValue([realMemory()]);
     await render(<RealStoryWorkspace {...props} initialTab="memories" />); await ready('memories');

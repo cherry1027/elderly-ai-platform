@@ -60,6 +60,7 @@ it.each(['en', 'sv'] as const)('retains correction text through details toggles 
   await fireEvent.press(screen.getByRole('button', { name: t.correctAction }));
   expect(screen.queryByRole('button', { name: t.confirm })).toBeNull();
   const input = screen.getByLabelText(t.correct);
+  expect(input).toHaveProp('value', first.value);
   expect(input.props.allowFontScaling).toBe(true); expect(input.props.multiline).toBe(true);
   expect(screen.getByRole('button', { name: copy.saveCorrection })).toBeDisabled();
   await fireEvent.changeText(input, 'My exact corrected memory.');
@@ -70,6 +71,26 @@ it.each(['en', 'sv'] as const)('retains correction text through details toggles 
   expect(screen.getByText(first.evidence)).toHaveProp('selectable', true);
   await fireEvent.press(screen.getByRole('button', { name: copy.saveCorrection }));
   expect(review).toHaveBeenCalledWith(first, 'confirmed');
+});
+it('prefills a reviewed memory with the saved correction and leaves its original evidence available', async () => {
+  const t = realCopy.sv, copy = storyContentCopy.sv, review = jest.fn();
+  const memory = { ...reviewed, value: 'Vi bodde i Lund.', corrected_value: 'Vi bodde i Malmö.', evidence: 'Först bodde vi i Lund.' };
+  await render(<MemoryHarness language="sv" memories={[memory]} onReview={review} />);
+  await fireEvent.press(screen.getByRole('button', { name: copy.changeDecision }));
+  await fireEvent.press(screen.getByRole('button', { name: t.correctAction }));
+  const input = screen.getByLabelText(t.correct);
+  const save = screen.getByRole('button', { name: copy.saveCorrection });
+  expect(input).toHaveProp('value', memory.corrected_value);
+  expect(save).toBeDisabled();
+  await fireEvent.changeText(input, '');
+  expect(input).toHaveProp('value', '');
+  expect(save).toBeDisabled();
+  await fireEvent.changeText(input, 'Vi bodde i Ystad.');
+  expect(save).toBeEnabled();
+  await fireEvent.press(screen.getByRole('button', { name: t.seeOriginal }));
+  expect(screen.getByText(memory.evidence)).toBeOnTheScreen();
+  await fireEvent.press(save);
+  expect(review).toHaveBeenCalledWith(memory, 'confirmed');
 });
 it.each(['en', 'sv'] as const)('shows a saved decision and story action only after verified confirmation in %s', async language => {
   const review = jest.fn(), openStory = jest.fn(), copy = storyContentCopy[language], t = realCopy[language];

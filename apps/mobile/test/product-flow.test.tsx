@@ -317,6 +317,8 @@ describe('Talk → Memories → My Story product flow — synthetic services onl
     await opened(language);
     await tab(copy.book);
 
+    expect(screen.queryByText(story.draftSourceCount(1))).toBeNull();
+    await press(story.aboutVersion);
     expect(await screen.findByText(story.draftSourceCount(1))).toBeOnTheScreen();
     expect(screen.getByText(story.draftMemoryUpdates(5))).toBeOnTheScreen();
     expect(screen.getByText(firstDraft.content)).toBeOnTheScreen();
@@ -327,8 +329,10 @@ describe('Talk → Memories → My Story product flow — synthetic services onl
     await fireEvent.press(screen.getByRole('checkbox', { name: copy.generationConsent }));
     await press(copy.generate);
 
-    expect(await screen.findByText(story.draftSourceCount(6))).toBeOnTheScreen();
-    expect(screen.getByText(updatedDraft.content)).toBeOnTheScreen();
+    expect(await screen.findByText(updatedDraft.content)).toBeOnTheScreen();
+    expect(screen.queryByText(story.draftSourceCount(6))).toBeNull();
+    await press(story.aboutVersion);
+    expect(screen.getByText(story.draftSourceCount(6))).toBeOnTheScreen();
     expect(screen.queryByRole('button', { name: story.updateMyStory })).toBeNull();
     expect(api.generateRealDraft).toHaveBeenCalledTimes(1);
     await press(copy.historySection);

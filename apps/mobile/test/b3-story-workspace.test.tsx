@@ -1,3 +1,4 @@
+import { colors } from '../src/theme';
 import { requireCallback } from './root-shell-helpers';
 import { getComponent } from './component-probe';
 import { useEffect, useState } from 'react';
@@ -58,7 +59,7 @@ it.each<Language>(['en', 'sv'])('presents clear %s workspace actions without exp
     await fireEvent.press(button); expect(callback).toHaveBeenCalledTimes(1);
   }
   const more = screen.getByRole('button', { name: text.more }); expect(more.props.accessibilityState.expanded).toBe(false);
-  expect(more).toHaveStyle({ minHeight: 56 }); await fireEvent(more, 'focus'); expect(more).toHaveStyle({ borderColor: '#342f27' });
+  expect(more).toHaveStyle({ minHeight: 56 }); await fireEvent(more, 'focus'); expect(more).toHaveStyle({ borderColor: colors.ink });
   await fireEvent.press(more); expect(more.props.accessibilityState.expanded).toBe(true);
   expect(screen.getByText(`${text.language}: ${language === 'sv' ? text.swedish : text.english}`)).toBeOnTheScreen();
   expect(screen.getByText(saved.description!)).toHaveProp('selectable', true);

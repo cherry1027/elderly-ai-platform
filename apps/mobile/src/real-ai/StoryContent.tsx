@@ -1,3 +1,4 @@
+import { StoryCover } from '../components/StoryCover';
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type PropsWithChildren, type ReactNode } from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import type { StoryEdit } from '../api/story-drafts';
@@ -223,6 +224,7 @@ export function MemoriesContent(props: MemoriesContentProps) {
     memory={memory} correction={corrections[memory.id] ?? ''} blocked={blocked} busy={busy}
     onBeginCorrection={beginCorrection} onCorrection={correct} onReview={review} />;
   return <View style={styles.section}>
+    {!!pending.length && <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.heading}>{t.pendingStatus}</Text>}
     {memories.length > 0 && <View style={styles.progress}>
       {savedReview && <Text accessibilityLiveRegion="polite" accessibilityLanguage={accessibilityLanguages[language]}
         allowFontScaling style={styles.status}>{lastReview.status === 'confirmed' ? copy.memorySaved : copy.memoryOmitted}</Text>}
@@ -237,7 +239,6 @@ export function MemoriesContent(props: MemoriesContentProps) {
       <Button language={language} label={copy.shareMemory} onPress={onShareMemory} disabled={blocked} primary /></>}
     {onUseSavedWords &&
       <Button language={language} label={copy.useSavedWords} onPress={onUseSavedWords} disabled={blocked} />}
-    {!!pending.length && <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.heading}>{t.pendingStatus}</Text>}
     {reviewQueue.map(card)}
     {!!memories.length && !pending.length && <Note language={language}>{copy.allReviewed}</Note>}
     {!!priorReviews.length && <Disclosure language={language} label={copy.reviewed} open={reviewedOpen} onChange={setReviewedOpen}>
@@ -379,10 +380,9 @@ export function AutobiographyContent(props: AutobiographyContentProps) {
       : creation)}
     {draft && <>
       <View style={styles.book}>
+        <StoryCover />
         <View style={styles.draftHeader}>
           <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.bookHeading}>{copy.draftHeading}</Text>
-          <Note language={language}>{t.version} {draft.version} · {t.revision} {draft.revision}</Note>
-          <Note language={language}>{copy.draftSourceCount(draft.source_memories.length)}</Note>
         </View>
         {showUpdate && <View style={styles.progress}>
           <Note language={language}>{copy.draftMemoryUpdates(updatedMemoryCount)}</Note>
@@ -407,6 +407,9 @@ export function AutobiographyContent(props: AutobiographyContentProps) {
           </>}
       </View>
       <Disclosure language={language} label={copy.aboutVersion}>
+          <Note language={language}>{t.version} {draft.version} · {t.revision} {draft.revision}</Note>
+          <Note language={language}>{copy.draftSourceCount(draft.source_memories.length)}</Note>
+
         <Note language={language}>{t.modelReview}</Note>
         <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.heading}>{t.sources}</Text>
         <DraftSources sources={draft.source_memories} storyLanguage={storyLanguage} />
@@ -438,17 +441,17 @@ export function AutobiographyContent(props: AutobiographyContentProps) {
 const styles = StyleSheet.create({
   section: { width: '100%', gap: 16 },
   progress: { width: '100%', gap: 8, padding: 16, borderRadius: 16, backgroundColor: colors.selected },
-  book: { width: '100%', gap: 20, paddingBottom: 12 },
+  book: { width: '100%', gap: 24, padding: 20, borderRadius: 24, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.paper },
   draftHeader: { gap: 4 },
-  memory: { width: '100%', gap: 12, paddingVertical: 20, borderBottomWidth: 1, borderColor: colors.border },
-  reviewedMemory: { width: '100%', gap: 8, paddingTop: 16 },
+  memory: { width: '100%', gap: 16, padding: 20, borderRadius: 24, borderWidth: 1, backgroundColor: colors.paper, borderColor: colors.border },
+  reviewedMemory: { width: '100%', gap: 12, padding: 20, borderRadius: 24, backgroundColor: colors.selected },
   memoryActions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
   memoryAction: { flexGrow: 1, flexBasis: 80, maxWidth: '100%' },
   roomyAction: { flexBasis: 140 },
   changeAction: { minHeight: layout.minimumTouchTarget, minWidth: layout.minimumTouchTarget, flexGrow: 1, flexBasis: 80,
     maxWidth: '100%', flexDirection: 'row', paddingHorizontal: 8, paddingVertical: 10, alignItems: 'center', justifyContent: 'center', borderRadius: 12, borderWidth: 2, borderColor: 'transparent' },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 }, action: { flexGrow: 1, flexBasis: 140, maxWidth: '100%' },
-  bookHeading: { color: colors.ink, fontFamily: headingFont, fontSize: 28, lineHeight: 38, flexShrink: 1 },
+  bookHeading: { color: colors.ink, fontFamily: headingFont, fontSize: 32, lineHeight: 42, flexShrink: 1 },
   heading: { color: colors.forest, fontSize: 22, lineHeight: 32, fontWeight: '600', flexShrink: 1 },
   body: { color: colors.ink, fontSize: 21, lineHeight: 33, flexShrink: 1 },
   note: { color: colors.muted, fontSize: 17, lineHeight: 27, flexShrink: 1 },
@@ -457,7 +460,7 @@ const styles = StyleSheet.create({
   source: { gap: 12, paddingTop: 12, borderTopWidth: 1, borderColor: colors.border },
   prose: { color: colors.ink, fontFamily: headingFont, fontSize: 22, lineHeight: 36, flexShrink: 1 },
   input: { color: colors.ink, fontSize: 21, lineHeight: 33, minHeight: 80, textAlignVertical: 'top', padding: 14,
-    borderRadius: 16, borderWidth: 1, borderColor: colors.forest, backgroundColor: colors.cream }, editor: { minHeight: 320 },
+    borderRadius: 16, borderWidth: 1, borderColor: colors.forest, backgroundColor: colors.paper }, editor: { minHeight: 320 },
   disclosure: { minHeight: layout.minimumTouchTarget, width: '100%', paddingVertical: 10, paddingHorizontal: 2,
     flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: 1, borderColor: colors.border },
   disclosureLabel: { flex: 1, flexShrink: 1, color: colors.forest, fontSize: 21, lineHeight: 31, fontWeight: '600' },

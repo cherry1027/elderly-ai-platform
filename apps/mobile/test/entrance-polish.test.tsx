@@ -6,7 +6,7 @@ import { StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MemoryBookArtwork } from '../src/components/BrandArtwork';
 import { entranceCopy } from '../src/entrance-copy';
-import { accessibilityLanguages, copy, type Language } from '../src/i18n';
+import { accessibilityLanguages, productNames, copy, type Language } from '../src/i18n';
 import { introCopy } from '../src/intro-copy';
 import { WelcomeScreen } from '../src/screens/WelcomeScreen';
 import { colors } from '../src/theme';
@@ -31,7 +31,7 @@ it.each(languages)('Welcome has one Memy heading and intentionally opens working
     onReplayIntroduction={replay} onChangeLanguage={change} />);
   expect(screen.getAllByRole('header')).toHaveLength(1);
   expect(screen.getByRole('header', { name: copy[language].welcomeTitle })).toBeOnTheScreen();
-  expect(screen.queryByText('Memy')).toBeNull();
+  expect(screen.getByText(productNames[language])).toBeOnTheScreen();
   expect(screen.getByText(copy[language].welcomeDescription)).toBeOnTheScreen();
   expect(screen.getByText(entrance.availability)).toBeOnTheScreen();
   expect(screen.queryByRole('button', { name: intro.register })).toBeNull();

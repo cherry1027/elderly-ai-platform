@@ -58,7 +58,7 @@ export const buttonStyles = StyleSheet.create({
 });
 
 const styles = StyleSheet.create({
-  compact: { paddingVertical: 10, borderRadius: 16 },
+  compact: { paddingVertical: 10, borderRadius: layout.controlRadius },
   button: {
     ...buttonStyles.target,
     width: '100%',
@@ -74,8 +74,8 @@ const styles = StyleSheet.create({
     borderColor: colors.forest,
   },
   secondary: {
-    backgroundColor: colors.selected,
-    borderColor: 'transparent',
+    backgroundColor: colors.paper,
+    borderColor: colors.border,
   },
   tertiary: { backgroundColor: 'transparent', borderColor: 'transparent', paddingHorizontal: 8 },
   primaryPressed: {

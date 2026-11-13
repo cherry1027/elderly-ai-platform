@@ -27,6 +27,7 @@ import { createRealPlayback, RealPlaybackError, type RealPlayback } from './nati
 import { conversationModeCopy, readConversationMode, saveConversationMode, type ConversationMode } from './conversation-mode';
 import { mediaPrivacy } from './media-privacy';
 import { MemoriesContent, AutobiographyContent, SavedWordsContent, isSavedMessageMemory, storyContentCopy } from './StoryContent';
+import { NavigationIcon } from '../components/NavigationIcon';
 import { ChatMessageHistory } from './ChatMessageHistory';
 import { VoiceAction, VoiceRecordingControls } from './VoiceRecordingControls';
 import { SpeechBytesCache } from './speech-bytes-cache';
@@ -1032,7 +1033,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       <View style={styles.tabs}>{(['chat', 'memories', 'book'] as const).map(item => <Pressable key={item} accessibilityRole="tab"
         accessibilityLabel={t[item]} accessibilityLanguage={locale} accessibilityState={{ selected: tab === item, disabled: busy }}
         disabled={busy} onPress={() => navigate(item)} style={[styles.tab, tab === item && styles.selectedTab]}>
-        <Text allowFontScaling style={styles.tabText}>{t[item]}</Text></Pressable>)}</View>
+        <View style={styles.tabIcon}><NavigationIcon name={item} /></View><Text allowFontScaling style={styles.tabText}>{t[item]}</Text></Pressable>)}</View>
       {capabilities && !capabilities.enabled && <AvailabilityNotice language={language} />}
       {tab !== 'chat' && checkSavedAction}
       {tab === 'chat' && <>
@@ -1115,13 +1116,14 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
 }
 const styles = StyleSheet.create({
   workspace: { width: '100%', gap: 16 }, note: { color: colors.muted, fontSize: 19, lineHeight: 29, flexShrink: 1 },
-  notice: { color: colors.ink, fontSize: 19, lineHeight: 29 },
+  notice: { color: colors.ink, fontSize: 19, lineHeight: 29, backgroundColor: colors.selected, padding: 16, borderRadius: 16 },
+  tabIcon: { alignSelf: 'center', marginBottom: 4 },
   tabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
-  tab: { minHeight: layout.minimumTouchTarget, paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 3,
+  tab: { minHeight: layout.minimumTouchTarget, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 16, borderBottomWidth: 3,
     borderColor: 'transparent', justifyContent: 'center', flexGrow: 1 },
-  selectedTab: { borderColor: colors.forest }, tabText: { color: colors.forest, textAlign: 'center', fontSize: 20, lineHeight: 30, fontWeight: '600', flexShrink: 1 },
+  selectedTab: { borderColor: colors.forest, backgroundColor: colors.selected }, tabText: { color: colors.forest, textAlign: 'center', fontSize: 20, lineHeight: 30, fontWeight: '600', flexShrink: 1 },
   card: { gap: 12, paddingVertical: 16, borderBottomWidth: 1, borderColor: colors.border },
-  availability: { paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.selected, borderRadius: 8, gap: 8 },
+  availability: { paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.selected, borderRadius: 20, gap: 8 },
   availabilitySummary: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 8 },
   availabilityText: { color: colors.muted, fontSize: 17, lineHeight: 26, flexGrow: 1, flexShrink: 1, flexBasis: 220 },
   availabilityDetails: { minWidth: layout.minimumTouchTarget, minHeight: layout.minimumTouchTarget, maxWidth: '100%',
@@ -1133,13 +1135,13 @@ const styles = StyleSheet.create({
   userBubble: { alignSelf: 'flex-end', backgroundColor: colors.selected, borderBottomRightRadius: 4 },
   assistantBubble: { alignSelf: 'flex-start', paddingHorizontal: 0 },
   speaker: { fontSize: 18, lineHeight: 27, fontWeight: '600', color: colors.forest }, body: { color: colors.ink, fontSize: 21, lineHeight: 33 },
-  composer: { gap: 5 },
+  composer: { gap: 12 },
   modeChoices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   modeAction: { flexGrow: 1, flexBasis: 128, maxWidth: '100%' },
   finishAction: { flexGrow: 1, flexBasis: 190, maxWidth: '100%' },
   replyPreview: { gap: 8, padding: 14, marginBottom: 8, borderRadius: 16, backgroundColor: colors.selected },
   composerRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 4, padding: 8,
-    backgroundColor: colors.paper, borderRadius: 18, borderWidth: 1, borderColor: colors.border },
+    backgroundColor: colors.cream, borderRadius: 28, borderWidth: 1, borderColor: colors.border },
   stackedComposer: { flexDirection: 'column', alignItems: 'stretch' },
   composerActions: { flexDirection: 'row', alignSelf: 'flex-end', gap: 4, flexWrap: 'wrap', flexShrink: 0 },
   composerAction: { minWidth: layout.minimumTouchTarget, minHeight: layout.minimumTouchTarget, alignItems: 'center', justifyContent: 'center',

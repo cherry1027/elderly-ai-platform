@@ -1,5 +1,7 @@
 import { useEffect, useState, type ComponentRef, type PropsWithChildren, type RefObject } from 'react';
 import { AccessibilityInfo, Platform, Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import { MemyBrand } from './BrandArtwork';
+import { BrandCorner } from './StoryCover';
 import { Screen } from './Screen';
 import { RootScreenHeading } from '../navigation/AuthenticatedShell';
 import { accessibilityLanguages, type Language } from '../i18n';
@@ -21,6 +23,7 @@ export function AccountHeading({ language, title, description }: {
   language: Language; title: string; description?: string;
 }) {
   return <View style={styles.heading}>
+    <View style={styles.brandRow}><View style={styles.brand}><MemyBrand language={language} compact /></View><BrandCorner /></View>
     <RootScreenHeading language={language} title={title} centered />
     {description && <Text accessibilityLanguage={accessibilityLanguages[language]}
       allowFontScaling style={styles.description}>{description}</Text>}
@@ -75,7 +78,7 @@ export const accountStyles = StyleSheet.create({
   form: { width: '100%', gap: 20 }, field: { width: '100%', gap: 8 },
   label: { color: colors.ink, fontSize: 22, lineHeight: 32, fontWeight: '600' },
   input: { minHeight: layout.minimumTouchTarget, width: '100%', paddingVertical: 14, paddingHorizontal: 16,
-    borderWidth: 2, borderColor: colors.forest, borderRadius: 16, backgroundColor: colors.paper,
+    borderWidth: 2, borderColor: colors.border, borderRadius: 20, backgroundColor: colors.paper,
     color: colors.ink, fontSize: 22, lineHeight: 32 },
   focused: { borderColor: colors.ink },
   notice: { color: colors.ink, fontSize: 21, lineHeight: 31, padding: 16, borderWidth: 2,
@@ -84,10 +87,11 @@ export const accountStyles = StyleSheet.create({
 });
 
 const styles = StyleSheet.create({
+  brandRow: { flexDirection: 'row', alignItems: 'center' }, brand: { flex: 1, minWidth: 0 },
   composition: { width: '100%', gap: 20 }, compact: { gap: 14 }, heading: { width: '100%', gap: 8 },
   description: { color: colors.muted, fontSize: 21, lineHeight: 31, textAlign: 'center', flexShrink: 1 },
   action: { minHeight: layout.minimumTouchTarget, width: '100%', paddingVertical: 10, paddingHorizontal: 20,
-    borderWidth: 2, borderColor: colors.forest, borderRadius: 16, backgroundColor: colors.forest,
+    borderWidth: 2, borderColor: colors.forest, borderRadius: layout.controlRadius, backgroundColor: colors.forest,
     alignItems: 'center', justifyContent: 'center' },
   secondary: { backgroundColor: colors.paper }, quiet: { backgroundColor: 'transparent', borderColor: 'transparent' },
   actionLabel: { color: colors.paper, fontSize: 22, lineHeight: 32, fontWeight: '600', textAlign: 'center', flexShrink: 1 },

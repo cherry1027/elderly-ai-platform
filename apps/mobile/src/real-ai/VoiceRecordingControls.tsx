@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import Svg, { Path } from 'react-native-svg';
+import Svg, { Path, Rect } from 'react-native-svg';
 import { accessibilityLanguages, type Language } from '../i18n';
 import { colors, layout } from '../theme';
 import { realCopy } from './copy';
@@ -18,9 +18,9 @@ export function VoiceAction({ language, label, icon, disabled = false, onPress }
   return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityLanguage={accessibilityLanguages[language]}
     accessibilityState={{ disabled }} disabled={disabled} onPress={() => { if (!disabled) onPress(); }}
     onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
-    style={[styles.action, focused && styles.focused, disabled && styles.disabled]}>
+    style={[styles.action, icon === 'mic' && styles.microphone, icon === 'send' && styles.send, icon === 'discard' && styles.discard, focused && styles.focused, disabled && styles.disabled]}>
     <Svg width={26} height={26} viewBox="0 0 24 24" accessible={false} aria-hidden>
-      <Path d={paths[icon]} stroke={colors.forest} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <Path d={paths[icon]} stroke={icon === 'send' ? colors.paper : icon === 'discard' ? colors.danger : colors.forest} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" fill="none" />
     </Svg>
   </Pressable>;
 }
@@ -33,6 +33,10 @@ export function VoiceRecordingControls({ language, duration, retained, disabled,
   return <View style={styles.strip} testID="voice-recording-controls">
     <VoiceAction language={language} label={t.discard} icon="discard" disabled={disabled} onPress={onDiscard} />
     <View style={styles.indicator}>
+      {!retained && <Svg width="100%" height={32} viewBox="0 0 160 32" accessible={false} aria-hidden>
+        {[8, 12, 20, 14, 24, 30, 18, 26, 14, 22, 16, 10, 6].map((height, index) =>
+          <Rect key={index} x={index * 12 + 2} y={(32 - height) / 2} width={5} height={height} rx={2.5} fill={colors.forest} />)}
+      </Svg>}
       <Text allowFontScaling accessibilityLanguage={accessibilityLanguages[language]} style={styles.text}>{retained ? t.recordingReady : t.recording}</Text>
       <Text allowFontScaling style={styles.text}>{Math.min(60, Math.floor(duration / 1000))} / 60 s</Text>
     </View>
@@ -42,7 +46,9 @@ export function VoiceRecordingControls({ language, duration, retained, disabled,
 const styles = StyleSheet.create({
   action: { minWidth: layout.minimumTouchTarget, minHeight: layout.minimumTouchTarget, borderRadius: 28, borderWidth: 2,
     borderColor: 'transparent', backgroundColor: colors.selected, alignItems: 'center', justifyContent: 'center', alignSelf: 'flex-start' },
+  microphone: { backgroundColor: colors.coral }, send: { backgroundColor: colors.forest },
+  discard: { backgroundColor: colors.paper, borderColor: colors.border },
   focused: { borderColor: colors.forest }, disabled: { opacity: 0.45 },
-  strip: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, alignItems: 'center' },
-  indicator: { flex: 1, minWidth: 80 }, text: { color: colors.ink, fontSize: 18, lineHeight: 27, flexShrink: 1 },
+  strip: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, alignItems: 'center', paddingVertical: 12 },
+  indicator: { flex: 1, minWidth: 80 }, text: { color: colors.ink, fontSize: 18, lineHeight: 27, flexShrink: 1, textAlign: 'center' },
 });

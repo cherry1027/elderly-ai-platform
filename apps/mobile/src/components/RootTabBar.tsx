@@ -1,3 +1,4 @@
+import { NavigationIcon } from './NavigationIcon';
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -30,6 +31,7 @@ export function RootTabBar({ language, tab, onSelectTab }: Props) {
         style={({ pressed }) => [styles.tab, { flex: weights[item] }, stacked && styles.stackedTab,
           item === tab && styles.selected, focused === item && styles.focused,
           pressed && styles.pressed]}>
+        <NavigationIcon name={item} />
         <Text allowFontScaling style={[styles.label, item === tab && styles.selectedLabel]}>{text.tabs[item]}</Text>
         <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
           style={[styles.indicator, item === tab && styles.selectedIndicator]} />
@@ -53,7 +55,7 @@ const styles = StyleSheet.create({
   stackedTab: { flex: 0, width: '100%' },
   selected: { backgroundColor: colors.selected, borderColor: colors.selected },
   focused: { borderColor: colors.ink }, pressed: { backgroundColor: colors.selected },
-  label: { color: colors.forest, fontSize: 20, lineHeight: 28, textAlign: 'center', flexShrink: 1 },
+  label: { color: colors.forest, fontSize: 20, lineHeight: 28, textAlign: 'center', flexShrink: 1, maxWidth: '100%' },
   selectedLabel: { fontWeight: '700' },
   indicator: { width: 20, height: 3, borderRadius: 2, opacity: 0, backgroundColor: colors.forest },
   selectedIndicator: { opacity: 1 },

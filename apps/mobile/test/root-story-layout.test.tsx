@@ -169,16 +169,16 @@ it.each(languages)('default %s sample/list presentation retains previous count, 
   expect(screen.getByRole('button', { name: text.signOut })).toBeOnTheScreen();
   expect(screen.getByRole('button', { name: text.refresh })).toHaveStyle({ backgroundColor: colors.paper, borderColor: colors.forest });
 });
-it.each(languages)('root %s puts existing stories before the secondary New story action', async language => {
+it.each(languages)('root %s puts existing stories before the primary New story action', async language => {
   const text = storiesCopy[language], saved = project('existing', 'An existing saved story');
   const actions = await setup(language, { status: 'ready', projects: [saved] });
   const create = screen.getByRole('button', { name: text.createStory });
-  expect(create).toHaveStyle({ backgroundColor: 'transparent', minHeight: 56 });
+  expect(create).toHaveStyle({ backgroundColor: colors.forest, minHeight: 56 });
   expect(screen.queryByRole('button', { name: text.firstStory })).toBeNull();
   const labels = nativeNodes('text').map(nativeText);
   expect(labels.indexOf(saved.title)).toBeLessThan(labels.indexOf(`+ ${text.createStory}`));
   const open = screen.getByRole('button', { name: `${text.openStory}: ${saved.title}` });
-  expect(open).toHaveStyle({ minHeight: 56, borderColor: 'transparent' });
+  expect(open).toHaveStyle({ minHeight: 56, borderColor: colors.border });
   await fireEvent.press(open); expect(actions.onOpenStory).toHaveBeenCalledWith(saved.id);
   await fireEvent.press(create); expect(actions.onCreateStory).toHaveBeenCalledTimes(1);
   expect(actions.onRefresh).not.toHaveBeenCalled();
@@ -198,7 +198,7 @@ it.each(languages)('root %s whole story row is reachable with narrow large-text 
     expect(title).toHaveStyle({ flexShrink: 1 });
     await fireEvent(row, 'focus'); expect(row).toHaveStyle({ borderColor: colors.ink });
     await fireEvent.press(row); expect(actions.onOpenStory).toHaveBeenCalledWith(saved.id);
-    await fireEvent(row, 'blur'); expect(row).toHaveStyle({ borderColor: 'transparent' });
+    await fireEvent(row, 'blur'); expect(row).toHaveStyle({ borderColor: colors.border });
     expect(actions.onRefresh).not.toHaveBeenCalled();
   } finally { dimensions.mockRestore(); }
 });

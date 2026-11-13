@@ -1,3 +1,4 @@
+import { StoryCover, BrandCorner } from '../components/StoryCover';
 import { useState } from 'react';
 import { useApiBackoff } from '../api/ApiBackoff';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -45,7 +46,7 @@ export function MyStoriesScreen({ language, user, state, onRefresh, onCreateStor
 
   const firstStory = root && state.status === 'ready' && projects.length === 0;
   const createLabel = firstStory ? text.firstStory : text.createStory;
-  const createPrimary = !root || firstStory;
+  const createPrimary = true;
   const controls = <View style={[styles.controls, root && styles.rootControls]}>
       <Pressable accessibilityRole="button" accessibilityLabel={createLabel}
         accessibilityLanguage={accessibilityLanguages[language]}
@@ -103,6 +104,7 @@ export function MyStoriesScreen({ language, user, state, onRefresh, onCreateStor
               accessibilityLanguage={accessibilityLanguages[language]} onPress={() => onOpenStory(project.id)}
               onFocus={() => setFocusedProject(project.id)} onBlur={() => setFocusedProject(null)}
               style={({ pressed }) => [styles.storyRow, pressed && styles.pressed, focusedProject === project.id && styles.focused]}>
+              <StoryCover compact />
               <View style={styles.rowWords}>
                 <Text accessibilityLanguage={storyLocale} allowFontScaling style={[styles.storyTitle, styles.rootStoryTitle]}>{title || text.untitled}</Text>
                 <View style={styles.rootMetadata}><Text accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={[styles.detail, styles.rootDetail]}>{storyLanguage}</Text></View>
@@ -133,7 +135,7 @@ export function MyStoriesScreen({ language, user, state, onRefresh, onCreateStor
     </View>;
 
   return <Screen working={root}>
-    {!root && <MemyBrand language={language} />}
+    <View style={styles.brandRow}><View style={styles.brand}><MemyBrand language={language} compact /></View><BrandCorner /></View>
     <View style={[screenStyles.section, root && styles.rootSection]}>
       {root ? <RootScreenHeading language={language} title={text.title} /> : <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]}
         allowFontScaling style={[screenStyles.heading, styles.heading]}>{text.title}</Text>}
@@ -148,26 +150,27 @@ export function MyStoriesScreen({ language, user, state, onRefresh, onCreateStor
 }
 
 const styles = StyleSheet.create({
+  brandRow: { flexDirection: 'row', alignItems: 'center' }, brand: { flex: 1, minWidth: 0 },
   options: { minHeight: layout.minimumTouchTarget, minWidth: layout.minimumTouchTarget, alignSelf: 'flex-end', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, borderWidth: 2, borderColor: 'transparent', borderRadius: 12 },
   optionsLabel: { color: colors.forest, fontSize: 30, lineHeight: 40 }, hidden: { display: 'none' },
   updating: { color: colors.muted, fontSize: 17, lineHeight: 26, textAlign: 'left', flexShrink: 1 },
   rootSection: { alignItems: 'stretch', gap: 10 },
   rootIntroduction: { textAlign: 'left', fontSize: 21, lineHeight: 31 },
   rootControls: { gap: 6 },
-  rootCreate: { width: 'auto', alignSelf: 'flex-start', paddingVertical: 10, paddingHorizontal: 12, borderColor: 'transparent', backgroundColor: 'transparent' },
+  rootCreate: { width: '100%', paddingVertical: 14, paddingHorizontal: 20, borderColor: colors.forest, backgroundColor: colors.forest },
   rootRefresh: { width: 'auto', alignSelf: 'flex-start', borderColor: 'transparent',
     backgroundColor: 'transparent', paddingVertical: 10, paddingHorizontal: 10 },
   rootRefreshLabel: { fontSize: 20, lineHeight: 30, textDecorationLine: 'underline', fontWeight: '500' },
   rootCount: { textAlign: 'left', fontSize: 19, lineHeight: 28 },
   rootCard: { padding: 18, gap: 10 },
-  storyRow: { width: '100%', minHeight: layout.minimumTouchTarget, flexDirection: 'row', alignItems: 'center', gap: 16, paddingVertical: 20, paddingHorizontal: 12, borderWidth: 2, borderColor: 'transparent', borderBottomColor: colors.border, borderRadius: 8 },
-  rowWords: { flex: 1, minWidth: 0, gap: 4 }, chevron: { color: colors.forest, fontSize: 30, lineHeight: 36 },
+  storyRow: { width: '100%', minHeight: layout.minimumTouchTarget, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 16, padding: 14, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.paper, borderRadius: 24 },
+  rowWords: { flex: 1, minWidth: 100, gap: 6 }, chevron: { color: colors.forest, fontSize: 30, lineHeight: 36 },
   rootStoryTitle: { fontSize: 26, lineHeight: 36 },
   rootMetadata: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 18, rowGap: 4 },
   rootDetail: { color: colors.muted, fontSize: 19, lineHeight: 28, maxWidth: '100%' },
   heading: { fontFamily: headingFont },
   identity: { color: colors.ink, fontSize: 22, lineHeight: 32, textAlign: 'center', flexShrink: 1 },
-  controls: { width: '100%', gap: 16 }, results: { width: '100%', gap: 8 },
+  controls: { width: '100%', gap: 16 }, results: { width: '100%', gap: 16 },
   refresh: { minHeight: layout.minimumTouchTarget, width: '100%', paddingVertical: 16, paddingHorizontal: 24,
     borderWidth: 2, borderColor: colors.forest, borderRadius: layout.controlRadius,
     backgroundColor: colors.paper, alignItems: 'center', justifyContent: 'center' },

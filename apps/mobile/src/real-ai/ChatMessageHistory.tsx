@@ -32,9 +32,9 @@ export const ChatMessageHistory = memo(function ChatMessageHistory({ messages, l
     disabled={blocked || (renewSpeech.has(message.id) && speechBlocked)} renewing={renewSpeech.has(message.id)} showAudio={showAudio} onSpeak={onSpeak} onMessageLayout={onMessageLayout} />)}</>;
 });
 const styles = StyleSheet.create({
-  bubble: { maxWidth: '96%', gap: 8, padding: 16, borderRadius: 18 },
-  userBubble: { alignSelf: 'flex-end', backgroundColor: colors.selected, borderBottomRightRadius: 4 },
-  assistantBubble: { alignSelf: 'flex-start', paddingHorizontal: 0 },
+  bubble: { maxWidth: '96%', gap: 8, padding: 16, borderRadius: 24 },
+  userBubble: { alignSelf: 'flex-end', backgroundColor: colors.paper, borderBottomRightRadius: 6, borderWidth: 1, borderColor: colors.border },
+  assistantBubble: { alignSelf: 'flex-start', paddingHorizontal: 4, paddingVertical: 20 },
   speaker: { fontSize: 18, lineHeight: 27, fontWeight: '600', color: colors.forest },
   body: { color: colors.ink, fontSize: 21, lineHeight: 33 },
   note: { color: colors.muted, fontSize: 19, lineHeight: 29, flexShrink: 1 },

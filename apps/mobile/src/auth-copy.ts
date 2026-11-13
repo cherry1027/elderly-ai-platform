@@ -1,7 +1,7 @@
 export const authCopy = {
   en: {
     title: 'Log in to Memy',
-    introduction: 'Use your Memy development account.',
+    introduction: 'Sign in to continue your story.',
     email: 'Email', password: 'Password', showPassword: 'Show password', hidePassword: 'Hide password',
     signIn: 'Log In', signingIn: 'Logging in…', back: 'Back to Welcome',
     required: 'Enter your email and password.', invalidEmail: 'Enter a valid email address.',
@@ -24,7 +24,7 @@ export const authCopy = {
   },
   sv: {
     title: 'Logga in i Mina Minnen',
-    introduction: 'Använd ditt utvecklingskonto för Mina Minnen.',
+    introduction: 'Logga in för att fortsätta din berättelse.',
     email: 'E-post', password: 'Lösenord', showPassword: 'Visa lösenord', hidePassword: 'Dölj lösenord',
     signIn: 'Logga in', signingIn: 'Loggar in…', back: 'Tillbaka till Välkommen',
     required: 'Ange din e-postadress och ditt lösenord.', invalidEmail: 'Ange en giltig e-postadress.',

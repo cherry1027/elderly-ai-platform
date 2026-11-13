@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ComponentRef, type PropsWithChildren, type ReactNode, type RefObject } from 'react';
 import { Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { colors, layout } from '../theme';
+import { colors, layout, headingFont } from '../theme';
 import { ApiBackoffBanner } from '../api/ApiBackoff';
 import { accessibilityLanguages, type Language } from '../i18n';
 import { useEdgeSwipeBack } from '../navigation/useEdgeSwipeBack';
@@ -91,6 +91,7 @@ export const screenStyles = StyleSheet.create({
   },
   heading: {
     color: colors.ink,
+    fontFamily: headingFont,
     fontSize: 36,
     lineHeight: 46,
     textAlign: 'center',
@@ -125,7 +126,7 @@ const styles = StyleSheet.create({
   // Separate, bounded scrolling keeps long consent text reachable at large text
   // sizes without covering the history or letting it push the microphone away.
   bottomControls: { flexGrow: 0, flexShrink: 1, maxHeight: '50%' },
-  bottomControlsContent: { paddingHorizontal: layout.screenPadding, paddingVertical: 12 },
+  bottomControlsContent: { paddingHorizontal: layout.screenPadding, paddingVertical: 16, backgroundColor: colors.paper, borderTopWidth: 1, borderTopColor: colors.border },
   workingContent: { justifyContent: 'flex-start', alignItems: 'stretch', gap: 24 },
   safeArea: {
     flex: 1,

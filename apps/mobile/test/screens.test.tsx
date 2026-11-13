@@ -181,7 +181,7 @@ describe('readability and flexible native layout', () => {
       return style?.maxWidth === layout.contentWidth && style?.flexGrow === 1;
     });
     expect(content).toBeDefined();
-    expect(StyleSheet.flatten(content?.props.style)).toMatchObject({ width: '100%', maxWidth: 480 });
+    expect(StyleSheet.flatten(content?.props.style)).toMatchObject({ width: '100%', maxWidth: 640 });
     // Jest does not run native layout. Actual small-screen/large-font checks
     // remain on the Android device verification checklist.
   });
@@ -195,8 +195,8 @@ describe('readability and flexible native layout', () => {
     await fireEvent(button, 'focus');
     expect(button).toHaveStyle({ borderColor: colors.ink });
     await fireEvent(button, 'blur');
-    expect(button).toHaveStyle({ borderColor: variant === 'primary' ? colors.forest : 'transparent',
-      backgroundColor: variant === 'primary' ? colors.forest : variant === 'secondary' ? colors.selected : 'transparent' });
+    expect(button).toHaveStyle({ borderColor: variant === 'primary' ? colors.forest : variant === 'secondary' ? colors.border : 'transparent',
+      backgroundColor: variant === 'primary' ? colors.forest : variant === 'secondary' ? colors.paper : 'transparent' });
     await fireEvent.press(button);
     expect(onPress).toHaveBeenCalledTimes(1);
   });

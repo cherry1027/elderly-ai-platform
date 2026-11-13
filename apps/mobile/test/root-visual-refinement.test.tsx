@@ -1,4 +1,4 @@
-import { maybeComponent, getComponent } from './component-probe';
+import { getComponent } from './component-probe';
 import { nativeNodes, nativeNode } from './native-tree';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react-native';
 import { Dimensions, StyleSheet } from 'react-native';
@@ -25,12 +25,12 @@ afterEach(async () => {
   expect(AsyncStorage.setItem).not.toHaveBeenCalled();
 });
 
-it.each(languages)('refined %s Home shows localized identity once, real actions and the original full artwork', async language => {
+it.each(languages)('refined %s Home shows a compact localized wordmark, real actions and the original full artwork', async language => {
   const open = jest.fn(), create = jest.fn(), text = rootNavigationCopy[language];
   await render(<HomeScreen language={language} onOpenStories={open} onCreateStory={create} />);
   expect(screen.getByRole('header', { name: text.homeTitle }))
     .toHaveTextContent(language === 'sv' ? 'Välkommen till Mina Minnen' : 'Welcome to Memy');
-  expect(maybeComponent(MemyBrand)).toBeNull();
+  expect(getComponent(MemyBrand).props).toMatchObject({ language, compact: true });
   expect(screen.getByText(text.homeDescription)).toBeOnTheScreen();
   expect(screen.getByText(text.simulation)).toBeOnTheScreen();
   expect(getComponent(MemoryBookArtwork)).toBeDefined();
@@ -39,7 +39,7 @@ it.each(languages)('refined %s Home shows localized identity once, real actions 
   expect(screen.queryByRole('button', { name: text.settingsTitle })).toBeNull();
   const artwork = nativeNodes('view').find(node => StyleSheet.flatten(node.props.style)?.aspectRatio === 760 / 650)!;
   let ancestor = artwork.parent;
-  while (ancestor && StyleSheet.flatten(ancestor.props.style)?.maxWidth !== 320) ancestor = ancestor.parent;
+  while (ancestor && StyleSheet.flatten(ancestor.props.style)?.maxWidth !== 360) ancestor = ancestor.parent;
   expect(ancestor).not.toBeNull();
   expect(StyleSheet.flatten(ancestor!.props.style)).toMatchObject({ width: '100%', alignSelf: 'center' });
   expect(nativeNode('scroll').props.scrollEnabled).not.toBe(false);
@@ -107,6 +107,7 @@ it.each(languages.flatMap(language => [375, 390].map(width => ({language, width}
     await fireEvent.press(home); expect(select).toHaveBeenCalledWith('home');
     for (const label of nativeNodes('text')) {
       expect(label.props.allowFontScaling).toBe(true);
+      expect(StyleSheet.flatten(label.props.style).maxWidth).toBe('100%');
       expect(label.props.numberOfLines).toBeUndefined();
       expect(label.props.adjustsFontSizeToFit).not.toBe(true);
     }
@@ -144,7 +145,7 @@ it.each(languages)('keeps the larger %s Home illustration bounded and both actio
   jest.spyOn(Dimensions, 'get').mockReturnValue({ width: 320, height: 568, scale: 2, fontScale: 2.5 });
   const open = jest.fn(), create = jest.fn(), text = rootNavigationCopy[language];
   await render(<HomeScreen language={language} apiContract="real-v2" onOpenStories={open} onCreateStory={create} />);
-  expect(screen.getByTestId('home-artwork')).toHaveStyle({ width: '100%', maxWidth: 320, alignSelf: 'center' });
+  expect(screen.getByTestId('home-artwork')).toHaveStyle({ width: '100%', maxWidth: 360, alignSelf: 'center' });
   expect(nativeNode('scroll').props.scrollEnabled).not.toBe(false);
   expect(screen.getAllByRole('button')).toHaveLength(2);
   expect(screen.getByRole('button', { name: text.openStories })).toHaveStyle({ minHeight: 56 });

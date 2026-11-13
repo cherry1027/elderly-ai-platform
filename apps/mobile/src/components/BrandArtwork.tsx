@@ -1,5 +1,5 @@
 import { useId } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import Svg, {
   Circle,
   Defs,
@@ -10,12 +10,13 @@ import Svg, {
   Rect,
   Stop,
 } from 'react-native-svg';
+import { colors, headingFont } from '../theme';
 import { accessibilityLanguages, productNames, type Language } from '../i18n';
 
 /** Native adaptation of the existing web Welcome wordmark and sprout path. */
-export function MemyBrand({ language }: { language: Language }) {
+export function MemyBrand({ language, compact = false }: { language: Language; compact?: boolean }) {
   return (
-    <View style={styles.brand}>
+    <View style={[styles.brand, compact && styles.compactBrand]}>
       <Svg
         width={34}
         height={38}
@@ -27,12 +28,12 @@ export function MemyBrand({ language }: { language: Language }) {
         <Path
           d="M15 27V8M15 15C4 15 3 7 4 3c7 0 11 4 11 12Zm0 7c10 0 12-7 11-12-7 0-11 5-11 12Z"
           fill="none"
-          stroke="#345b46"
+          stroke={colors.forest}
           strokeWidth={1.7}
           strokeLinejoin="round"
         />
       </Svg>
-      <Text allowFontScaling accessibilityLanguage={accessibilityLanguages[language]} style={styles.wordmark}>
+      <Text allowFontScaling accessibilityLanguage={accessibilityLanguages[language]} style={[styles.wordmark, compact && styles.compactWordmark]}>
         {productNames[language]}
       </Text>
     </View>
@@ -128,6 +129,7 @@ export function MemoryBookArtwork() {
 }
 
 const styles = StyleSheet.create({
+  compactBrand: { justifyContent: 'flex-start' }, compactWordmark: { fontSize: 28, textAlign: 'left' },
   brand: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -138,8 +140,8 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   wordmark: {
-    color: '#345b46',
-    fontFamily: Platform.select({ ios: 'Georgia', default: 'serif' }),
+    color: colors.forest,
+    fontFamily: headingFont,
     fontSize: 42,
     flexShrink: 1,
     textAlign: 'center',

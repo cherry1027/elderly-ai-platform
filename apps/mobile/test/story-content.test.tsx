@@ -1,3 +1,4 @@
+import { colors } from '../src/theme';
 import { nativeNodes, nativeText } from './native-tree';
 import { useState } from 'react';
 import * as backoff from '../src/api/ApiBackoff';
@@ -121,7 +122,9 @@ it.each(['en', 'sv'] as const)('puts Edit and PDF before prose and keeps technic
   expect(screen.queryByText(copy.pdfShort)).toBeNull();
   await fireEvent.press(screen.getByRole('button', { name: copy.pdfDetails })); expect(screen.getByText(t.pdfNotice)).toBeOnTheScreen();
   expect(screen.getByText(copy.pdfShort)).toBeOnTheScreen();
+  expect(screen.queryByText(copy.draftSourceCount(props.draft!.source_memories.length))).toBeNull();
   await fireEvent.press(screen.getByRole('button', { name: copy.aboutVersion }));
+  expect(screen.getByText(copy.draftSourceCount(props.draft!.source_memories.length))).toBeOnTheScreen();
   expect(screen.getByText(t.modelReview)).toBeOnTheScreen();
   expect(screen.getByText(props.draft!.source_memories[0].evidence)).toHaveProp('selectable', true);
   expect(screen.queryByRole('button', { name: `${t.version} 2 · ${t.revision} 3` })).toBeNull();
@@ -352,13 +355,13 @@ it('keeps memory actions scalable and wrapping with no fixed-height card clippin
   expect(screen.getByRole('button', { name: t.seeOriginal })).toHaveStyle({ minHeight: 56, borderBottomWidth: 1 });
 });
 
-it('keeps the memoir outside a bordered card and preserves the visible accuracy warning', async () => {
+it('presents the memoir on a warm book surface and preserves the visible accuracy warning', async () => {
   const props = bookProps(), t = realCopy.en;
   await render(<AutobiographyContent {...props} />);
   const prose = screen.getByText(props.draft!.content);
   expect(prose).toHaveProp('allowFontScaling', true);
   expect(prose).toHaveStyle({ fontSize: 22, lineHeight: 36 });
-  expect(prose.parent).not.toHaveStyle({ borderWidth: 1 });
+  expect(prose.parent).toHaveStyle({ borderWidth: 1, borderRadius: 24, backgroundColor: colors.paper });
   expect(screen.getByText(t.reviewDraft)).toBeOnTheScreen();
   expect(screen.getByRole('button', { name: t.historySection })).toHaveStyle({ minHeight: 56, borderBottomWidth: 1 });
   expect(screen.queryByText(t.modelReview)).toBeNull();

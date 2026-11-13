@@ -1,5 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { MemoryBookArtwork } from '../components/BrandArtwork';
+import { BrandCorner } from '../components/StoryCover';
+import { MemoryBookArtwork, MemyBrand } from '../components/BrandArtwork';
 import { LargeButton } from '../components/LargeButton';
 import { Screen } from '../components/Screen';
 import { accessibilityLanguages, type Language } from '../i18n';
@@ -13,6 +14,7 @@ export function HomeScreen({ language, onOpenStories, onCreateStory, apiContract
   const text = rootNavigationCopy[language], locale = accessibilityLanguages[language];
   return <Screen working>
     <View style={styles.composition}>
+      <View style={styles.brandRow}><View style={styles.brand}><MemyBrand language={language} compact /></View><BrandCorner /></View>
       <View testID="home-introduction" style={styles.introduction}>
         <RootScreenHeading language={language} title={text.homeTitle} centered />
         <Text accessibilityLanguage={locale} allowFontScaling style={styles.description}>{text.homeDescription}</Text>
@@ -27,9 +29,10 @@ export function HomeScreen({ language, onOpenStories, onCreateStory, apiContract
   </Screen>;
 }
 const styles = StyleSheet.create({
+  brandRow: { flexDirection: 'row', alignItems: 'center' }, brand: { flex: 1, minWidth: 0 },
   composition: { width: '100%', gap: 24 },
   introduction: { width: '100%', gap: 8 }, actions: { width: '100%', gap: 6 },
-  artwork: { width: '100%', maxWidth: 320, alignSelf: 'center', marginVertical: 4 },
+  artwork: { width: '100%', maxWidth: 360, backgroundColor: colors.selected, borderRadius: 32, alignSelf: 'center', marginVertical: 4 },
   description: { color: colors.muted, fontSize: 22, lineHeight: 33, textAlign: 'center', flexShrink: 1 },
   note: { color: colors.muted, fontSize: 18, lineHeight: 26, textAlign: 'center', flexShrink: 1 },
 });

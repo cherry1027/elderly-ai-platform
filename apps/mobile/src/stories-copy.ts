@@ -1,7 +1,7 @@
 export const storiesCopy = {
   en: {
     title: 'My Stories', introduction: 'Your stories, in one place.',
-    rootIntroduction: 'Choose a story to continue.',
+    rootIntroduction: 'Your life, in your own words.',
     rootCount: (count: number) => `${count} ${count === 1 ? 'story' : 'stories'} shown.`,
     listOptions: 'Story list options', listLimit: 'Your first 50 stories are shown.',
     loading: 'Loading your stories…', empty: 'Your first story starts with a memory.',
@@ -27,7 +27,7 @@ export const storiesCopy = {
   },
   sv: {
     title: 'Mina berättelser', introduction: 'Dina berättelser, på ett ställe.',
-    rootIntroduction: 'Välj en berättelse att fortsätta med.',
+    rootIntroduction: 'Ditt liv, med dina egna ord.',
     rootCount: (count: number) => `${count} ${count === 1 ? 'berättelse' : 'berättelser'} visas.`,
     listOptions: 'Alternativ för berättelselistan', listLimit: 'Dina första 50 berättelser visas.',
     loading: 'Laddar dina berättelser…', empty: 'Din första berättelse börjar med ett minne.',

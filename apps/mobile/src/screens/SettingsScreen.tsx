@@ -1,4 +1,5 @@
 import { StyleSheet, Text, View } from 'react-native';
+import { MemyBrand } from '../components/BrandArtwork';
 import { LargeButton } from '../components/LargeButton';
 import { AccountAction } from '../components/AccountPresentation';
 import { LanguageSelector } from '../components/LanguageSelector';
@@ -17,6 +18,7 @@ export function SettingsScreen({ language, onSelectLanguage, onReplayIntroductio
   const text = rootNavigationCopy[language], locale = accessibilityLanguages[language];
   return <Screen working>
     <View style={styles.composition}>
+      <MemyBrand language={language} compact />
       <View style={styles.section}>
         <RootScreenHeading language={language} title={text.settingsTitle} />
         <Text accessibilityLanguage={locale} allowFontScaling style={styles.description}>{text.settingsDescription}</Text>
@@ -37,8 +39,8 @@ export function SettingsScreen({ language, onSelectLanguage, onReplayIntroductio
 }
 const styles = StyleSheet.create({
   composition: { width: '100%', gap: 28 },
-  section: { width: '100%', gap: 12 }, account: { width: '100%', gap: 12, paddingTop: 16,
-    borderTopWidth: 1, borderTopColor: colors.border },
+  section: { width: '100%', gap: 16 }, account: { width: '100%', gap: 12, padding: 24, borderRadius: 24, backgroundColor: colors.paper,
+    borderWidth: 1, borderColor: colors.border },
   description: { color: colors.muted, fontSize: 21, lineHeight: 31, flexShrink: 1 },
   label: { color: colors.ink, fontSize: 22, lineHeight: 32, fontWeight: '600', flexShrink: 1 },
   help: { color: colors.muted, fontSize: 20, lineHeight: 30, flexShrink: 1 },

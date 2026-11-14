@@ -11,6 +11,8 @@ type BrowserHistory = { replaceState(data: unknown, unused: string, url?: string
 const MAX_LINK_LENGTH = 24_000, TIMEOUT_MS = 10_000, MAX_BODY = 32_000, MAX_AGE_MS = 300_000;
 const PREVIEW_ORIGIN = 'https://memy-visual-redesign-preview.onrender.com';
 const CALLBACK_PATH = '/auth/callback';
+export const RECOVERY_CODE_LENGTH = 8;
+export const isRecoveryCode = (code: string) => code.length === RECOVERY_CODE_LENGTH && /^[0-9]+$/.test(code);
 const uuid = (value: unknown): value is string => typeof value === 'string' && /^[a-f\d]{8}-[a-f\d]{4}-[1-5][a-f\d]{3}-[89ab][a-f\d]{3}-[a-f\d]{12}$/i.test(value);
 
 function readRecoverySession(accessToken: unknown): Link {
@@ -130,7 +132,7 @@ export function createWebPasswordSetup(location: BrowserLocation, history: Brows
       checkOrigin();
       if (link || submittingCode) throw new PasswordSetupError('failed');
       email = email.trim().toLowerCase();
-      if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !/^[0-9]{6}$/.test(code)) {
+      if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !isRecoveryCode(code)) {
         throw new PasswordSetupError('invalid-link');
       }
       submittingCode = true;

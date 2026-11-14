@@ -70,10 +70,10 @@ it('verifies a manually entered recovery code before offering a password write o
   const f = setup(previewCodeFixture());
   expect(f.request).not.toHaveBeenCalled();
   await expect(f.service.save('Synthetic password 123')).rejects.toMatchObject({ kind: 'expired' });
-  await f.service.submitCode?.(' Synthetic@Example.Test ', '012345');
+  await f.service.submitCode?.(' Synthetic@Example.Test ', '01234567');
   expect(f.request.mock.calls.map(call => call[1]?.method)).toEqual(['POST', 'GET']);
   expect(f.request.mock.calls[0][0]).toBe(supabase + '/auth/v1/verify');
-  expect(f.request.mock.calls[0][1]?.body).toBe(JSON.stringify({ email: 'synthetic@example.test', token: '012345', type: 'recovery' }));
+  expect(f.request.mock.calls[0][1]?.body).toBe(JSON.stringify({ email: 'synthetic@example.test', token: '01234567', type: 'recovery' }));
   expect(new Headers(f.request.mock.calls[0][1]?.headers).has('Authorization')).toBe(false);
   expect(new Headers(f.request.mock.calls[1][1]?.headers).get('Authorization')).toBe('Bearer ' + token());
   await f.service.save('Synthetic password 123');
@@ -83,16 +83,18 @@ it('verifies a manually entered recovery code before offering a password write o
 it('rejects malformed input and an expired code without retrying or making a password request', async () => {
   const f = setup(previewCodeFixture());
   await expect(f.service.submitCode?.('synthetic@example.test', '12 456')).rejects.toMatchObject({ kind: 'invalid-link' });
+  await expect(f.service.submitCode?.('synthetic@example.test', '012345')).rejects.toMatchObject({ kind: 'invalid-link' });
+  await expect(f.service.submitCode?.('synthetic@example.test', '0123456')).rejects.toMatchObject({ kind: 'invalid-link' });
   expect(f.request).not.toHaveBeenCalled();
   f.request.mockResolvedValueOnce(new Response(JSON.stringify({ error_code: 'otp_expired' }), { status: 403 }));
-  await expect(f.service.submitCode?.('synthetic@example.test', '012345')).rejects.toMatchObject({ kind: 'invalid-link' });
+  await expect(f.service.submitCode?.('synthetic@example.test', '01234567')).rejects.toMatchObject({ kind: 'invalid-link' });
   expect(f.request).toHaveBeenCalledTimes(1);
 });
 it('refuses password writes for a code response that belongs to a different account', async () => {
   const f = previewCodeFixture();
   f.user.email = 'other@example.test';
   const s = setup(f);
-  await expect(s.service.submitCode?.('synthetic@example.test', '012345')).rejects.toMatchObject({ kind: 'invalid-link' });
+  await expect(s.service.submitCode?.('synthetic@example.test', '01234567')).rejects.toMatchObject({ kind: 'invalid-link' });
   await expect(s.service.save('Synthetic password 123')).rejects.toMatchObject({ kind: 'expired' });
   expect(s.request).toHaveBeenCalledTimes(2);
 });

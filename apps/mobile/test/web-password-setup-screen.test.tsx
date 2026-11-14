@@ -93,24 +93,30 @@ async function background() {
   await act(async () => { callbacks.get('visibilitychange')?.(); });
 }
 
-it('requires an explicit six-digit submission before showing the password form', async () => {
+it('requires an explicit eight-digit submission before showing the password form', async () => {
   const submitCode = emailCodeRecovery();
   await render(<WebPasswordSetupRoute />);
   const button = await screen.findByRole('button', { name: 'Continue' });
   expect(button).toBeDisabled();
   expect(screen.getByLabelText('Email code').props.autoComplete).toBe('one-time-code');
+  expect(screen.getByLabelText('Email code').props.maxLength).toBe(8);
   expect(service.verify).not.toHaveBeenCalled();
   expect(submitCode).not.toHaveBeenCalled();
   expect(screen.queryByLabelText('New password')).toBeNull();
-  await enterCode('１２３４５６');
+  await enterCode('１２３４５６７８');
   await fireEvent.press(button);
   expect(submitCode).not.toHaveBeenCalled();
-  await enterCode('012345');
+  for (const partial of ['012345', '0123456']) {
+    await enterCode(partial);
+    expect(button).toBeDisabled();
+    await fireEvent.press(button);
+  }
+  await enterCode('01234567');
   expect(submitCode).not.toHaveBeenCalled();
   await fireEvent.press(button);
   await screen.findByLabelText('New password');
   expect(submitCode).toHaveBeenCalledTimes(1);
-  expect(submitCode).toHaveBeenCalledWith('pilot@example.test', '012345');
+  expect(submitCode).toHaveBeenCalledWith('pilot@example.test', '01234567');
   expect(service.save).not.toHaveBeenCalled();
   expect(screen.queryByLabelText('Email code')).toBeNull();
 });
@@ -123,14 +129,14 @@ it.each([
   const submitCode = emailCodeRecovery();
   submitCode.mockRejectedValueOnce(new PasswordSetupError(kind));
   await render(<WebPasswordSetupRoute />);
-  await enterCode('012345');
+  await enterCode('01234567');
   await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
   await screen.findByText(message);
   expect(screen.getByLabelText('Email code').props.value).toBe('');
   expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
   expect(screen.queryByLabelText('New password')).toBeNull();
   expect(submitCode).toHaveBeenCalledTimes(1);
-  await enterCode('654321');
+  await enterCode('76543210');
   await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
   await screen.findByLabelText('New password');
   expect(submitCode).toHaveBeenCalledTimes(2);
@@ -139,14 +145,14 @@ it.each([
 it('clears the waiting code form on backgrounding without killing the flow', async () => {
   const submitCode = emailCodeRecovery();
   await render(<WebPasswordSetupRoute />);
-  await enterCode('012345');
+  await enterCode('01234567');
   await background();
   expect(screen.getByLabelText('Email address').props.value).toBe('');
   expect(screen.getByLabelText('Email code').props.value).toBe('');
   expect(service.dispose).not.toHaveBeenCalled();
   expect(submitCode).not.toHaveBeenCalled();
   Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
-  await enterCode('654321');
+  await enterCode('76543210');
   await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
   await screen.findByLabelText('New password');
 });
@@ -156,7 +162,7 @@ it('disposes an in-flight submission on backgrounding and ignores a late verific
   let resolve!: () => void;
   submitCode.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
   await render(<WebPasswordSetupRoute />);
-  await enterCode('012345');
+  await enterCode('01234567');
   await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
   expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
   await background();

@@ -6,7 +6,7 @@ import { useAuth } from '../../auth/AuthProvider';
 import { useLoginNavigation } from '../../navigation/LoginNavigation';
 import { AccountAction, AccountHeading, AccountNotice, AccountScreen, accountStyles } from '../../components/AccountPresentation';
 import { PreferenceLoading } from '../../components/PreferenceLoading';
-import { createWebPasswordSetup, PasswordSetupError, type WebPasswordSetup } from '../../auth/web-password-setup';
+import { createWebPasswordSetup, isRecoveryCode, PasswordSetupError, RECOVERY_CODE_LENGTH, type WebPasswordSetup } from '../../auth/web-password-setup';
 
 const copy = {
   en: { title: 'Choose your password', description: 'Set a private password for your Memy pilot account.', password: 'New password', repeat: 'Repeat password',
@@ -18,7 +18,7 @@ const copy = {
     failed: 'We could not complete password setup. Check your connection, then try again. No automatic retry was made.',
     weak: 'Choose a password between 12 and 128 characters.', rate: 'Too many requests. Please wait before trying again.',
     email: 'Email address', code: 'Email code', continue: 'Continue', checkingCode: 'Checking your code…',
-    codeHelp: 'Enter the email address for your pilot account and the six-digit code from your password setup email.',
+    codeHelp: `Enter the email address for your pilot account and the ${RECOVERY_CODE_LENGTH}-digit code from your password setup email.`,
     invalidCode: 'That code is incorrect or has expired. Check the email address and enter the code again, or ask for a fresh email.',
     codeNetwork: 'We could not check the code. Check your connection before trying again.' },
   sv: { title: 'Välj ditt lösenord', description: 'Välj ett privat lösenord för ditt pilotkonto i Mina Minnen.', password: 'Nytt lösenord', repeat: 'Upprepa lösenord',
@@ -30,12 +30,11 @@ const copy = {
     failed: 'Det gick inte att slutföra. Kontrollera anslutningen och försök igen. Inga automatiska försök gjordes.',
     weak: 'Välj ett lösenord med 12 till 128 tecken.', rate: 'För många förfrågningar. Vänta innan du försöker igen.',
     email: 'E-postadress', code: 'Kod från mejlet', continue: 'Fortsätt', checkingCode: 'Kontrollerar koden…',
-    codeHelp: 'Ange e-postadressen för ditt pilotkonto och den sexsiffriga koden i mejlet för lösenordsval.',
+    codeHelp: `Ange e-postadressen för ditt pilotkonto och koden på ${RECOVERY_CODE_LENGTH} siffror från mejlet.`,
     invalidCode: 'Koden är felaktig eller har gått ut. Kontrollera e-postadressen och ange koden igen, eller be om ett nytt mejl.',
     codeNetwork: 'Det gick inte att kontrollera koden. Kontrollera anslutningen innan du försöker igen.' },
 };
 type SetupState = 'checking' | 'code' | 'code-busy' | 'ready' | 'busy' | 'saved' | 'uncertain' | 'invalid';
-const sixDigitCode = /^[0-9]{6}$/;
 
 export default function WebPasswordSetupRoute() {
   const { language, ready, completed } = useLanguage(), router = useRouter(), navigation = useLoginNavigation(), auth = useAuth(), text = copy[language];
@@ -73,7 +72,7 @@ export default function WebPasswordSetupRoute() {
   const isCurrent = (expected: SetupState) => mounted.current && phase.current === expected;
   const verifyCode = async () => {
     const current = service.current;
-    if (phase.current !== 'code' || !current?.submitCode || !email.trim() || !sixDigitCode.test(code)) return;
+    if (phase.current !== 'code' || !current?.submitCode || !email.trim() || !isRecoveryCode(code)) return;
     show('code-busy'); setNotice(null); setCode('');
     try {
       await current.submitCode(email.trim(), code);
@@ -133,10 +132,11 @@ export default function WebPasswordSetupRoute() {
           autoCapitalize="none" autoCorrect={false} maxLength={254} value={email} onChangeText={setEmail} editable={state === 'code'} /></View>
       <View style={accountStyles.field}><Text style={accountStyles.label}>{text.code}</Text>
         <TextInput accessibilityLabel={text.code} style={accountStyles.input} autoComplete="one-time-code" inputMode="numeric"
-          autoCorrect={false} maxLength={6} value={code} onChangeText={value => { if (/^[0-9]{0,6}$/.test(value)) setCode(value); }}
+          autoCorrect={false} maxLength={RECOVERY_CODE_LENGTH} value={code}
+          onChangeText={value => { if (value.length <= RECOVERY_CODE_LENGTH && /^[0-9]*$/.test(value)) setCode(value); }}
           editable={state === 'code'} onSubmitEditing={() => { void verifyCode(); }} /></View>
       <AccountAction language={language} label={text.continue} busy={state === 'code-busy'}
-        disabled={state === 'code-busy' || !email.trim() || !sixDigitCode.test(code)} onPress={() => { void verifyCode(); }} />
+        disabled={state === 'code-busy' || !email.trim() || !isRecoveryCode(code)} onPress={() => { void verifyCode(); }} />
     </View>}
     {state === 'invalid' && <AccountNotice language={language} message={text.invalid} />}
     {state === 'saved' && <AccountNotice language={language} message={notice === 'cleanup' ? text.cleanup : text.saved} urgent={false} />}

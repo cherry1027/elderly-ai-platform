@@ -20,6 +20,19 @@ function fixture(type = 'recovery') {
 }
 const services: ReturnType<typeof createWebPasswordSetup>[] = [];
 function setup(f = fixture()) { const service = createWebPasswordSetup(f.location, f.history, f.request); services.push(service); return { ...f, service }; }
+function previewCodeFixture() {
+  const preview = 'https://memy-visual-redesign-preview.onrender.com';
+  jest.mocked(readWebStaging).mockReturnValue({ webOrigin: preview, apiOrigin: 'https://memy-api.example.test' });
+  const f = fixture();
+  f.location.href = preview + '/auth/callback';
+  f.request.mockImplementation(async (url, init) => {
+    if (url === supabase + '/auth/v1/verify') {
+      return new Response(JSON.stringify({ access_token: token(), token_type: 'bearer' }));
+    }
+    return init?.method === 'POST' ? new Response(null, { status: 204 }) : new Response(JSON.stringify(f.user));
+  });
+  return f;
+}
 afterEach(() => { services.splice(0).forEach(service => service.dispose()); jest.useRealTimers(); jest.mocked(readWebStaging).mockReturnValue({ webOrigin: 'https://memy-web.example.test', apiOrigin: 'https://memy-api.example.test' }); });
 it.each(['invite', 'recovery'])('scrubs %s credentials before verification and makes no app/AI request', async type => {
   const f = setup(fixture(type)); expect(f.history.replaceState).toHaveBeenCalledWith(null, '', '/auth/callback');
@@ -52,6 +65,43 @@ it('verifies ownership, saves only on explicit action, revokes callback session 
   expect(f.request.mock.calls[1][1]?.body).toBe(JSON.stringify({ password: 'Synthetic password 123' }));
   expect(f.request.mock.calls[2][0]).toBe(`${supabase}/auth/v1/logout?scope=local`);
   await expect(f.service.save('Synthetic password 123')).rejects.toMatchObject({ kind: 'expired' });
+});
+it('verifies a manually entered recovery code before offering a password write on the preview', async () => {
+  const f = setup(previewCodeFixture());
+  expect(f.request).not.toHaveBeenCalled();
+  await expect(f.service.save('Synthetic password 123')).rejects.toMatchObject({ kind: 'expired' });
+  await f.service.submitCode?.(' Synthetic@Example.Test ', '012345');
+  expect(f.request.mock.calls.map(call => call[1]?.method)).toEqual(['POST', 'GET']);
+  expect(f.request.mock.calls[0][0]).toBe(supabase + '/auth/v1/verify');
+  expect(f.request.mock.calls[0][1]?.body).toBe(JSON.stringify({ email: 'synthetic@example.test', token: '012345', type: 'recovery' }));
+  expect(new Headers(f.request.mock.calls[0][1]?.headers).has('Authorization')).toBe(false);
+  expect(new Headers(f.request.mock.calls[1][1]?.headers).get('Authorization')).toBe('Bearer ' + token());
+  await f.service.save('Synthetic password 123');
+  expect(f.request.mock.calls.map(call => call[1]?.method)).toEqual(['POST', 'GET', 'PUT', 'POST']);
+  expect(f.request.mock.calls[3][0]).toBe(supabase + '/auth/v1/logout?scope=local');
+});
+it('rejects malformed input and an expired code without retrying or making a password request', async () => {
+  const f = setup(previewCodeFixture());
+  await expect(f.service.submitCode?.('synthetic@example.test', '12 456')).rejects.toMatchObject({ kind: 'invalid-link' });
+  expect(f.request).not.toHaveBeenCalled();
+  f.request.mockResolvedValueOnce(new Response(JSON.stringify({ error_code: 'otp_expired' }), { status: 403 }));
+  await expect(f.service.submitCode?.('synthetic@example.test', '012345')).rejects.toMatchObject({ kind: 'invalid-link' });
+  expect(f.request).toHaveBeenCalledTimes(1);
+});
+it('refuses password writes for a code response that belongs to a different account', async () => {
+  const f = previewCodeFixture();
+  f.user.email = 'other@example.test';
+  const s = setup(f);
+  await expect(s.service.submitCode?.('synthetic@example.test', '012345')).rejects.toMatchObject({ kind: 'invalid-link' });
+  await expect(s.service.save('Synthetic password 123')).rejects.toMatchObject({ kind: 'expired' });
+  expect(s.request).toHaveBeenCalledTimes(2);
+});
+it('keeps code entry on the bare, approved preview callback only', () => {
+  const normal = fixture();
+  expect(setup(normal).service.submitCode).toBeUndefined();
+  const preview = previewCodeFixture();
+  preview.location.href += '#error=access_denied';
+  expect(() => setup(preview)).toThrow();
 });
 it.each([{ id: '20000000-0000-4000-8000-000000000001' }, { is_anonymous: true }, { email_confirmed_at: null }])('denies unverified/other account %#', patch => {
   const f = fixture(); f.request.mockResolvedValue(new Response(JSON.stringify({ ...f.user, ...patch })));

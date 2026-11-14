@@ -76,3 +76,94 @@ it('removes password fields and prevents a save after backgrounding', async () =
   await ready(); Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
   await act(async () => { callbacks.get('visibilitychange')?.(); }); expect(screen.queryByLabelText('New password')).toBeNull(); expect(service.save).not.toHaveBeenCalled();
 });
+
+function emailCodeRecovery() {
+  const submitCode = jest.fn<Promise<void>, [string, string]>().mockResolvedValue(undefined);
+  jest.mocked(createWebPasswordSetup).mockReturnValue({ ...service, submitCode });
+  return submitCode;
+}
+
+async function enterCode(code: string) {
+  await fireEvent.changeText(await screen.findByLabelText('Email address'), ' pilot@example.test ');
+  await fireEvent.changeText(screen.getByLabelText('Email code'), code);
+}
+
+async function background() {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+  await act(async () => { callbacks.get('visibilitychange')?.(); });
+}
+
+it('requires an explicit six-digit submission before showing the password form', async () => {
+  const submitCode = emailCodeRecovery();
+  await render(<WebPasswordSetupRoute />);
+  const button = await screen.findByRole('button', { name: 'Continue' });
+  expect(button).toBeDisabled();
+  expect(screen.getByLabelText('Email code').props.autoComplete).toBe('one-time-code');
+  expect(service.verify).not.toHaveBeenCalled();
+  expect(submitCode).not.toHaveBeenCalled();
+  expect(screen.queryByLabelText('New password')).toBeNull();
+  await enterCode('１２３４５６');
+  await fireEvent.press(button);
+  expect(submitCode).not.toHaveBeenCalled();
+  await enterCode('012345');
+  expect(submitCode).not.toHaveBeenCalled();
+  await fireEvent.press(button);
+  await screen.findByLabelText('New password');
+  expect(submitCode).toHaveBeenCalledTimes(1);
+  expect(submitCode).toHaveBeenCalledWith('pilot@example.test', '012345');
+  expect(service.save).not.toHaveBeenCalled();
+  expect(screen.queryByLabelText('Email code')).toBeNull();
+});
+
+it.each([
+  ['invalid-link', /That code is incorrect or has expired/],
+  ['network', /We could not check the code/],
+  ['rate-limit', /Too many requests/],
+] as const)('shows a credential-free message after %s without automatically reusing the code', async (kind, message) => {
+  const submitCode = emailCodeRecovery();
+  submitCode.mockRejectedValueOnce(new PasswordSetupError(kind));
+  await render(<WebPasswordSetupRoute />);
+  await enterCode('012345');
+  await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
+  await screen.findByText(message);
+  expect(screen.getByLabelText('Email code').props.value).toBe('');
+  expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
+  expect(screen.queryByLabelText('New password')).toBeNull();
+  expect(submitCode).toHaveBeenCalledTimes(1);
+  await enterCode('654321');
+  await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
+  await screen.findByLabelText('New password');
+  expect(submitCode).toHaveBeenCalledTimes(2);
+});
+
+it('clears the waiting code form on backgrounding without killing the flow', async () => {
+  const submitCode = emailCodeRecovery();
+  await render(<WebPasswordSetupRoute />);
+  await enterCode('012345');
+  await background();
+  expect(screen.getByLabelText('Email address').props.value).toBe('');
+  expect(screen.getByLabelText('Email code').props.value).toBe('');
+  expect(service.dispose).not.toHaveBeenCalled();
+  expect(submitCode).not.toHaveBeenCalled();
+  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+  await enterCode('654321');
+  await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
+  await screen.findByLabelText('New password');
+});
+
+it('disposes an in-flight submission on backgrounding and ignores a late verification success', async () => {
+  const submitCode = emailCodeRecovery();
+  let resolve!: () => void;
+  submitCode.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+  await render(<WebPasswordSetupRoute />);
+  await enterCode('012345');
+  await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
+  expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
+  await background();
+  await act(async () => { resolve(); });
+  expect(service.dispose).toHaveBeenCalledTimes(1);
+  expect(submitCode).toHaveBeenCalledTimes(1);
+  expect(screen.queryByLabelText('Email code')).toBeNull();
+  expect(screen.queryByLabelText('New password')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Go to sign in' })).toBeTruthy();
+});

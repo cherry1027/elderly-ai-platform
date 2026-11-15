@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentRef } from 'react';
-import { AppState, BackHandler, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { AppState, BackHandler, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 import type { AuthUser } from '../auth/client';
 import { continueStoryProject, listStorySessions, StoryProjectsError, type StoryProject } from '../api/story-projects';
@@ -578,10 +578,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   }, [recording]);
   const beginCapture = () => {
     if (modeRef.current !== 'voice' || currentSection.current !== 'chat' || suspended || !mounted.current || authenticationBlocked.current || bootstrap.current || voiceConsent.current !== voiceScope() || !active.current || capturing.current || locked.current || !sessionId || !capabilities?.transcription || audio.current || unresolved || ambiguousEdit || usageBlocked || serviceBlocked || mediaPrivacy.isBlocked()) return;
-    if (capabilities.speech) {
-      playback.current ??= createRealPlayback();
-      playback.current.prepare?.();
-    }
+    if (capabilities.speech) playback.current ??= createRealPlayback();
     void run(async (_signal, check) => {
       if (playback.current) await playback.current.stop(); check(); setPlaying(false);
       recorder.current ??= createNativeRecorder();
@@ -622,6 +619,10 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     !messages.some(message => message.source_transcript_id === transcript.transcript_id);
   const ask = (transcript: RealTranscript) => {
     if (pending.current || !replyAllowed() || !canReply(transcript)) return;
+    if (capabilities?.speech) {
+      playback.current ??= createRealPlayback();
+      playback.current.prepare?.();
+    }
     const key = createRecordingId();
     void run((signal, check) => voiceReply(signal, check, transcript, key), { key, kind: 'conversation', voiceTranscriptId: transcript.transcript_id });
   };
@@ -658,7 +659,10 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     const renewing = renewSpeech.has(message.id);
     const cached = renewing ? undefined : speech.current.get(message.id), key = createRecordingId();
     void run(async (signal, check, beginOperation) => {
-      if (playback.current) await playback.current.stop(); check(); setPlaying(false);
+      // Browser prepare already stops previous playback. Avoid an async
+      // boundary before starting a verified cached clip from the replay tap.
+      if (playback.current && Platform.OS !== 'web') await playback.current.stop();
+      check(); setPlaying(false);
       if (currentSection.current !== 'chat') return;
       const current = scope(signal);
       let metadata = cached, bytes: Uint8Array | undefined, fromCache = false;
@@ -713,10 +717,20 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         if (!fromCache) speechBytes.put(metadata, bytes);
         if (currentSection.current !== 'chat') return;
         playback.current ??= createRealPlayback();
+        let playbackFinished = false;
+        const stopShowingPlayback = () => {
+          playbackFinished = true;
+          if (mounted.current && active.current && currentSection.current === 'chat') setPlaying(false);
+        };
         try {
-          await playback.current.play(bytes, () => { if (mounted.current && active.current) setPlaying(false); });
+          await playback.current.play(bytes, stopShowingPlayback, () => {
+            stopShowingPlayback();
+            if (mounted.current && active.current && currentSection.current === 'chat') {
+              setNotice(automatic ? t.spokenReplyReady : t.audioFailure);
+            }
+          });
           check();
-          if (currentSection.current === 'chat') setPlaying(true);
+          if (currentSection.current === 'chat' && !playbackFinished) setPlaying(true);
         } catch (error) {
           check();
           if (currentSection.current !== 'chat') return;

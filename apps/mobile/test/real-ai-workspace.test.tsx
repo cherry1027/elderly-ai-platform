@@ -271,8 +271,26 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     mockPlayback.play.mockRejectedValueOnce(new RealPlaybackError());
     await render(<RealStoryWorkspace {...props} />); await ready(); await startVoice(); await press(t.stop);
     expect(screen.getByText(t.spokenReplyReady)).toBeOnTheScreen();
-    expect(mockPlayback.prepare).toHaveBeenCalledTimes(2);
+    expect(mockPlayback.prepare).toHaveBeenCalledTimes(1);
     expect(api.createRealSpeech).toHaveBeenCalledTimes(1);
+    await listen();
+    expect(mockPlayback.play).toHaveBeenCalledTimes(2);
+    expect(api.getRealSpeechAudio).toHaveBeenCalledTimes(1);
+    expect(api.createRealSpeech).toHaveBeenCalledTimes(1);
+  });
+  it.each([false, true])('reports a late media error without losing the reply or resynthesizing on replay (early callback: %s)', async earlyCallback => {
+    jest.mocked(api.createRealSpeech).mockResolvedValue(speechMetadata());
+    jest.mocked(api.getRealSpeechAudio).mockResolvedValue(speechWave());
+    let fail: (() => void) | undefined;
+    mockPlayback.play.mockImplementationOnce(async (_bytes, _finish, onError) => {
+      fail = onError;
+      if (earlyCallback) onError();
+    });
+    await render(<RealStoryWorkspace {...props} />); await ready(); await startVoice(); await press(t.stop);
+    if (!earlyCallback) await act(async () => { fail?.(); });
+    expect(screen.getByText(t.spokenReplyReady)).toBeOnTheScreen();
+    expect(screen.getByText(realMessage('assistant').text)).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: t.stopVoice })).toBeNull();
     await listen();
     expect(mockPlayback.play).toHaveBeenCalledTimes(2);
     expect(api.getRealSpeechAudio).toHaveBeenCalledTimes(1);

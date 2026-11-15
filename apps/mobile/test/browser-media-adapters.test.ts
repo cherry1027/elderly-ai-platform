@@ -16,7 +16,7 @@ const track = { stop: jest.fn(), onended: null as null | (() => void) };
 const stream = { getTracks: () => [track] };
 const getUserMedia = jest.fn(async () => stream);
 let nextUrl = 0;
-const createObjectURL = jest.fn(() => `blob:synthetic-${++nextUrl}`), revokeObjectURL = jest.fn();
+const createObjectURL = jest.fn((_value: Blob) => `blob:synthetic-${++nextUrl}`), revokeObjectURL = jest.fn();
 class FakeRecorder {
   static isTypeSupported = () => true;
   static instances: FakeRecorder[] = [];
@@ -125,23 +125,86 @@ it('keeps the completed audio available when the recording reaches its time limi
     await expect(getBrowserRecordingBlob(recording).text()).resolves.toBe('synthetic capture');
   } finally { await recorder.dispose(); }
 });
-it('silences decoded spoken audio synchronously when the page is hidden', async () => {
-  const source = { connect: jest.fn(), disconnect: jest.fn(), start: jest.fn(), stop: jest.fn(), onended: null };
-  install('Audio', class {});
-  install('AudioContext', class {
-    state = 'running';
-    resume = jest.fn(async () => {});
-    close = jest.fn(async () => { this.state = 'closed'; });
-    decodeAudioData = jest.fn(async () => ({}));
-    createBufferSource = () => source;
-  });
-  const playback = createRealPlayback(), finish = jest.fn(), bytes = new Uint8Array(44);
+class FakeAudio {
+  static instances: FakeAudio[] = [];
+  src = ''; onended: (() => void) | null = null; onerror: (() => void) | null = null;
+  play = jest.fn<Promise<void>, []>(async () => {});
+  pause = jest.fn(); load = jest.fn();
+  constructor() { FakeAudio.instances.push(this); }
+  removeAttribute(attribute: string) { if (attribute === 'src') this.src = ''; }
+}
+function playbackFixture() {
+  install('Audio', FakeAudio);
+  FakeAudio.instances = [];
+  const bytes = new Uint8Array(64);
   bytes.set(Buffer.from('RIFF'), 0); bytes.set(Buffer.from('WAVE'), 8);
+  return { playback: createRealPlayback(), bytes, finish: jest.fn(), failed: jest.fn() };
+}
+it('primes an unmuted Blob in the gesture and rotates that same element to the delayed reply', async () => {
+  const { playback, bytes, finish, failed } = playbackFixture();
   try {
-    playback.prepare?.(); await playback.play(bytes, finish);
-    expect(source.start).toHaveBeenCalledTimes(1);
-    for (const listener of windowListeners.get('pagehide') ?? []) listener();
-    expect(source.stop).toHaveBeenCalledTimes(1);
-    expect(source.onended).toBeNull(); expect(finish).not.toHaveBeenCalled();
+    playback.prepare?.();
+    const player = FakeAudio.instances[0], primerUrl = player.src;
+    expect(player.play).toHaveBeenCalledTimes(1);
+    const primer = createObjectURL.mock.lastCall?.[0] as Blob;
+    expect(primer.type).toBe('audio/wav');
+    const primerBytes = new Uint8Array(await primer.arrayBuffer());
+    expect(primerBytes.length).toBeGreaterThan(44);
+    expect(primerBytes.subarray(44).every(byte => byte === 0)).toBe(true);
+    await playback.play(bytes, finish, failed);
+    expect(FakeAudio.instances).toEqual([player]);
+    expect(player.play).toHaveBeenCalledTimes(2);
+    expect(player.src).not.toBe(primerUrl);
+    expect(revokeObjectURL).toHaveBeenCalledWith(primerUrl);
+    player.onended?.();
+    expect(finish).toHaveBeenCalledTimes(1);
+    expect(failed).not.toHaveBeenCalled();
   } finally { await playback.dispose(); }
+});
+it('reports a late HTML media error as a failure and allows same-element manual replay', async () => {
+  const { playback, bytes, finish, failed } = playbackFixture();
+  try {
+    await playback.play(bytes, finish, failed);
+    const player = FakeAudio.instances[0], staleError = player.onerror, failedUrl = player.src;
+    player.onerror?.();
+    expect(failed).toHaveBeenCalledTimes(1); expect(finish).not.toHaveBeenCalled();
+    expect(revokeObjectURL).toHaveBeenCalledWith(failedUrl);
+    playback.prepare?.();
+    const replay = playback.play(bytes, finish, failed);
+    expect(player.play).toHaveBeenCalledTimes(3); // the cached replay starts in the tap, not in a microtask
+    await replay;
+    staleError?.();
+    expect(failed).toHaveBeenCalledTimes(1);
+    player.onended?.();
+    expect(finish).toHaveBeenCalledTimes(1);
+  } finally { await playback.dispose(); }
+});
+it('rejects an early media error even before the browser settles the play promise', async () => {
+  const { playback, bytes, finish, failed } = playbackFixture();
+  try {
+    playback.prepare?.();
+    const player = FakeAudio.instances[0];
+    player.play.mockImplementationOnce(() => new Promise(() => {}));
+    const result = playback.play(bytes, finish, failed);
+    player.onerror?.();
+    await expect(result).rejects.toThrow('played safely');
+    expect(finish).not.toHaveBeenCalled(); expect(failed).not.toHaveBeenCalled();
+  } finally { await playback.dispose(); }
+});
+it('requests the playback route only for the real clip and restores it when hidden', async () => {
+  const { playback, bytes, finish, failed } = playbackFixture();
+  const session = { type: 'auto' };
+  install('navigator', { mediaDevices: { getUserMedia }, audioSession: session });
+  try {
+    playback.prepare?.(); expect(session.type).toBe('auto');
+    await playback.play(bytes, finish, failed);
+    expect(session.type).toBe('playback');
+    const player = FakeAudio.instances[0], staleEnd = player.onended;
+    player.pause.mockClear();
+    for (const listener of windowListeners.get('pagehide') ?? []) listener();
+    expect(player.pause).toHaveBeenCalledTimes(1);
+    expect(player.onended).toBeNull(); expect(session.type).toBe('auto');
+    staleEnd?.();
+    expect(finish).not.toHaveBeenCalled(); expect(failed).not.toHaveBeenCalled();
+  } finally { await playback.dispose(); install('navigator', { mediaDevices: { getUserMedia } }); }
 });

@@ -12,7 +12,7 @@ export interface PlaybackDependencies {
 }
 export interface RealPlayback {
   prepare?(): void;
-  play(bytes: Uint8Array, onFinish: () => void): Promise<void>;
+  play(bytes: Uint8Array, onFinish: () => void, onError?: () => void): Promise<void>;
   stop(): Promise<void>;
   dispose(): Promise<void>;
 }

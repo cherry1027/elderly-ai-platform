@@ -426,6 +426,7 @@ def test_request_voice_override_preserves_default_and_verifies_cedar():
 
     assert audio.voice == socket.sent[0]["response"]["audio"]["output"]["voice"] == "cedar"
     assert speech.voice == "marin"
+    assert "softly feminine delivery" in socket.sent[0]["response"]["instructions"]
     assert governor.calls == [("speech_synthesis", SPEECH_MODEL)]
 
 
@@ -455,6 +456,7 @@ def test_current_realtime_speech_buffers_exact_transcript_then_returns_valid_pri
     payload = json.loads(request["input"][0]["content"][0]["text"])
     assert payload == {"language": language, "saved_assistant_text": text}
     assert "EXACTLY" in request["instructions"]
+    assert "softly feminine delivery" not in request["instructions"]
     if language == "sv":
         assert "sv-SE" in request["instructions"] and "å, ä and ö" in request["instructions"]
         assert "dates, years and numbers" in request["instructions"]

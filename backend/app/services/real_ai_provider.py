@@ -206,6 +206,12 @@ forms while preserving their written forms in the transcript. Keep the pace
 relaxed and clear, and retain the exact saved wording throughout.
 """
 
+_CEDAR_SWEDISH_DELIVERY = """
+Use Cedar with a warm, softly feminine delivery. Keep the pitch comfortable,
+the intonation gently expressive, and the pace unhurried. Avoid a deep,
+booming or announcer-like delivery. Keep the exact saved wording.
+"""
+
 
 def _input_error() -> APIError:
     return APIError(422, "AI_INPUT_LIMIT", "The AI request exceeds approved limits.")
@@ -829,6 +835,7 @@ class RealtimeSpeechProvider:
             raise APIError(503, "AI_NOT_CONFIGURED", "The AI provider is not configured.") from None
 
     async def synthesize(self, text: str, language: str, *, voice: str | None = None) -> SpeechAudio:
+        use_preview_delivery = language == "sv" and voice == "cedar"
         voice = self.voice if voice is None else voice
         try:
             if language not in {"en", "sv"} or voice not in _SPEECH_VOICES:
@@ -858,7 +865,7 @@ class RealtimeSpeechProvider:
                     "output_modalities": ["audio"],
                     "instructions": _SPEECH_INSTRUCTIONS + (
                         _SWEDISH_SPEECH_INSTRUCTIONS if language == "sv" else ""
-                    ),
+                    ) + (_CEDAR_SWEDISH_DELIVERY if use_preview_delivery else ""),
                     "tools": [],
                     "tool_choice": "none",
                     "max_output_tokens": 1_536,

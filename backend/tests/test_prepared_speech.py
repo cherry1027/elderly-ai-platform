@@ -166,12 +166,13 @@ _LIVE = "https://memy-pilot.onrender.com"
 @pytest.mark.parametrize("language,origin,enabled,expected_voice", [
     ("sv", _PREVIEW, True, "cedar"),
     ("en", _PREVIEW, True, "marin"),
-    ("sv", _LIVE, True, "marin"),
+    ("sv", _LIVE, True, "cedar"),
+    ("en", _LIVE, True, "marin"),
     ("sv", _PREVIEW + ".example", True, "marin"),
     ("sv", None, True, "marin"),
     ("sv", _PREVIEW, False, "marin"),
 ])
-def test_cedar_selection_uses_only_preview_and_owned_swedish_reply(harness, language, origin, enabled, expected_voice):
+def test_cedar_selection_uses_only_approved_sites_and_owned_swedish_reply(harness, language, origin, enabled, expected_voice):
     app, _, provider = harness(language)
     app.state.settings.real_ai_swedish_preview_cedar = enabled
     gateway = RecoveryGateway(language)
@@ -196,7 +197,7 @@ def test_cedar_selection_uses_only_preview_and_owned_swedish_reply(harness, lang
     assert calls == [(language, expected_voice)]
 
 
-def test_preview_speech_replay_partitions_preserve_live_and_do_not_repeat_a_charge(harness):
+def test_cedar_speech_replays_on_both_sites_and_preserves_older_live_audio(harness):
     app, _, provider = harness("sv")
     app.state.settings.real_ai_swedish_preview_cedar = True
     gateway = RecoveryGateway("sv")
@@ -218,6 +219,7 @@ def test_preview_speech_replay_partitions_preserve_live_and_do_not_repeat_a_char
     endpoint = f"/api/v2/conversation-messages/{assistant}/speech"
     with TestClient(app) as client:
         assert client.get(endpoint, headers=preview_headers).status_code == 410
+        assert client.get(endpoint, headers=live_headers).json()["speech_id"] == str(live_id)
         first = client.post(endpoint, json={"language": "sv"}, headers={**preview_headers, "Idempotency-Key": key})
         assert first.status_code == 200, first.text
         preview_id = first.json()["speech_id"]
@@ -225,11 +227,11 @@ def test_preview_speech_replay_partitions_preserve_live_and_do_not_repeat_a_char
 
         repeat = client.post(endpoint, json={"language": "sv"}, headers={**preview_headers, "Idempotency-Key": key})
         assert repeat.status_code == 200 and repeat.json() == first.json()
-        assert client.post(endpoint, json={"language": "sv"}, headers={**live_headers, "Idempotency-Key": key}).status_code == 410
+        assert client.post(endpoint, json={"language": "sv"}, headers={**live_headers, "Idempotency-Key": key}).json() == first.json()
         assert client.get(endpoint, headers=preview_headers).json()["speech_id"] == preview_id
-        assert client.get(endpoint, headers=live_headers).json()["speech_id"] == str(live_id)
+        assert client.get(endpoint, headers=live_headers).json()["speech_id"] == preview_id
         assert client.get(f"/api/v2/spoken-replies/{preview_id}/audio", headers=preview_headers).content == data
-        assert client.get(f"/api/v2/spoken-replies/{preview_id}/audio", headers=live_headers).status_code == 410
+        assert client.get(f"/api/v2/spoken-replies/{preview_id}/audio", headers=live_headers).content == data
         assert client.get(f"/api/v2/spoken-replies/{live_id}/audio", headers=live_headers).content == data
         assert client.get(f"/api/v2/spoken-replies/{live_id}/audio", headers=preview_headers).status_code == 410
     assert calls == ["cedar"]

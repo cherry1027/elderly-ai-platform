@@ -207,9 +207,11 @@ relaxed and clear, and retain the exact saved wording throughout.
 """
 
 _CEDAR_SWEDISH_DELIVERY = """
-Use Cedar with a warm, softly feminine delivery. Keep the pitch comfortable,
-the intonation gently expressive, and the pace unhurried. Avoid a deep,
-booming or announcer-like delivery. Keep the exact saved wording.
+Use Cedar with a warm, softly feminine delivery, like a native Swedish
+woman in her 50s or 60s talking with someone she knows well. Use natural
+Swedish phrasing and sentence melody, with gentle expression, a comfortable
+pitch and an unhurried conversational pace. Avoid an exaggerated age effect
+or an announcer tone. Keep the exact saved wording.
 """
 
 

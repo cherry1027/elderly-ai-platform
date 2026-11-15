@@ -416,6 +416,19 @@ def speech_setup(events=None, governor=None, **kwargs):
     return speech, socket, connector, governor
 
 
+def test_request_voice_override_preserves_default_and_verifies_cedar():
+    text = "Hur minns du Malmö?"
+    events = speech_events(text)
+    events[-1]["response"]["audio"]["output"]["voice"] = "cedar"
+    speech, socket, _, governor = speech_setup(events)
+
+    audio = asyncio.run(speech.synthesize(text, "sv", voice="cedar"))
+
+    assert audio.voice == socket.sent[0]["response"]["audio"]["output"]["voice"] == "cedar"
+    assert speech.voice == "marin"
+    assert governor.calls == [("speech_synthesis", SPEECH_MODEL)]
+
+
 @pytest.mark.parametrize("text,language", [("Hello.", "en"), ("Hur minns du Malmö?", "sv")])
 def test_current_realtime_speech_buffers_exact_transcript_then_returns_valid_private_wav(text, language):
     speech, socket, connector, governor = speech_setup(speech_events(text))

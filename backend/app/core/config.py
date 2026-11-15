@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     real_ai_transcription_model: str = ""
     real_ai_speech_model: str = ""
     real_ai_voice: str = "marin"
+    real_ai_swedish_preview_cedar: bool = False
     real_ai_usage_log_path: Path | None = None
     # Durable speech is opt-in. Keep the encryption key on the server only.
     real_ai_speech_storage_path: Path | None = None

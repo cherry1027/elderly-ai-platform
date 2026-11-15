@@ -119,10 +119,12 @@ def test_voice_route_uses_same_stream_and_source_contract(harness):
 
 @pytest.mark.parametrize('language', ['en', 'sv'])
 @pytest.mark.parametrize('speech_outcome', ['ready', 'timeout', 'disabled'])
-def test_recorded_turn_saves_text_before_single_speech_attempt(harness, language, speech_outcome):
+@pytest.mark.parametrize('preview', [False, True])
+def test_recorded_turn_saves_text_before_single_speech_attempt(harness, language, speech_outcome, preview):
     app, _, provider = harness(language)
     enable(app)
     app.state.settings.real_ai_speech_enabled = speech_outcome != 'disabled'
+    app.state.settings.real_ai_swedish_preview_cedar = preview
     class VoiceGateway(ReconciliationGateway):
         async def complete(self, claim, payload, provenance):
             result = await super().complete(claim, payload, provenance)
@@ -135,21 +137,23 @@ def test_recorded_turn_saves_text_before_single_speech_attempt(harness, language
     spoken = []
     data = wav_bytes()
 
-    async def synthesize(text, spoken_language):
+    async def synthesize(text, spoken_language, *, voice='marin'):
         turn = next(row['result'] for row in gateway.claims.values()
                     if row['kind'] == 'conversation' and row['status'] == 'completed')
         assert turn['message']['text'] == text
         assert ('speech', UUID(turn['message']['id'])) in gateway.claims
-        spoken.append((text, spoken_language))
+        spoken.append((text, spoken_language, voice))
         mark_ai_dispatched()
         if speech_outcome == 'timeout':
             raise APIError(504, 'AI_PROVIDER_TIMEOUT', 'The AI provider timed out.')
-        return SpeechAudio(data, 'audio/wav', sha256(data).hexdigest(), 0.01, 'fixture', 'fixture')
+        return SpeechAudio(data, 'audio/wav', sha256(data).hexdigest(), 0.01, 'fixture', voice)
 
     provider.synthesize = synthesize
     url = f'/api/v2/story-sessions/{SESSION}/messages?autoplay=true'
     payload = {'source_transcript_id': str(TRANSCRIPT), 'language': language}
     headers = {'Accept': 'text/event-stream', 'Idempotency-Key': str(uuid4())}
+    if preview:
+        headers['Origin'] = 'https://memy-visual-redesign-preview.onrender.com'
     with TestClient(app) as client:
         response = client.post(url, json=payload, headers=headers)
         replay = client.post(url, json=payload, headers=headers)
@@ -169,7 +173,8 @@ def test_recorded_turn_saves_text_before_single_speech_attempt(harness, language
         assert events[3]['error']['code'] == ('AI_PROVIDER_TIMEOUT' if speech_outcome == 'timeout' else 'LIVE_AI_DISABLED')
         assert events[3]['operation_id'] != events[0]['operation_id']
         assert gateway.failures == (speech_outcome == 'timeout')
-    assert spoken == ([(saved['message']['text'], language)] if speech_outcome != 'disabled' else [])
+    expected_voice = 'cedar' if preview and language == 'sv' else 'marin'
+    assert spoken == ([(saved['message']['text'], language, expected_voice)] if speech_outcome != 'disabled' else [])
     assert [row['status'] for row in gateway.claims.values() if row['kind'] == 'conversation'] == ['completed']
 
 

@@ -2,12 +2,14 @@
 
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from hashlib import sha256
+from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 import pytest
 
 from app.core.errors import APIError
+from app.services.real_ai_provider import SpeechAudio
 from tests.test_real_ai_api import OWNER, PROJECT, SESSION, harness
 from tests.test_real_ai_reconciliation import (
     ReconciliationGateway, install_gateway, seed_completed_speech, wav_bytes,
@@ -155,3 +157,79 @@ def test_prepared_speech_rejects_normalized_language_mismatch(harness):
         response = client.get(f"/api/v2/conversation-messages/{assistant}/speech")
     assert response.status_code == 503
     assert provider.calls == gateway.claim_count == 0
+
+
+_PREVIEW = "https://memy-visual-redesign-preview.onrender.com"
+_LIVE = "https://memy-pilot.onrender.com"
+
+
+@pytest.mark.parametrize("language,origin,enabled,expected_voice", [
+    ("sv", _PREVIEW, True, "cedar"),
+    ("en", _PREVIEW, True, "marin"),
+    ("sv", _LIVE, True, "marin"),
+    ("sv", _PREVIEW + ".example", True, "marin"),
+    ("sv", None, True, "marin"),
+    ("sv", _PREVIEW, False, "marin"),
+])
+def test_cedar_selection_uses_only_preview_and_owned_swedish_reply(harness, language, origin, enabled, expected_voice):
+    app, _, provider = harness(language)
+    app.state.settings.real_ai_swedish_preview_cedar = enabled
+    gateway = RecoveryGateway(language)
+    install_gateway(app, gateway)
+    data = wav_bytes()
+    assistant, _, _ = seed_completed_speech(gateway, data=data, key=uuid4(),
+        expires_at=(datetime.now(timezone.utc) + timedelta(seconds=300)).isoformat())
+    calls = []
+
+    async def synthesize(text, spoken_language, *, voice="marin"):
+        calls.append((spoken_language, voice))
+        return SpeechAudio(data, "audio/wav", sha256(data).hexdigest(), .01, "fixture", voice)
+
+    provider.synthesize = synthesize
+    headers = {"Idempotency-Key": str(uuid4())}
+    if origin is not None:
+        headers["Origin"] = origin
+    with TestClient(app) as client:
+        response = client.post(f"/api/v2/conversation-messages/{assistant}/speech",
+                               json={"language": language}, headers=headers)
+    assert response.status_code == 200, response.text
+    assert calls == [(language, expected_voice)]
+
+
+def test_preview_speech_replay_partitions_preserve_live_and_do_not_repeat_a_charge(harness):
+    app, _, provider = harness("sv")
+    app.state.settings.real_ai_swedish_preview_cedar = True
+    gateway = RecoveryGateway("sv")
+    install_gateway(app, gateway)
+    data = wav_bytes()
+    assistant, live_id, saved_live = seed_completed_speech(gateway, data=data, key=uuid4(),
+        expires_at=(datetime.now(timezone.utc) + timedelta(seconds=300)).isoformat())
+    app.state.real_ai.cache.put(OWNER, live_id, data, saved_live["audio_sha256"])
+    gateway.speech_rows = [saved_live]
+    calls = []
+
+    async def synthesize(text, language, *, voice):
+        calls.append(voice)
+        return SpeechAudio(data, "audio/wav", sha256(data).hexdigest(), .01, "fixture", voice)
+
+    provider.synthesize = synthesize
+    preview_headers, live_headers = {"Origin": _PREVIEW}, {"Origin": _LIVE}
+    key = str(uuid4())
+    endpoint = f"/api/v2/conversation-messages/{assistant}/speech"
+    with TestClient(app) as client:
+        assert client.get(endpoint, headers=preview_headers).status_code == 410
+        first = client.post(endpoint, json={"language": "sv"}, headers={**preview_headers, "Idempotency-Key": key})
+        assert first.status_code == 200, first.text
+        preview_id = first.json()["speech_id"]
+        gateway.speech_rows.insert(0, gateway.local_rows[("real_speech", UUID(preview_id))])
+
+        repeat = client.post(endpoint, json={"language": "sv"}, headers={**preview_headers, "Idempotency-Key": key})
+        assert repeat.status_code == 200 and repeat.json() == first.json()
+        assert client.post(endpoint, json={"language": "sv"}, headers={**live_headers, "Idempotency-Key": key}).status_code == 410
+        assert client.get(endpoint, headers=preview_headers).json()["speech_id"] == preview_id
+        assert client.get(endpoint, headers=live_headers).json()["speech_id"] == str(live_id)
+        assert client.get(f"/api/v2/spoken-replies/{preview_id}/audio", headers=preview_headers).content == data
+        assert client.get(f"/api/v2/spoken-replies/{preview_id}/audio", headers=live_headers).status_code == 410
+        assert client.get(f"/api/v2/spoken-replies/{live_id}/audio", headers=live_headers).content == data
+        assert client.get(f"/api/v2/spoken-replies/{live_id}/audio", headers=preview_headers).status_code == 410
+    assert calls == ["cedar"]

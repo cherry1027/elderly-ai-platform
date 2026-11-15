@@ -580,9 +580,11 @@ class RealAIProvider:
                                            (self.verifier_model, MAX_JSON_BYTES, 4_096)])
         return await self._writer.write(language, style, sources)
 
-    async def synthesize(self, text: str, language: str) -> SpeechAudio:
+    async def synthesize(self, text: str, language: str, *, voice: str | None = None) -> SpeechAudio:
         if self._speech is None:
             raise APIError(503, "AI_SPEECH_NOT_CONFIGURED", "Spoken replies are not configured.")
+        if voice is not None:
+            return await self._speech.synthesize(text, language, voice=voice)
         return await self._speech.synthesize(text, language)
 
 
@@ -826,9 +828,10 @@ class RealtimeSpeechProvider:
         except (OSError, ValueError):
             raise APIError(503, "AI_NOT_CONFIGURED", "The AI provider is not configured.") from None
 
-    async def synthesize(self, text: str, language: str) -> SpeechAudio:
+    async def synthesize(self, text: str, language: str, *, voice: str | None = None) -> SpeechAudio:
+        voice = self.voice if voice is None else voice
         try:
-            if language not in {"en", "sv"}:
+            if language not in {"en", "sv"} or voice not in _SPEECH_VOICES:
                 raise ValueError
             _safe_text(text, MAX_SPEECH_CHARACTERS)
         except (ValueError, TypeError, UnicodeError):
@@ -861,7 +864,7 @@ class RealtimeSpeechProvider:
                     "max_output_tokens": 1_536,
                     "audio": {"output": {
                         "format": {"type": "audio/pcm", "rate": SPEECH_SAMPLE_RATE},
-                        "voice": self.voice,
+                        "voice": voice,
                     }},
                     "input": [{"type": "message", "role": "user", "content": [{
                         "type": "input_text",
@@ -876,7 +879,7 @@ class RealtimeSpeechProvider:
                 reservation_id = reserve_request("speech_synthesis", self.model,
                     input_bytes=len(json.dumps(request, ensure_ascii=False, allow_nan=False).encode("utf-8")),
                     max_output_tokens=1_536)
-            state = _SpeechAssembly(text, self.voice)
+            state = _SpeechAssembly(text, voice)
             async with asyncio.timeout(self.timeout_seconds):
                 # No proxy inheritance, redirect loop, reconnect iterator or retries.
                 mark_ai_dispatched()
@@ -911,7 +914,7 @@ class RealtimeSpeechProvider:
             return SpeechAudio(
                 data=data, media_type="audio/wav", sha256=sha256(data).hexdigest(),
                 duration_seconds=len(state.pcm) / (2 * SPEECH_SAMPLE_RATE),
-                model=self.model, voice=self.voice,
+                model=self.model, voice=voice,
             )
         except APIError:
             raise

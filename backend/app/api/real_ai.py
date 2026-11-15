@@ -6,10 +6,11 @@ from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import logging
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Annotated, Literal
-from uuid import UUID
+from uuid import UUID, uuid5
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
 
@@ -38,6 +39,8 @@ router = APIRouter(prefix="/api/v2", tags=["Real AI (explicit opt-in)"], respons
     code: {"content":{"application/json":{"schema":{"$ref":"#/components/schemas/ErrorResponse"}}}}
     for code in (401,403,404,409,410,413,415,422,429,503,504)
 })
+_LOGGER = logging.getLogger("uvicorn.error")
+_SWEDISH_PREVIEW_ORIGIN = "https://memy-visual-redesign-preview.onrender.com"
 
 
 class WAVResponse(Response):
@@ -461,31 +464,60 @@ async def history(draft_id: UUID, gateway: Gateway, limit: Limit = 50, offset: O
     return [validated(StoryEditResponse, {k:v for k,v in r.items() if k != "project_id"}) for r in rows]
 
 
+def uses_swedish_preview_voice(request, language):
+    # Origin selects the presentation variant. Existing authentication and
+    # ownership checks, pilot admission, and spending limits still apply.
+    return (request.app.state.settings.real_ai_swedish_preview_cedar
+            and language == "sv"
+            and request.headers.getlist("origin") == [_SWEDISH_PREVIEW_ORIGIN])
+
+
+def speech_cache_id(speech_id, preview_voice):
+    # Cache partitions keep the existing owner so owner-wide erasure still
+    # removes every rendition. The database's real speech ID is unchanged.
+    return uuid5(speech_id, "memy-swedish-preview-cedar-v1") if preview_voice else speech_id
+
+
+def read_cached_speech(request, gateway, metadata, preview_voice):
+    if datetime.fromisoformat(metadata["expires_at"]) <= datetime.now(timezone.utc):
+        raise APIError(410, "SPEECH_EXPIRED", "Spoken reply expired. Request a new reply explicitly.")
+    cache = request.app.state.real_ai.cache
+    return cache.get(gateway.user.id, speech_cache_id(UUID(metadata["speech_id"]), preview_voice),
+                     metadata["audio_sha256"])
+
+
 @router.get("/conversation-messages/{message_id}/speech", response_model=RealSpeech)
 async def prepared_speech(message_id: UUID, request: Request, gateway: Gateway):
     """Recover an owned prepared reply without paying to synthesize it again."""
     message = validated(RealMessage, await gateway.one("real_conversation_messages", "id", message_id))
     if message["role"] != "assistant":
         raise APIError(422, "ASSISTANT_MESSAGE_REQUIRED", "Choose an interviewer reply.")
+    preview_voice = uses_swedish_preview_voice(request, message["language"])
+    # Swedish replies may have both preview and normal cache entries. Find an
+    # already prepared rendition for this origin without opening the paid gate.
+    limit = 8 if request.app.state.settings.real_ai_swedish_preview_cedar and message["language"] == "sv" else 1
     rows = await gateway.rows("real_speech", filters={
         "assistant_message_id": f"eq.{message_id}",
         "project_id": f"eq.{message['project_id']}",
         "session_id": f"eq.{message['session_id']}",
-    }, limit=1, order="created_at.desc,speech_id.desc")
+    }, limit=limit, order="created_at.desc,speech_id.desc")
     if not rows:
         raise APIError(404, "RESOURCE_NOT_FOUND", "The requested resource was not found.")
-    row = rows[0]
-    if (not isinstance(row, dict) or row.get("assistant_message_id") != str(message_id)
-        or row.get("project_id") != message["project_id"] or row.get("session_id") != message["session_id"]):
-        raise unavailable()
-    metadata = await gateway.normalize_result("speech", row, speech_assistant=message)
-    if metadata["assistant_message_id"] != str(message_id) or metadata["language"] != message["language"]:
-        raise unavailable()
-    if datetime.fromisoformat(metadata["expires_at"]) <= datetime.now(timezone.utc):
-        raise APIError(410, "SPEECH_EXPIRED", "Spoken reply expired. Request a new reply explicitly.")
-    # Gate-free owned read: an exhausted budget must not block existing audio.
-    request.app.state.real_ai.cache.get(gateway.user.id, UUID(metadata["speech_id"]), metadata["audio_sha256"])
-    return metadata
+    for row in rows:
+        if (not isinstance(row, dict) or row.get("assistant_message_id") != str(message_id)
+            or row.get("project_id") != message["project_id"] or row.get("session_id") != message["session_id"]):
+            raise unavailable()
+        metadata = await gateway.normalize_result("speech", row, speech_assistant=message)
+        if metadata["assistant_message_id"] != str(message_id) or metadata["language"] != message["language"]:
+            raise unavailable()
+        try:
+            read_cached_speech(request, gateway, metadata, preview_voice)
+        except APIError as error:
+            if error.code != "SPEECH_EXPIRED":
+                raise
+        else:
+            return metadata
+    raise APIError(410, "SPEECH_EXPIRED", "Spoken reply expired. Request a new reply explicitly.")
 
 
 @router.post("/conversation-messages/{message_id}/speech", response_model=RealSpeech)
@@ -509,12 +541,18 @@ async def speak(message_id: UUID, payload: RealSpeechRequest, request: Request, 
 async def prepare_speech(request, gateway, message, idempotency_key):
     message_id = UUID(message["id"])
     language = message["language"]
+    preview_voice = uses_swedish_preview_voice(request, language)
     check_operation_policy(request, kind="speech")
     audio = None
 
     async def produce(provider):
         nonlocal audio
-        audio = await provider.synthesize(message["text"], message["language"])
+        if preview_voice:
+            audio = await provider.synthesize(message["text"], language, voice="cedar")
+            if audio.voice != "cedar":
+                raise unavailable()
+        else:
+            audio = await provider.synthesize(message["text"], language)
         return {"assistant_message_id": str(message_id), "media_type": audio.media_type,
             "audio_sha256": audio.sha256, "audio_size": len(audio.data),
             "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=request.app.state.real_ai.cache.ttl)).isoformat()}
@@ -526,17 +564,19 @@ async def prepare_speech(request, gateway, message, idempotency_key):
     cache = request.app.state.real_ai.cache
     if result["assistant_message_id"] != str(message_id) or result["language"] != language:
         raise unavailable()
-    speech_id = UUID(result["speech_id"])
+    cache_id = speech_cache_id(UUID(result["speech_id"]), preview_voice)
     expires = datetime.fromisoformat(result["expires_at"])
     if audio is not None:
         if len(audio.data) != result["audio_size"]:
             raise unavailable()
-        cache.put(gateway.user.id, speech_id, audio.data, result["audio_sha256"], expires_at=expires.timestamp())
+        cache.put(gateway.user.id, cache_id, audio.data, result["audio_sha256"], expires_at=expires.timestamp())
+        if preview_voice:
+            _LOGGER.info("Verified Swedish preview speech saved (voice=cedar)")
     if expires <= datetime.now(timezone.utc):
         raise APIError(410, "SPEECH_EXPIRED", "Spoken reply expired. Request a new reply explicitly.")
     # Fresh bytes passed the cache write and hash check. Same-key replays
     # recover bytes from the owned cache without entering the provider.
-    data = audio.data if audio is not None else cache.get(gateway.user.id, speech_id, result["audio_sha256"])
+    data = audio.data if audio is not None else cache.get(gateway.user.id, cache_id, result["audio_sha256"])
     if len(data) != result["audio_size"]:
         raise unavailable()
     return result, data
@@ -555,9 +595,7 @@ def wav_response(data, metadata, headers=None):
 async def audio(speech_id: UUID, request: Request, gateway: Gateway):
     row = await gateway.one("real_speech", "speech_id", speech_id)
     metadata = await gateway.normalize_result("speech", row)
-    if datetime.fromisoformat(metadata["expires_at"]) <= datetime.now(timezone.utc):
-        raise APIError(410, "SPEECH_EXPIRED", "Spoken reply expired. Request a new reply explicitly.")
-    data = request.app.state.real_ai.cache.get(gateway.user.id, speech_id, metadata["audio_sha256"])
+    data = read_cached_speech(request, gateway, metadata, uses_swedish_preview_voice(request, metadata["language"]))
     return wav_response(data, metadata)
 
 

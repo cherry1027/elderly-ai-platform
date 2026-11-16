@@ -30,6 +30,7 @@ from app.core.errors import APIError
 from app.services.audio_upload import Recording
 from app.services.conversation_provider import MAX_SOURCE_TEXT_LENGTH, ProviderResult
 from app.services.interview_turn import plan_interview_turn, suggest_explicit_memory
+from app.services.minna_voice import CEDAR_VOICE, MINNA_DELIVERY
 from app.services.openai_client import MAX_JSON_BYTES, MODEL_NAME, mark_ai_dispatched, strict_object, structured_body
 from app.services.real_ai_progress import turn_progress, emit_progress
 from app.services.openai_conversation import (
@@ -59,7 +60,7 @@ SPEECH_CHUNK_BYTES = SPEECH_SAMPLE_RATE // 2  # 250 ms of signed 16-bit mono PCM
 MAX_SPEECH_EVENT_BYTES = 256_000
 MAX_SPEECH_EVENTS = 1_024
 _SPEECH_MODEL = "gpt-realtime-2.1-mini"
-_SPEECH_VOICES = {"marin", "cedar"}
+_SPEECH_VOICES = {"marin", CEDAR_VOICE}
 
 _INTERVIEW_INTRO = """You are a patient autobiographical interviewer named Minna
 in Swedish and Memy in English. If you introduce yourself, use the project language's name.
@@ -625,14 +626,16 @@ class RealAIProvider:
         return await self._writer.write(language, style, sources, rejected_details=rejected_details)
 
     async def synthesize(self, text: str, language: str, *, voice: str | None = None,
+                         minna_delivery: bool = False,
                          on_pcm: Callable[[bytes], Awaitable[None]] | None = None) -> SpeechAudio:
         if self._speech is None:
             raise APIError(503, "AI_SPEECH_NOT_CONFIGURED", "Spoken replies are not configured.")
+        options = {"minna_delivery": True} if minna_delivery else {}
         if on_pcm is not None:
-            return await self._speech.synthesize(text, language, voice=voice, on_pcm=on_pcm)
+            return await self._speech.synthesize(text, language, voice=voice, on_pcm=on_pcm, **options)
         if voice is not None:
-            return await self._speech.synthesize(text, language, voice=voice)
-        return await self._speech.synthesize(text, language)
+            return await self._speech.synthesize(text, language, voice=voice, **options)
+        return await self._speech.synthesize(text, language, **options)
 
 
 @dataclass(frozen=True)
@@ -875,15 +878,20 @@ class RealtimeSpeechProvider:
             raise APIError(503, "AI_NOT_CONFIGURED", "The AI provider is not configured.") from None
 
     async def synthesize(self, text: str, language: str, *, voice: str | None = None,
+                         minna_delivery: bool = False,
                          on_pcm: Callable[[bytes], Awaitable[None]] | None = None) -> SpeechAudio:
-        use_preview_delivery = language == "sv" and voice == "cedar"
+        use_pilot_delivery = language == "sv" and voice == CEDAR_VOICE
         voice = self.voice if voice is None else voice
         try:
-            if language not in {"en", "sv"} or voice not in _SPEECH_VOICES:
+            if (language not in {"en", "sv"} or voice not in _SPEECH_VOICES
+                    or (minna_delivery and voice != CEDAR_VOICE)):
                 raise ValueError
             _safe_text(text, MAX_SPEECH_CHARACTERS)
         except (ValueError, TypeError, UnicodeError):
             raise _input_error() from None
+        delivery = _CEDAR_SWEDISH_DELIVERY if use_pilot_delivery else ""
+        if minna_delivery:
+            delivery = "\n" + MINNA_DELIVERY[language] + "\n"
         # A failed/uncertain attempt keeps its reservation; never auto-retry.
         reservation_id = None
         reported_usage, service_tier, outcome = None, None, "failed"
@@ -906,7 +914,7 @@ class RealtimeSpeechProvider:
                     "output_modalities": ["audio"],
                     "instructions": _SPEECH_INSTRUCTIONS + (
                         _SWEDISH_SPEECH_INSTRUCTIONS if language == "sv" else ""
-                    ) + (_CEDAR_SWEDISH_DELIVERY if use_preview_delivery else ""),
+                    ) + delivery,
                     "tools": [],
                     "tool_choice": "none",
                     "max_output_tokens": 1_536,

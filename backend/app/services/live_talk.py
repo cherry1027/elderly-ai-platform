@@ -11,10 +11,10 @@ import certifi
 from websockets.asyncio.client import connect
 
 from app.core.errors import APIError
+from app.services.minna_voice import CEDAR_VOICE, MINNA_DELIVERY
 from app.services.openai_client import mark_ai_dispatched, strict_object
 
 LIVE_MODEL = "gpt-live-1"
-SWEDISH_LIVE_VOICE = "cedar"
 LIVE_SECONDS = 75
 PCM_RATE = 24_000
 PCM_PER_SECOND = PCM_RATE * 2
@@ -84,18 +84,16 @@ def _append(fragments, event, limit):
 
 
 class LiveTalkProvider:
-    def __init__(self, key, governor, observer=None, *, english_voice, connector=_NoRedirectConnect):
+    def __init__(self, key, governor, observer=None, *, connector=_NoRedirectConnect):
         self.key = key
         self.governor = governor
         self.observer = observer
-        self.english_voice = english_voice
         self.connector = connector
         self.ssl_context = ssl.create_default_context(cafile=certifi.where())
         self.ssl_context.keylog_filename = None
 
     async def talk(self, history, microphone, on_ready, on_voice, *, language):
-        instructions = LIVE_PROMPTS[language]
-        voice = SWEDISH_LIVE_VOICE if language == "sv" else self.english_voice
+        instructions = f"{MINNA_DELIVERY[language]}\n\n{LIVE_PROMPTS[language]}"
         reservation = self.governor.reserve_live_talk(LIVE_SECONDS + 5)
         usage = None
         status = "failed"
@@ -110,7 +108,7 @@ class LiveTalkProvider:
                 ) as socket:
                     await socket.send(json.dumps({"type": "session.start", "session": {
                         "model": LIVE_MODEL, "instructions": instructions, "input": history,
-                        "audio": {"format": {"type": "audio/pcm", "rate": PCM_RATE}, "output": {"voice": voice}},
+                        "audio": {"format": {"type": "audio/pcm", "rate": PCM_RATE}, "output": {"voice": CEDAR_VOICE}},
                         "delegation": {"type": "client"}, "store": False,
                     }}))
                     started = _event(await socket.recv())

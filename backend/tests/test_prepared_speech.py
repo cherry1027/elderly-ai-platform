@@ -165,14 +165,15 @@ _LIVE = "https://memy-pilot.onrender.com"
 
 @pytest.mark.parametrize("language,origin,enabled,expected_voice", [
     ("sv", _PREVIEW, True, "cedar"),
-    ("en", _PREVIEW, True, "marin"),
+    ("en", _PREVIEW, True, "cedar"),
     ("sv", _LIVE, True, "cedar"),
     ("en", _LIVE, True, "marin"),
     ("sv", _PREVIEW + ".example", True, "marin"),
+    ("en", _PREVIEW + ".example", True, "marin"),
     ("sv", None, True, "marin"),
     ("sv", _PREVIEW, False, "marin"),
 ])
-def test_cedar_selection_uses_only_approved_sites_and_owned_swedish_reply(harness, language, origin, enabled, expected_voice):
+def test_cedar_selection_matches_the_preview_and_pilot_languages(harness, language, origin, enabled, expected_voice):
     app, _, provider = harness(language)
     app.state.settings.real_ai_swedish_preview_cedar = enabled
     gateway = RecoveryGateway(language)
@@ -182,8 +183,8 @@ def test_cedar_selection_uses_only_approved_sites_and_owned_swedish_reply(harnes
         expires_at=(datetime.now(timezone.utc) + timedelta(seconds=300)).isoformat())
     calls = []
 
-    async def synthesize(text, spoken_language, *, voice="marin"):
-        calls.append((spoken_language, voice))
+    async def synthesize(text, spoken_language, *, voice="marin", minna_delivery=False):
+        calls.append((spoken_language, voice, minna_delivery))
         return SpeechAudio(data, "audio/wav", sha256(data).hexdigest(), .01, "fixture", voice)
 
     provider.synthesize = synthesize
@@ -194,7 +195,7 @@ def test_cedar_selection_uses_only_approved_sites_and_owned_swedish_reply(harnes
         response = client.post(f"/api/v2/conversation-messages/{assistant}/speech",
                                json={"language": language}, headers=headers)
     assert response.status_code == 200, response.text
-    assert calls == [(language, expected_voice)]
+    assert calls == [(language, expected_voice, enabled and origin == _PREVIEW)]
 
 
 def test_cedar_speech_replays_on_both_sites_and_preserves_older_live_audio(harness):
@@ -209,7 +210,7 @@ def test_cedar_speech_replays_on_both_sites_and_preserves_older_live_audio(harne
     gateway.speech_rows = [saved_live]
     calls = []
 
-    async def synthesize(text, language, *, voice):
+    async def synthesize(text, language, *, voice, minna_delivery=False):
         calls.append(voice)
         return SpeechAudio(data, "audio/wav", sha256(data).hexdigest(), .01, "fixture", voice)
 
@@ -235,3 +236,38 @@ def test_cedar_speech_replays_on_both_sites_and_preserves_older_live_audio(harne
         assert client.get(f"/api/v2/spoken-replies/{live_id}/audio", headers=live_headers).content == data
         assert client.get(f"/api/v2/spoken-replies/{live_id}/audio", headers=preview_headers).status_code == 410
     assert calls == ["cedar"]
+
+
+def test_english_preview_cedar_replays_without_replacing_the_pilot_rendition(harness):
+    app, _, provider = harness("en")
+    app.state.settings.real_ai_swedish_preview_cedar = True
+    gateway = RecoveryGateway("en")
+    install_gateway(app, gateway)
+    data = wav_bytes()
+    assistant, previous_id, previous = seed_completed_speech(gateway, data=data, key=uuid4(),
+        expires_at=(datetime.now(timezone.utc) + timedelta(seconds=300)).isoformat())
+    app.state.real_ai.cache.put(OWNER, previous_id, data, previous["audio_sha256"])
+    gateway.speech_rows = [previous]
+    calls = []
+
+    async def synthesize(text, language, *, voice, minna_delivery):
+        calls.append((language, voice, minna_delivery))
+        return SpeechAudio(data, "audio/wav", sha256(data).hexdigest(), .01, "fixture", voice)
+
+    provider.synthesize = synthesize
+    preview_headers, pilot_headers = {"Origin": _PREVIEW}, {"Origin": _LIVE}
+    key = str(uuid4())
+    endpoint = f"/api/v2/conversation-messages/{assistant}/speech"
+    with TestClient(app) as client:
+        assert client.get(endpoint, headers=preview_headers).json()["speech_id"] == str(previous_id)
+        response = client.post(endpoint, json={"language": "en"}, headers={**preview_headers, "Idempotency-Key": key})
+        assert response.status_code == 200, response.text
+        preview_id = response.json()["speech_id"]
+        gateway.speech_rows.insert(0, gateway.local_rows[("real_speech", UUID(preview_id))])
+        repeat = client.post(endpoint, json={"language": "en"}, headers={**preview_headers, "Idempotency-Key": key})
+        assert repeat.json() == response.json()
+        assert client.get(endpoint, headers=preview_headers).json()["speech_id"] == preview_id
+        assert client.get(endpoint, headers=pilot_headers).json()["speech_id"] == str(previous_id)
+        assert client.get(f"/api/v2/spoken-replies/{preview_id}/audio", headers=preview_headers).content == data
+        assert client.get(f"/api/v2/spoken-replies/{preview_id}/audio", headers=pilot_headers).status_code == 410
+    assert calls == [("en", "cedar", True)]

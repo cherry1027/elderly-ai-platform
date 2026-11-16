@@ -457,6 +457,25 @@ def test_request_voice_override_preserves_default_and_verifies_cedar():
     assert governor.calls == [("speech_synthesis", SPEECH_MODEL)]
 
 
+@pytest.mark.parametrize("language,text,delivery", [
+    ("sv", "Vad minns du från Malmö?", "Use natural Swedish as spoken in Sweden"),
+    ("en", "What do you remember from Malmö?", "Keep the English wording"),
+])
+def test_minna_cedar_uses_the_same_feminine_delivery_and_reads_the_saved_language(language, text, delivery):
+    events = speech_events(text)
+    events[-1]["response"]["audio"]["output"]["voice"] = "cedar"
+    speech, socket, _, _ = speech_setup(events)
+
+    audio = asyncio.run(speech.synthesize(text, language, voice="cedar", minna_delivery=True))
+
+    request = socket.sent[0]["response"]
+    assert audio.voice == request["audio"]["output"]["voice"] == "cedar"
+    assert delivery in request["instructions"]
+    assert "softly feminine resonance" in request["instructions"]
+    payload = json.loads(request["input"][0]["content"][0]["text"])
+    assert payload == {"language": language, "saved_assistant_text": text}
+
+
 @pytest.mark.parametrize(("language", "voice", "text"), [
     ("sv", "cedar", "Vad minns du från Malmö?"),
     ("en", "marin", "What do you remember?"),

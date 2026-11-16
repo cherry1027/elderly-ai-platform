@@ -171,12 +171,13 @@ def test_recorded_turn_saves_text_before_single_speech_attempt(harness, language
     spoken = []
     data = wav_bytes()
 
-    async def synthesize(text, spoken_language, *, voice='marin', on_pcm=None):
+    async def synthesize(text, spoken_language, *, voice='marin', minna_delivery=False, on_pcm=None):
         turn = next(row['result'] for row in gateway.claims.values()
                     if row['kind'] == 'conversation' and row['status'] == 'completed')
         assert turn['message']['text'] == text
         assert ('speech', UUID(turn['message']['id'])) in gateway.claims
         spoken.append((text, spoken_language, voice))
+        assert minna_delivery is preview
         mark_ai_dispatched()
         assert (on_pcm is not None) == (opt_in and preview)
         if on_pcm is not None:
@@ -219,7 +220,7 @@ def test_recorded_turn_saves_text_before_single_speech_attempt(harness, language
         assert last['error']['code'] == ('AI_PROVIDER_TIMEOUT' if timed_out else 'LIVE_AI_DISABLED')
         assert last['operation_id'] != events[0]['operation_id']
         assert gateway.failures == timed_out
-    expected_voice = 'cedar' if preview and language == 'sv' else 'marin'
+    expected_voice = 'cedar' if preview else 'marin'
     assert spoken == ([(saved['message']['text'], language, expected_voice)] if speech_outcome != 'disabled' else [])
     assert [row['status'] for row in gateway.claims.values() if row['kind'] == 'conversation'] == ['completed']
 

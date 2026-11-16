@@ -109,8 +109,7 @@ class RealAIRuntime:
                     verifier_client=verifier, combined_turn=True, natural_interview=True)
                 if settings.real_ai_live_talk_enabled and settings.real_ai_swedish_preview_cedar:
                     from app.services.live_talk import LiveTalkProvider
-                    self.live_talk_provider = LiveTalkProvider(settings.openai_api_key, self.governor, self.usage_observer,
-                                                               english_voice=settings.real_ai_voice)
+                    self.live_talk_provider = LiveTalkProvider(settings.openai_api_key, self.governor, self.usage_observer)
 
     @property
     def needs_http_pool(self):

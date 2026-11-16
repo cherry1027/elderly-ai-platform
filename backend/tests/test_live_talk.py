@@ -58,10 +58,11 @@ class FakeLiveSocket:
             self.events.put_nowait({"type": "session.closed", "usage": {"seconds": 4}, "session": {"id": "test"}})
 
 
-@pytest.mark.parametrize("language,voice_name,prompt_fragment", [
-    ("en", "marin", "Speak natural English"), ("sv", "cedar", "Svara på naturlig svenska"),
+@pytest.mark.parametrize("language,prompt_fragment", [
+    ("en", "Speak clearly in English with a light, natural Swedish accent"),
+    ("sv", "Use natural Swedish as spoken in Sweden"),
 ])
-def test_live_speech_streams_and_same_duration_reservation_is_settled(language, voice_name, prompt_fragment):
+def test_live_speech_streams_with_cedar_and_settles_the_same_reservation(language, prompt_fragment):
     async def scenario():
         spoken = SPOKEN[language]
         socket = FakeLiveSocket(spoken)
@@ -86,12 +87,13 @@ def test_live_speech_streams_and_same_duration_reservation_is_settled(language, 
             assert not any(event["type"] == "session.close" for event in socket.sent)
             events.append(pcm)
 
-        provider = LiveTalkProvider(SecretStr("test"), governor, english_voice="marin", connector=connect)
+        provider = LiveTalkProvider(SecretStr("test"), governor, connector=connect)
         assert await provider.talk([], mic(), ready, voice, language=language) == spoken
         assert events == [("reserved", LIVE_SECONDS + 5), "ready", PCM,
                           ("settled", ("one", "conversation", LIVE_MODEL, {"seconds": 4}), {"status": "completed"})]
         setup = socket.sent[0]["session"]
-        assert setup["model"] == LIVE_MODEL and setup["audio"]["output"]["voice"] == voice_name and not setup["store"]
+        assert setup["model"] == LIVE_MODEL and setup["audio"]["output"]["voice"] == "cedar" and not setup["store"]
+        assert "softly feminine resonance" in setup["instructions"]
         assert prompt_fragment in setup["instructions"]
 
     asyncio.run(scenario())
@@ -165,7 +167,7 @@ def test_socket_sends_audio_before_saving_the_owned_turn(mounted_live):
         assert ws.receive_json() == {"type": "saving"}
         saved = ws.receive_json()
         speech = next(row["result"] for row in gateway.claims.values() if row["kind"] == "speech")
-        cache_id = speech_cache_id(UUID(speech["speech_id"]), language == "sv")
+        cache_id = speech_cache_id(UUID(speech["speech_id"]), True, language)
         audio = app.state.real_ai.cache.get(gateway.user.id, cache_id, speech["audio_sha256"])
         with wave.open(BytesIO(audio), "rb") as wav:
             assert wav.readframes(wav.getnframes()) == PCM

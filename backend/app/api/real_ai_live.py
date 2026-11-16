@@ -78,7 +78,7 @@ async def _cache_reply(runtime, gateway, project_id, session_id, message, pcm):
         result = await _complete(gateway, claim, project_id, session_id,
             {"assistant_message_id": str(message_id), "media_type": "audio/wav",
              "audio_sha256": hash_hex, "audio_size": len(audio), "expires_at": expires.isoformat()}, assistant=message)
-        runtime.cache.put(gateway.user.id, speech_cache_id(UUID(result["speech_id"]), language == "sv"),
+        runtime.cache.put(gateway.user.id, speech_cache_id(UUID(result["speech_id"]), True, language),
                           audio, hash_hex, expires_at=expires.timestamp())
     except BaseException:
         await _close_claim(gateway, claim, "REAL_AI_UNCERTAIN", True)

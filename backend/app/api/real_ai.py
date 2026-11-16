@@ -28,6 +28,7 @@ from app.schemas.story_drafts import StoryDraftPatch, StoryEditResponse, StoryGe
 from app.schemas.errors import ErrorResponse
 from app.services.audio_upload import read_recording
 from app.services.auth import AuthenticatedUser
+from app.services.minna_voice import CEDAR_VOICE
 from app.services.real_ai_resources import RealAIGateway, validated, read_together
 from app.services.openai_client import DispatchTrace, ai_dispatch_trace
 from app.services.ai_controls import ai_budget_subject
@@ -40,8 +41,8 @@ router = APIRouter(prefix="/api/v2", tags=["Real AI (explicit opt-in)"], respons
     for code in (401,403,404,409,410,413,415,422,429,503,504)
 })
 _LOGGER = logging.getLogger("uvicorn.error")
-_SWEDISH_PREVIEW_ORIGIN = "https://memy-visual-redesign-preview.onrender.com"
-_SWEDISH_LIVE_ORIGIN = "https://memy-pilot.onrender.com"
+_PREVIEW_ORIGIN = "https://memy-visual-redesign-preview.onrender.com"
+_PILOT_ORIGIN = "https://memy-pilot.onrender.com"
 
 
 class WAVResponse(Response):
@@ -96,9 +97,13 @@ def require_provider(request, *, kind, typed=False):
     return request.app.state.real_ai.require()
 
 
+def is_preview_origin(request):
+    return request.headers.getlist("origin") == [_PREVIEW_ORIGIN]
+
+
 def uses_talk_preview(request):
     return (request.app.state.settings.real_ai_preview_talk_enabled
-            and request.headers.getlist("origin") == [_SWEDISH_PREVIEW_ORIGIN]
+            and is_preview_origin(request)
             and request.query_params.getlist("talk_preview") == ["true"])
 
 
@@ -479,32 +484,36 @@ async def history(draft_id: UUID, gateway: Gateway, limit: Limit = 50, offset: O
     return [validated(StoryEditResponse, {k:v for k,v in r.items() if k != "project_id"}) for r in rows]
 
 
-def uses_swedish_cedar(request, language):
+def uses_cedar(request, language):
     # Origin selects the presentation variant. Existing authentication and
     # ownership checks, pilot admission, and spending limits still apply.
     return (request.app.state.settings.real_ai_swedish_preview_cedar
-            and language == "sv"
-            and request.headers.getlist("origin") in ([_SWEDISH_PREVIEW_ORIGIN], [_SWEDISH_LIVE_ORIGIN]))
+            and (is_preview_origin(request)
+                 or (language == "sv" and request.headers.getlist("origin") == [_PILOT_ORIGIN])))
 
 
-def speech_cache_id(speech_id, preview_voice):
+def speech_cache_id(speech_id, cedar_voice, language):
     # Cache partitions keep the existing owner so owner-wide erasure still
     # removes every rendition. The database's real speech ID is unchanged.
-    return uuid5(speech_id, "memy-swedish-preview-cedar-v1") if preview_voice else speech_id
+    if not cedar_voice:
+        return speech_id
+    namespace = "memy-swedish-preview-cedar-v1" if language == "sv" else "memy-english-preview-cedar-v1"
+    return uuid5(speech_id, namespace)
 
 
-def read_cached_speech(request, gateway, metadata, preview_voice):
+def read_cached_speech(request, gateway, metadata, cedar_voice):
     if datetime.fromisoformat(metadata["expires_at"]) <= datetime.now(timezone.utc):
         raise APIError(410, "SPEECH_EXPIRED", "Spoken reply expired. Request a new reply explicitly.")
     cache = request.app.state.real_ai.cache
     speech_id = UUID(metadata["speech_id"])
+    language = metadata["language"]
     try:
-        return cache.get(gateway.user.id, speech_cache_id(speech_id, preview_voice), metadata["audio_sha256"])
+        return cache.get(gateway.user.id, speech_cache_id(speech_id, cedar_voice, language), metadata["audio_sha256"])
     except APIError as error:
-        if (error.code != "SPEECH_EXPIRED" or not preview_voice
-                or request.headers.getlist("origin") != [_SWEDISH_LIVE_ORIGIN]):
+        legacy_cache = language == "en" or request.headers.getlist("origin") == [_PILOT_ORIGIN]
+        if error.code != "SPEECH_EXPIRED" or not cedar_voice or not legacy_cache:
             raise
-        # Pre-rollout live replies used the default voice cache key.
+        # Older English preview replies and Swedish pilot replies used the default cache key.
         return cache.get(gateway.user.id, speech_id, metadata["audio_sha256"])
 
 
@@ -514,10 +523,10 @@ async def prepared_speech(message_id: UUID, request: Request, gateway: Gateway):
     message = validated(RealMessage, await gateway.one("real_conversation_messages", "id", message_id))
     if message["role"] != "assistant":
         raise APIError(422, "ASSISTANT_MESSAGE_REQUIRED", "Choose an interviewer reply.")
-    preview_voice = uses_swedish_cedar(request, message["language"])
-    # Swedish replies may have both preview and normal cache entries. Find an
+    cedar_voice = uses_cedar(request, message["language"])
+    # Replies may have both preview and normal cache entries. Find an
     # already prepared rendition for this origin without opening the paid gate.
-    limit = 8 if request.app.state.settings.real_ai_swedish_preview_cedar and message["language"] == "sv" else 1
+    limit = 8 if request.app.state.settings.real_ai_swedish_preview_cedar else 1
     rows = await gateway.rows("real_speech", filters={
         "assistant_message_id": f"eq.{message_id}",
         "project_id": f"eq.{message['project_id']}",
@@ -533,7 +542,7 @@ async def prepared_speech(message_id: UUID, request: Request, gateway: Gateway):
         if metadata["assistant_message_id"] != str(message_id) or metadata["language"] != message["language"]:
             raise unavailable()
         try:
-            read_cached_speech(request, gateway, metadata, preview_voice)
+            read_cached_speech(request, gateway, metadata, cedar_voice)
         except APIError as error:
             if error.code != "SPEECH_EXPIRED":
                 raise
@@ -563,17 +572,20 @@ async def speak(message_id: UUID, payload: RealSpeechRequest, request: Request, 
 async def prepare_speech(request, gateway, message, idempotency_key, *, on_pcm=None):
     message_id = UUID(message["id"])
     language = message["language"]
-    preview_voice = uses_swedish_cedar(request, language)
+    cedar_voice = uses_cedar(request, language)
+    minna_delivery = cedar_voice and is_preview_origin(request)
     check_operation_policy(request, kind="speech")
     audio = None
 
     async def produce(provider):
         nonlocal audio
-        options = {"voice": "cedar"} if preview_voice else {}
+        options = {"voice": CEDAR_VOICE} if cedar_voice else {}
+        if minna_delivery:
+            options["minna_delivery"] = True
         if on_pcm is not None:
             options["on_pcm"] = on_pcm
         audio = await provider.synthesize(message["text"], language, **options)
-        if preview_voice and audio.voice != "cedar":
+        if cedar_voice and audio.voice != CEDAR_VOICE:
             raise unavailable()
         return {"assistant_message_id": str(message_id), "media_type": audio.media_type,
             "audio_sha256": audio.sha256, "audio_size": len(audio.data),
@@ -586,19 +598,19 @@ async def prepare_speech(request, gateway, message, idempotency_key, *, on_pcm=N
     cache = request.app.state.real_ai.cache
     if result["assistant_message_id"] != str(message_id) or result["language"] != language:
         raise unavailable()
-    cache_id = speech_cache_id(UUID(result["speech_id"]), preview_voice)
+    cache_id = speech_cache_id(UUID(result["speech_id"]), cedar_voice, language)
     expires = datetime.fromisoformat(result["expires_at"])
     if audio is not None:
         if len(audio.data) != result["audio_size"]:
             raise unavailable()
         cache.put(gateway.user.id, cache_id, audio.data, result["audio_sha256"], expires_at=expires.timestamp())
-        if preview_voice:
-            _LOGGER.info("Verified Swedish Cedar speech saved (voice=cedar)")
+        if cedar_voice:
+            _LOGGER.info("Verified Cedar speech saved (language=%s, preview=%s)", language, minna_delivery)
     if expires <= datetime.now(timezone.utc):
         raise APIError(410, "SPEECH_EXPIRED", "Spoken reply expired. Request a new reply explicitly.")
     # Fresh bytes passed the cache write and hash check. Same-key replays
     # recover bytes from the owned cache without entering the provider.
-    data = audio.data if audio is not None else read_cached_speech(request, gateway, result, preview_voice)
+    data = audio.data if audio is not None else read_cached_speech(request, gateway, result, cedar_voice)
     if len(data) != result["audio_size"]:
         raise unavailable()
     return result, data
@@ -617,7 +629,7 @@ def wav_response(data, metadata, headers=None):
 async def audio(speech_id: UUID, request: Request, gateway: Gateway):
     row = await gateway.one("real_speech", "speech_id", speech_id)
     metadata = await gateway.normalize_result("speech", row)
-    data = read_cached_speech(request, gateway, metadata, uses_swedish_cedar(request, metadata["language"]))
+    data = read_cached_speech(request, gateway, metadata, uses_cedar(request, metadata["language"]))
     return wav_response(data, metadata)
 
 

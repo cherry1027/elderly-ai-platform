@@ -1,15 +1,19 @@
 import { fetch as nativeFetch } from 'expo/fetch';
+import { digest } from 'expo-crypto';
+import { createHash } from 'node:crypto';
 import { apiBackoff } from '../src/api/backoff';
 import { RealAiError, sendRealMessage, sendRealTextMessage, type RealConversationProgress, type RealScope, type RealTurn } from '../src/real-ai/api';
+import { speechWav, SPEECH_CHUNK_BYTES } from '../src/real-ai/voice-pcm';
 import { realIds as ids, realMessage, realScope } from './real-ai-fixtures';
 
 jest.mock('expo/fetch', () => ({ fetch: jest.fn() }));
+jest.mock('expo-crypto', () => ({ CryptoDigestAlgorithm: { SHA256: 'SHA-256' }, digest: jest.fn() }));
 const operationId = ids.draft, original = '  Jag minns Malmö och vår trädgård. 🌷\n';
 const reply = 'Vad minns du från trädgården i Malmö? 🌷';
 const encoder = new TextEncoder();
 const operation = { type: 'operation', operation_id: operationId, project_id: ids.project, session_id: ids.session };
 function turn(typed = true, language: 'en' | 'sv' = 'sv'): RealTurn {
-  const source = typed ? { source_transcript_id: null, source_text_input_id: operationId } : { source_transcript_id: ids.transcript };
+  const source = typed ? { source_transcript_id: null, source_text_input_id: operationId } : { source_transcript_id: ids.transcript, source_text_input_id: null };
   return { mode: 'real', user_message: realMessage('user', { ...source, id: typed ? operationId : ids.transcript, language,
     text: original, ...(typed ? { provenance: { mode: 'original', provider: 'user', model: null, version: 1 } as const } : {}) }),
     message: realMessage('assistant', { ...source, language, text: reply }), memories: [] };
@@ -48,6 +52,83 @@ it('accepts CRLF framing and a voice turn without changing transcript provenance
   const f = fixture(response([operation, { type: 'reply', text: reply }, completed(turn(false))], { newline: '\r\n', fragment: 1 }));
   await expect(sendRealMessage(f.scope, { source_transcript_id: ids.transcript }, ids.key, jest.fn())).resolves.toMatchObject({ user_message: { source_transcript_id: ids.transcript }, message: { text: reply } });
   expect(f.request).toHaveBeenCalledTimes(1);
+});
+it.each(['en', 'sv'] as const)('delivers the saved %s reply before one verified automatic speech payload', async language => {
+  const voice = turn(false, language);
+  const wav = Buffer.alloc(language === 'sv' ? 1_600_044 : 48); wav.write('RIFF'); wav.write('WAVE', 8);
+  const hash = createHash('sha256').update(wav).digest();
+  jest.mocked(digest).mockResolvedValueOnce(Uint8Array.from(hash).buffer);
+  const metadata = { speech_id: ids.memory, assistant_message_id: ids.assistant, language, media_type: 'audio/wav',
+    audio_sha256: hash.toString('hex'), audio_size: wav.length, expires_at: new Date(Date.now() + 60_000).toISOString(), status: 'ready' };
+  const events = [operation, { type: 'saving' }, { type: 'saved', result: voice },
+    { type: 'speech', metadata, audio: wav.toString('base64') }];
+  const f = fixture(response(events, { fragment: language === 'sv' ? 16_384 : 37,
+    headers: { 'Content-Length': String(Buffer.byteLength(frames(events))) } }));
+  const order: string[] = [];
+  await expect(sendRealMessage({ ...f.scope, language }, { source_transcript_id: ids.transcript }, ids.key, jest.fn(), {
+    onSaved: value => { expect(value).toEqual(voice); order.push('saved'); },
+    onSpeech: (value, bytes) => { expect(value).toEqual(metadata); expect(Buffer.from(bytes).equals(wav)).toBe(true); order.push('audio'); },
+  })).resolves.toEqual(voice);
+  expect(order).toEqual(['saved', 'audio']);
+  expect(f.request).toHaveBeenCalledTimes(1);
+  expect(f.request.mock.calls[0][0]).toMatch(/\/messages\?autoplay=true$/);
+});
+
+it.each(['valid', 'wrong-owner', 'out-of-order', 'bad-digest', 'truncated'] as const)(
+  'handles %s streamed speech after the saved turn with one request', async variant => {
+    const voice = turn(false);
+    const onSaved = jest.fn(), onSpeech = jest.fn(), onSpeechChunk = jest.fn();
+    const pcm = Buffer.alloc(SPEECH_CHUNK_BYTES, 4), tail = Buffer.from([1, 2, 3, 4]);
+    const wav = speechWav([pcm, tail], pcm.length + tail.length);
+    const hash = createHash('sha256').update(wav).digest();
+    jest.mocked(digest).mockReset();
+    jest.mocked(digest).mockResolvedValueOnce(variant === 'bad-digest' ? new Uint8Array(32).buffer : Uint8Array.from(hash).buffer);
+    const metadata = {
+      speech_id: ids.memory, assistant_message_id: ids.assistant, language: 'sv', media_type: 'audio/wav',
+      audio_sha256: hash.toString('hex'), audio_size: wav.length, expires_at: new Date(Date.now() + 60_000).toISOString(), status: 'ready',
+    };
+    const event = { type: 'speech-chunk', assistant_message_id: ids.assistant };
+    const prefix = [operation, { type: 'saving' }, { type: 'saved', result: voice },
+      { ...event, assistant_message_id: variant === 'wrong-owner' ? ids.draft : ids.assistant,
+        sequence: variant === 'out-of-order' ? 1 : 0, pcm: pcm.toString('base64') },
+      { ...event, sequence: 1, pcm: tail.toString('base64') }];
+    const f = fixture(response(variant === 'truncated' ? prefix : [...prefix, { type: 'speech-complete', metadata }], { fragment: 311 }));
+    onSpeechChunk.mockImplementation((bytes: Uint8Array) => {
+      expect(onSaved).toHaveBeenCalledWith(voice);
+      expect(onSpeech).not.toHaveBeenCalled();
+      expect(Buffer.from(bytes)).toEqual(onSpeechChunk.mock.calls.length === 1 ? pcm : tail);
+    });
+    onSpeech.mockImplementation((value, bytes) => {
+      expect(value).toEqual(metadata);
+      expect(Buffer.from(bytes)).toEqual(Buffer.from(wav));
+    });
+    const result = sendRealMessage(f.scope, { source_transcript_id: ids.transcript }, ids.key, jest.fn(),
+      { onSaved, onSpeechChunk, onSpeech });
+    if (variant === 'valid') await expect(result).resolves.toEqual(voice);
+    else await expect(result).rejects.toMatchObject({ recovery: 'check-saved', mayHaveWritten: true });
+    expect(onSaved).toHaveBeenCalledTimes(1);
+    expect(onSpeechChunk).toHaveBeenCalledTimes(variant === 'wrong-owner' || variant === 'out-of-order' ? 0 : 2);
+    expect(onSpeech).toHaveBeenCalledTimes(variant === 'valid' ? 1 : 0);
+    expect(f.request).toHaveBeenCalledTimes(1);
+    expect(f.value.body!.locked).toBe(false);
+  });
+it.each(['truncated', 'bad-hash', 'claimed-timeout', 'wrong-claim'] as const)('keeps the saved reply when audio is %s and never reports the conversation ID as speech', async problem => {
+  const voice = turn(false), speech = jest.fn(), saved = jest.fn();
+  const events: unknown[] = [operation, { type: 'saving' }, { type: 'saved', result: voice }];
+  if (problem === 'bad-hash') {
+    const wav = Buffer.alloc(48); wav.write('RIFF'); wav.write('WAVE', 8);
+    jest.mocked(digest).mockResolvedValueOnce(new Uint8Array(32).buffer);
+    events.push({ type: 'speech', audio: wav.toString('base64'), metadata: { speech_id: ids.memory, assistant_message_id: ids.assistant,
+      language: 'sv', media_type: 'audio/wav', audio_sha256: 'a'.repeat(64), audio_size: wav.length,
+      expires_at: new Date(Date.now() + 60_000).toISOString(), status: 'ready' } });
+  }
+  if (problem === 'claimed-timeout' || problem === 'wrong-claim') events.push({
+    ...errorEvent('AI_PROVIDER_TIMEOUT', 504, 'check-saved'), type: 'speech-error', operation_id: problem === 'claimed-timeout' ? ids.memory : operationId,
+  });
+  const f = fixture(response(events));
+  await expect(sendRealMessage(f.scope, { source_transcript_id: ids.transcript }, ids.key, jest.fn(), { onSaved: saved, onSpeech: speech }))
+    .rejects.toMatchObject({ mayHaveWritten: true, recovery: 'check-saved', operationId: problem === 'claimed-timeout' ? ids.memory : undefined });
+  expect(saved).toHaveBeenCalledWith(voice); expect(speech).not.toHaveBeenCalled(); expect(f.request).toHaveBeenCalledTimes(1);
 });
 it.each([[operation, completed()], [operation, { type: 'saving' }, completed()]].map(events => ({ events })))('allows a verified final without an early preview %#', async ({ events }) => {
   const f = fixture(response(events)); await expect(sendRealTextMessage(f.scope, original, ids.key, jest.fn())).resolves.toEqual(turn());

@@ -167,7 +167,7 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     await press(t.consentCancel); await startVoice();
     expect(controls().getByRole('button', { name: t.stop })).toBeOnTheScreen();
     await press(t.stop);
-    expect(controls().getByText(t.thinking)).toBeOnTheScreen();
+    expect(controls().getByText(t.transcribing)).toBeOnTheScreen();
     expect(controls().getByRole('button', { name: t.discard })).toBeDisabled();
     // A proven unsuccessful upload retains only the local recording and its explicit recovery actions.
     await act(async () => transcript.reject(new api.RealAiError('unavailable', 503)));
@@ -257,13 +257,80 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     expect(api.transcribeRealRecording).toHaveBeenCalledWith(expect.objectContaining({ sessionId: ids.session }), clip, true, ids.key);
     expect(recorder.discard).toHaveBeenCalledWith(clip);
     expect(api.sendRealMessage).toHaveBeenCalledTimes(1);
-    expect(api.sendRealMessage).toHaveBeenCalledWith(expect.objectContaining({ sessionId: ids.session }), { source_transcript_id: ids.transcript }, ids.key, expect.any(Function));
+    expect(api.sendRealMessage).toHaveBeenCalledWith(expect.objectContaining({ sessionId: ids.session }), { source_transcript_id: ids.transcript }, ids.key, expect.any(Function),
+      expect.objectContaining({ onSaved: expect.any(Function), onSpeech: expect.any(Function) }));
     expect(screen.getByText(realMessage('assistant').text)).toBeOnTheScreen();
     await waitFor(() => expect(mockPlayback.play).toHaveBeenCalledTimes(1));
     expect(api.createRealSpeech).toHaveBeenCalledTimes(1);
     expect(api.createRealSpeech).toHaveBeenCalledWith(expect.objectContaining({ sessionId: ids.session }), ids.assistant, expect.any(String));
     expect(screen.queryByText(t.original)).toBeNull(); await press(t.yourWords);
     expect(screen.getByText(t.original)).toBeOnTheScreen();
+  });
+  it('renders the confirmed voice reply before audio arrives, then plays and replays the same streamed clip', async () => {
+    const saved = { user_message: realMessage(), message: realMessage('assistant'), memories: [], mode: 'real' as const };
+    const delivery = deferred<api.RealTurn>();
+    let playback: Parameters<typeof api.sendRealMessage>[4];
+    jest.mocked(api.sendRealMessage).mockImplementationOnce((_scope, _input, _key, _progress, options) => {
+      playback = options;
+      playback!.onSaved(saved);
+      return delivery.promise;
+    });
+    await render(<RealStoryWorkspace {...props} />); await ready(); await startVoice(); await press(t.stop);
+    expect(screen.getByText(saved.message.text)).toBeOnTheScreen();
+    expect(screen.getByText(t.preparingVoice)).toBeOnTheScreen();
+    expect(mockPlayback.play).not.toHaveBeenCalled();
+    const wave = speechWave();
+    await act(async () => {
+      playback!.onSpeech(speechMetadata(), wave);
+      wave.fill(0);
+      delivery.resolve(saved);
+    });
+    await waitFor(() => expect(mockPlayback.play).toHaveBeenCalledTimes(1));
+    await listen();
+    await waitFor(() => expect(mockPlayback.play).toHaveBeenCalledTimes(2));
+    expect(api.getPreparedRealSpeech).not.toHaveBeenCalled();
+    expect(api.createRealSpeech).not.toHaveBeenCalled();
+    expect(api.getRealSpeechAudio).not.toHaveBeenCalled();
+  });
+  it('preserves saved words and reconciles an interrupted streamed speech phase separately', async () => {
+    const saved = { user_message: realMessage(), message: realMessage('assistant'), memories: [], mode: 'real' as const };
+    jest.mocked(api.sendRealMessage).mockImplementationOnce(async (_scope, _input, _key, _progress, options) => {
+      options!.onSaved(saved);
+      throw new api.RealAiError('timeout', 504, true, 'AI_PROVIDER_TIMEOUT', undefined, ids.memory, 'check-saved');
+    });
+    await render(<RealStoryWorkspace {...props} />); await ready(); await startVoice(); await press(t.stop);
+    expect(screen.getByText(saved.message.text)).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: t.check })).toBeEnabled();
+    jest.mocked(api.getRealMessages).mockResolvedValue([saved.user_message, saved.message]);
+    jest.mocked(api.getRealOperation).mockResolvedValueOnce({ operation_id: ids.memory, project_id: ids.project,
+      session_id: ids.session, kind: 'speech', status: 'completed', created_at: project.created_at, updated_at: project.updated_at,
+      error_code: null, result: speechMetadata() });
+    await press(t.check);
+    expect(api.getRealOperation).toHaveBeenCalledWith(expect.anything(), ids.memory);
+    jest.mocked(api.getRealSpeechAudio).mockResolvedValueOnce(speechWave());
+    await listen();
+    expect(mockPlayback.play).toHaveBeenCalledTimes(1);
+    expect(api.sendRealMessage).toHaveBeenCalledTimes(1);
+    expect(api.createRealSpeech).not.toHaveBeenCalled();
+  });
+  it('uses the same speech key after a stream stops before a speech operation can be found', async () => {
+    const saved = { user_message: realMessage(), message: realMessage('assistant'), memories: [], mode: 'real' as const };
+    jest.mocked(api.sendRealMessage).mockImplementationOnce(async (_scope, _input, _key, _progress, options) => {
+      options!.onSaved(saved);
+      throw new api.RealAiError('network', undefined, true);
+    });
+    await render(<RealStoryWorkspace {...props} />); await ready(); await startVoice(); await press(t.stop);
+    jest.mocked(api.getRealMessages).mockResolvedValue([saved.user_message, saved.message]);
+    jest.mocked(api.findRealOperation).mockRejectedValueOnce(new api.RealAiError('not-found', 404));
+    await press(t.check);
+    expect(api.findRealOperation).toHaveBeenCalledWith(expect.anything(), 'speech', ids.assistant);
+    expect(api.createRealSpeech).not.toHaveBeenCalled();
+    expect(screen.getByText(saved.message.text)).toBeOnTheScreen();
+    jest.mocked(api.createRealSpeech).mockResolvedValueOnce({ ...speechMetadata(), audio: speechWave() });
+    await listen();
+    expect(api.createRealSpeech).toHaveBeenCalledWith(expect.anything(), ids.assistant, ids.assistant);
+    expect(api.getRealSpeechAudio).not.toHaveBeenCalled();
+    expect(mockPlayback.play).toHaveBeenCalledTimes(1);
   });
   it('reuses the same verified audio when automatic browser playback needs a Listen tap', async () => {
     jest.mocked(api.createRealSpeech).mockResolvedValue(speechMetadata());
@@ -370,8 +437,8 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     await render(<RealStoryWorkspace {...props} />); await ready(); await listen();
     expect(api.createRealSpeech).toHaveBeenCalledTimes(1); expect(screen.getByText(t.uncertain)).toBeOnTheScreen();
     expect(screen.getByRole('button', { name: t.check })).toBeEnabled();
-    expect(mockPlayback.play).not.toHaveBeenCalled(); expect(createRecordingId).toHaveBeenCalledTimes(1);
-    await press(t.check); expect(api.findRealOperation).toHaveBeenCalledWith(expect.anything(), 'speech', ids.key);
+    expect(mockPlayback.play).not.toHaveBeenCalled(); expect(createRecordingId).not.toHaveBeenCalled();
+    await press(t.check); expect(api.findRealOperation).toHaveBeenCalledWith(expect.anything(), 'speech', ids.assistant);
     jest.mocked(api.getRealSpeechAudio).mockResolvedValueOnce(speechWave()); await listen();
     expect(api.createRealSpeech).toHaveBeenCalledTimes(1); expect(mockPlayback.play).toHaveBeenCalledTimes(1);
   });
@@ -991,9 +1058,9 @@ it('a speech POST 410 without an operation header preserves its original key and
     kind: 'speech', status: 'in_progress', created_at: project.created_at, updated_at: project.created_at, error_code: null, result: null });
   await render(<RealStoryWorkspace {...props} />); await ready(); await listen();
   expect(screen.getByText(t.uncertain)).toBeOnTheScreen(); expect(api.createRealSpeech).toHaveBeenCalledTimes(1);
-  expect(api.getRealSpeechAudio).not.toHaveBeenCalled(); expect(createRecordingId).toHaveBeenCalledTimes(1);
-  await press(t.check); expect(api.findRealOperation).toHaveBeenCalledWith(expect.anything(), 'speech', ids.key);
-  expect(api.createRealSpeech).toHaveBeenCalledTimes(1); expect(createRecordingId).toHaveBeenCalledTimes(1);
+  expect(api.getRealSpeechAudio).not.toHaveBeenCalled(); expect(createRecordingId).not.toHaveBeenCalled();
+  await press(t.check); expect(api.findRealOperation).toHaveBeenCalledWith(expect.anything(), 'speech', ids.assistant);
+  expect(api.createRealSpeech).toHaveBeenCalledTimes(1); expect(createRecordingId).not.toHaveBeenCalled();
 });
 it('known expired audio never opens a paid attempt when speech is paused', async () => {
   jest.mocked(api.getRealMessages).mockResolvedValue([realMessage('assistant')]);

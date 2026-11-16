@@ -155,7 +155,7 @@ describe('prepared speech reads and paid operation boundaries', () => {
     await emit('background'); await act(async () => paid.reject(new api.RealAiError('network', undefined, true)));
     await emit('active'); await press(t.resume);
     await waitFor(() => expect(screen.getByRole('button', { name: t.check })).toBeOnTheScreen()); await press(t.check);
-    expect(api.findRealOperation).toHaveBeenCalledWith(expect.anything(), 'speech', ids.key);
+    expect(api.findRealOperation).toHaveBeenCalledWith(expect.anything(), 'speech', ids.assistant);
     expect(screen.getByRole('button', { name: conversationModeCopy.en.switchToWrite })).toBeDisabled();
     expect(api.createRealSpeech).toHaveBeenCalledTimes(1); expect(mockPlayback.play).not.toHaveBeenCalled();
   });

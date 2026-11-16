@@ -90,6 +90,48 @@ it('cancels a permission grant that arrives after disposal and stops its tracks'
   const recorder = createNativeRecorder(), permission = recorder.requestPermission(); await recorder.dispose(); resolve(stream);
   expect(await permission).toBe(false); expect(track.stop).toHaveBeenCalled();
 });
+it('starts scheduled PCM in order and stops immediately when the page is hidden', async () => {
+  jest.useFakeTimers();
+  const sources: { onended: (() => void) | null; start: jest.Mock; stop: jest.Mock; connect: jest.Mock; disconnect: jest.Mock }[] = [];
+  const browserAudio = {
+    currentTime: 3, destination: {}, state: 'suspended', baseLatency: 0,
+    resume: jest.fn(async () => { browserAudio.state = 'running'; }),
+    close: jest.fn(async () => { browserAudio.state = 'closed'; }),
+    createBuffer: (_channels: number, length: number, sampleRate: number) => {
+      const samples = new Float32Array(length);
+      return { duration: length / sampleRate, getChannelData: () => samples };
+    },
+    createBufferSource: () => {
+      const source = { onended: null, start: jest.fn(), stop: jest.fn(), connect: jest.fn(), disconnect: jest.fn() };
+      sources.push(source);
+      return source;
+    },
+  };
+  Object.defineProperty(windowFake, 'AudioContext', { configurable: true, value: class { constructor() { return browserAudio; } } });
+  const player = createRealPlayback(), started = jest.fn(), finished = jest.fn();
+  try {
+    expect(player.openStream?.(started, finished)).toBeUndefined();
+    player.prepareStream?.();
+    const lease = player.openStream?.(started, finished);
+    const audio = new Uint8Array(12000).fill(4);
+    expect(lease?.push(audio)).toBe(true);
+    expect(lease?.push(audio)).toBe(true);
+    expect(sources[0].start).toHaveBeenCalledWith(3.05);
+    expect(sources[1].start.mock.calls[0][0]).toBeCloseTo(3.30);
+    jest.advanceTimersByTime(100);
+    expect(started).toHaveBeenCalledTimes(1);
+    expect(lease?.finish()).toBe(true);
+    documentFake.visibilityState = 'hidden';
+    for (const listener of documentListeners.get('visibilitychange') ?? []) listener();
+    expect(sources.every(source => source.stop.mock.calls.length === 1)).toBe(true);
+    expect(finished).toHaveBeenCalledTimes(1);
+    expect(lease?.push(audio)).toBe(false);
+  } finally {
+    await player.dispose();
+    expect(browserAudio.close).toHaveBeenCalledTimes(1);
+    Reflect.deleteProperty(windowFake, 'AudioContext');
+  }
+});
 it('keeps both parts of a recording when the user pauses before stopping', async () => {
   jest.useFakeTimers();
   const recorder = createNativeRecorder();

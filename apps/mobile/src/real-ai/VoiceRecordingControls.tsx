@@ -1,6 +1,7 @@
-import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { AccessibilityInfo, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Path, Rect } from 'react-native-svg';
+import { MAX_RECORDING_MS } from '../audio/native-recorder';
 import { accessibilityLanguages, type Language } from '../i18n';
 import { colors, layout } from '../theme';
 import { realCopy } from './copy';
@@ -30,17 +31,28 @@ export function VoiceRecordingControls({ language, duration, retained, disabled,
   onDiscard(): void; onSend(): void;
 }) {
   const t = realCopy[language];
-  return <View style={styles.strip} testID="voice-recording-controls">
-    <VoiceAction language={language} label={t.discard} icon="discard" disabled={disabled} onPress={onDiscard} />
-    <View style={styles.indicator}>
-      {!retained && <Svg width="100%" height={32} viewBox="0 0 160 32" accessible={false} aria-hidden>
-        {[8, 12, 20, 14, 24, 30, 18, 26, 14, 22, 16, 10, 6].map((height, index) =>
-          <Rect key={index} x={index * 12 + 2} y={(32 - height) / 2} width={5} height={height} rx={2.5} fill={colors.forest} />)}
-      </Svg>}
-      <Text allowFontScaling accessibilityLanguage={accessibilityLanguages[language]} style={styles.text}>{retained ? t.recordingReady : t.recording}</Text>
-      <Text allowFontScaling style={styles.text}>{Math.min(60, Math.floor(duration / 1000))} / 60 s</Text>
+  const atLimit = retained && duration >= MAX_RECORDING_MS;
+  const warning = !retained && duration >= MAX_RECORDING_MS - 10_000;
+  const notice = disabled ? '' : atLimit ? t.recordingLimitReached : warning ? t.recordingEnding : '';
+  const maximumSeconds = MAX_RECORDING_MS / 1000;
+  useEffect(() => {
+    if (notice && Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(notice);
+  }, [notice]);
+  return <View testID="voice-recording-controls">
+    <View style={styles.strip}>
+      <VoiceAction language={language} label={t.discard} icon="discard" disabled={disabled} onPress={onDiscard} />
+      <View style={styles.indicator}>
+        {!retained && <Svg width="100%" height={32} viewBox="0 0 160 32" accessible={false} aria-hidden>
+          {[8, 12, 20, 14, 24, 30, 18, 26, 14, 22, 16, 10, 6].map((height, index) =>
+            <Rect key={index} x={index * 12 + 2} y={(32 - height) / 2} width={5} height={height} rx={2.5} fill={colors.forest} />)}
+        </Svg>}
+        {!atLimit && <Text allowFontScaling accessibilityLanguage={accessibilityLanguages[language]} style={styles.text}>{retained ? t.recordingReady : t.recording}</Text>}
+        <Text allowFontScaling style={styles.text}>{Math.min(maximumSeconds, Math.floor(duration / 1000))} / {maximumSeconds} s</Text>
+      </View>
+      <VoiceAction language={language} label={t.stop} icon="send" disabled={disabled || sendDisabled} onPress={onSend} />
     </View>
-    <VoiceAction language={language} label={t.stop} icon="send" disabled={disabled || sendDisabled} onPress={onSend} />
+    <Text allowFontScaling accessibilityLanguage={accessibilityLanguages[language]}
+      accessibilityLiveRegion="polite" style={notice ? styles.notice : undefined}>{notice}</Text>
   </View>;
 }
 const styles = StyleSheet.create({
@@ -51,4 +63,5 @@ const styles = StyleSheet.create({
   focused: { borderColor: colors.forest }, disabled: { opacity: 0.45 },
   strip: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, alignItems: 'center', paddingVertical: 12 },
   indicator: { flex: 1, minWidth: 80 }, text: { color: colors.ink, fontSize: 18, lineHeight: 27, flexShrink: 1, textAlign: 'center' },
+  notice: { color: colors.ink, fontSize: 18, fontWeight: '600', lineHeight: 27, paddingBottom: 8 },
 });

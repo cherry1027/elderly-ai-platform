@@ -8,6 +8,12 @@ import type { StoryEdit, StorySourceMemory } from '../api/story-drafts';
 import type { StoryExport } from '../api/story-exports';
 import { normalizeMobileApiBaseUrl, StoryProjectsError, validDate, validateStoryProjectId,
   type ListStoryProjectsOptions } from '../api/story-projects';
+import { MAX_SPEECH_PCM_BYTES, SPEECH_CHUNK_BYTES, speechWav } from './voice-pcm';
+
+const TALK_PREVIEW_ORIGIN = 'https://memy-visual-redesign-preview.onrender.com';
+export function isTalkPreview() {
+  return typeof window !== 'undefined' && window.location?.origin === TALK_PREVIEW_ORIGIN;
+}
 
 export interface Provenance { mode: 'real'; provider: 'openai'; model: string; version: 1 }
 export interface OriginalTextProvenance { mode: 'original'; provider: 'user'; model: null; version: 1 }
@@ -204,31 +210,48 @@ export type RealConversationProgress =
 interface ConversationStream {
   scope: RealScope;
   onProgress(event: RealConversationProgress): void;
+  autoplay?: VoicePlaybackCallbacks;
+}
+interface VoicePlaybackCallbacks {
+  onSaved(turn: RealTurn): void;
+  onSpeech(metadata: SpeechMetadata, audio: Uint8Array): void;
+  onSpeechChunk?(pcm: Uint8Array): void;
+}
+class PostSaveSpeechFailure extends Error {
+  constructor() { super('The saved reply audio could not be verified.'); }
 }
 /** Only a validated stream error may preserve backend recovery advice. */
 class StreamTerminalFailure extends Error {
   constructor(readonly failure: RealAiError) { super('Conversation requires recovery.'); }
 }
 const MAX_CONVERSATION_STREAM_BYTES = 2_000_000, MAX_CONVERSATION_EVENT_BYTES = 1_000_000;
+const MAX_VOICE_STREAM_BYTES = 4_000_000, MAX_VOICE_EVENT_BYTES = 3_000_000;
 
 async function readConversationStream<T>(response: Response, stream: ConversationStream,
-  decode: (value: unknown, operationId?: string) => T, operationId: string | undefined, check: () => void,
+  decode: (value: unknown, operationId?: string) => T | Promise<T>, operationId: string | undefined, check: () => void,
   register: (reader: ReadableStreamDefaultReader<Uint8Array>) => void, cancel: () => Promise<void>, release: () => void, interrupt: Promise<never>, settled: () => void,
-  failure: (status: number, code: string | undefined, recovery: string | null, retry: string | null) => RealAiError): Promise<T> {
+  failure: (status: number, code: string | undefined, recovery: string | null, retry: string | null, id?: string) => RealAiError,
+  onSavedStage: () => void): Promise<T> {
   if (!operationId || operationId !== operationId.toLowerCase() || !response.body?.getReader ||
     !response.headers.get('cache-control')?.toLowerCase().includes('no-store')) invalid();
   const reader = response.body!.getReader(); register(reader);
   const expectedOperationId = operationId!;
   const decoder = new TextDecoder('utf-8', { fatal: true }), encoder = new TextEncoder();
+  const maxEvent = stream.autoplay ? MAX_VOICE_EVENT_BYTES : MAX_CONVERSATION_EVENT_BYTES;
+  const maxTotal = stream.autoplay ? MAX_VOICE_STREAM_BYTES : MAX_CONVERSATION_STREAM_BYTES;
+  const maxFrames = stream.autoplay?.onSpeechChunk ? 192 : 16;
+  const audioChunks: Uint8Array[] = [];
+  let pcmBytes = 0;
   let totalBytes = 0, frameBytes = 0, lineParts: string[] = [], lineBytes = 0, data: string | null = null, frames = 0;
   let haveOperation = false, preview: string | undefined, saving = false;
+  let saved: { result: T; messageId: string } | undefined;
   let terminal: { result: T } | { error: RealAiError } | null = null;
   const notify = async (event: RealConversationProgress) => {
     check(); await Promise.race([Promise.resolve(stream.onProgress(event)), interrupt]); check();
   };
   const frame = async (raw: string) => {
     check();
-    if (++frames > 16 || terminal) invalid();
+    if (++frames > maxFrames || terminal) invalid();
     const value: unknown = JSON.parse(raw);
     if (!value || typeof value !== 'object' || Array.isArray(value)) invalid();
     const kind = (value as Record<string, unknown>).type;
@@ -240,6 +263,7 @@ async function readConversationStream<T>(response: Response, stream: Conversatio
       return;
     }
     if (!haveOperation) invalid();
+    if (saved && kind !== 'speech' && kind !== 'speech-error' && kind !== 'speech-chunk' && kind !== 'speech-complete') invalid();
     if (kind === 'reply') {
       const v = row(value, ['type', 'text']);
       if (preview !== undefined || saving || !text(v.text, 1000) || (v.text.match(/\?/g)?.length ?? 0) > 1) invalid();
@@ -249,27 +273,62 @@ async function readConversationStream<T>(response: Response, stream: Conversatio
       row(value, ['type']); if (saving) invalid();
       saving = true; await notify({ type: 'saving' }); return;
     }
-    if (kind === 'completed') {
-      const v = row(value, ['type', 'result']), result = decode(v.result, operationId);
-      const reply = (result as unknown as RealTurn).message?.text;
-      if (!text(reply, 32_000) || (preview !== undefined && reply !== preview)) invalid();
+    if (kind === 'completed' || kind === 'saved') {
+      const v = row(value, ['type', 'result']), result = await decode(v.result, operationId);
+      const turn = result as unknown as RealTurn;
+      if (!text(turn.message?.text, 32_000) || (preview !== undefined && turn.message.text !== preview)) invalid();
+      if (kind === 'saved') {
+        if (!stream.autoplay || !saving) invalid();
+        saved = { result, messageId: turn.message.id };
+        check(); onSavedStage(); stream.autoplay!.onSaved(turn); check(); return;
+      }
       terminal = { result }; settled(); return;
     }
-    if (kind === 'error') {
+    if (kind === 'speech-chunk') {
+      const onChunk = stream.autoplay?.onSpeechChunk;
+      const v = row(value, ['type', 'assistant_message_id', 'sequence', 'pcm']);
+      if (!saved || !onChunk || v.assistant_message_id !== saved.messageId ||
+        v.sequence !== audioChunks.length || pcmBytes !== audioChunks.length * SPEECH_CHUNK_BYTES ||
+        typeof v.pcm !== 'string' || v.pcm.length > SPEECH_CHUNK_BYTES / 3 * 4) invalid();
+      const binary = atob(v.pcm as string);
+      if (!binary.length || binary.length % 2 || binary.length > SPEECH_CHUNK_BYTES ||
+          pcmBytes + binary.length > MAX_SPEECH_PCM_BYTES) invalid();
+      const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+      pcmBytes += bytes.length; audioChunks.push(bytes);
+      check(); onChunk!(bytes); check(); return;
+    }
+    if (kind === 'speech' || kind === 'speech-complete') {
+      if (!saved || !stream.autoplay || (kind === 'speech-complete') !== (pcmBytes > 0)) invalid();
+      const streamed = kind === 'speech-complete';
+      const v = row(value, streamed ? ['type', 'metadata'] : ['type', 'metadata', 'audio']);
+      const metadata = decodeSpeech(v.metadata, stream.scope, saved!.messageId);
+      const bytes = streamed ? speechWav(audioChunks, pcmBytes) : decodeSpeechBase64(v.audio, metadata.audio_size);
+      try {
+        checkSpeechBytes(bytes, metadata);
+        await verifySpeechHash(stream.scope, bytes, metadata);
+        check(); if (Date.parse(metadata.expires_at) <= Date.now()) invalid();
+        stream.autoplay!.onSpeech(metadata, bytes);
+      } finally { bytes.fill(0); }
+      terminal = { result: saved!.result }; settled(); return;
+    }
+    if (kind === 'error' || kind === 'speech-error') {
       const v = row(value, ['type', 'status', 'error', 'operation_id', 'recovery', 'retry_after']);
       const body = row(v.error, ['code', 'message']);
-      if (v.operation_id !== operationId || !Number.isInteger(v.status) || (v.status as number) < 400 || (v.status as number) > 599 ||
+      const speechError = kind === 'speech-error';
+      if ((speechError ? !saved || !(v.operation_id === null || (uuid(v.operation_id) && v.operation_id !== operationId)) : v.operation_id !== operationId) ||
+        !Number.isInteger(v.status) || (v.status as number) < 400 || (v.status as number) > 599 ||
         typeof body.code !== 'string' || !/^[A-Z0-9_]{1,80}$/.test(body.code) || !text(body.message, 1000) ||
         !(v.recovery === null || ['contact-operator', 'sign-in', 'wait', 'check-saved'].includes(v.recovery as string)) ||
         !(v.retry_after === null || (typeof v.retry_after === 'string' && v.retry_after.length <= 64))) invalid();
       terminal = { error: failure(v.status as number, SAFE_CODES.has(body.code as string) ? body.code as string : undefined,
-        v.recovery as string | null, v.retry_after as string | null) }; settled(); return;
+        v.recovery as string | null, v.retry_after as string | null, speechError ? (v.operation_id ?? undefined) as string | undefined : operationId) }; settled(); return;
     }
     invalid();
   };
   const line = async () => {
+    let lineLength = lineBytes;
     let value = lineParts.join(''); lineParts = []; lineBytes = 0;
-    if (value.endsWith('\r')) value = value.slice(0, -1);
+    if (value.endsWith('\r')) { value = value.slice(0, -1); lineLength--; }
     if (value.includes('\r')) invalid();
     if (!value) {
       if (data === null) invalid();
@@ -277,15 +336,16 @@ async function readConversationStream<T>(response: Response, stream: Conversatio
       await frame(value); return;
     }
     if (data !== null || !value.startsWith('data:')) invalid();
-    data = value.slice(5); if (data.startsWith(' ')) data = data.slice(1);
-    if (!data || encoder.encode(data).byteLength > MAX_CONVERSATION_EVENT_BYTES) invalid();
+    const prefix = value.startsWith('data: ') ? 6 : 5;
+    data = value.slice(prefix);
+    if (!data || lineLength - prefix > maxEvent) invalid();
   };
   const accept = async (chunk: string) => {
     const pieces = chunk.split('\n');
     for (let index = 0; index < pieces.length; index++) {
       check(); const part = pieces[index];
       if (part) { lineParts.push(part); const bytes = encoder.encode(part).byteLength; lineBytes += bytes; frameBytes += bytes; }
-      if (lineBytes > MAX_CONVERSATION_EVENT_BYTES + 6 || frameBytes > MAX_CONVERSATION_EVENT_BYTES + 10) invalid();
+      if (lineBytes > maxEvent + 7 || frameBytes > maxEvent + 10) invalid();
       if (index < pieces.length - 1) { frameBytes++; await line(); check(); if (terminal) return; }
     }
   };
@@ -299,7 +359,7 @@ async function readConversationStream<T>(response: Response, stream: Conversatio
       for (let offset = 0; offset < next.value.byteLength;) {
         const newline = next.value.indexOf(10, offset), end = newline < 0 ? next.value.byteLength : newline + 1;
         const bytes = next.value.subarray(offset, end); offset = end;
-        totalBytes += bytes.byteLength; if (totalBytes > MAX_CONVERSATION_STREAM_BYTES) invalid();
+        totalBytes += bytes.byteLength; if (totalBytes > maxTotal) invalid();
         await accept(decoder.decode(bytes, { stream: true })); check(); if (terminal) break;
       }
       if (terminal) break;
@@ -309,14 +369,26 @@ async function readConversationStream<T>(response: Response, stream: Conversatio
     const result = terminal as unknown as { result: T } | { error: RealAiError };
     if ('error' in result) throw new StreamTerminalFailure(result.error);
     return result.result;
+  } catch (error) {
+    if (saved && !(error instanceof StreamTerminalFailure)) throw new PostSaveSpeechFailure();
+    throw error;
   } finally {
+    for (const bytes of audioChunks) bytes.fill(0);
     await cancel(); release();
   }
 }
 
+function decodeSpeechBase64(encoded: unknown, size: number) {
+  if (typeof encoded !== 'string' || encoded.length !== Math.ceil(size / 3) * 4) invalid();
+  const binary = atob(encoded as string);
+  if (binary.length !== size) invalid();
+  return Uint8Array.from(binary, character => character.charCodeAt(0));
+}
+
 /** Separate v2 transport: fixed relative paths only, owner-fenced tokens, no redirect or automatic retry. */
 async function execute<T>(options: ListStoryProjectsOptions, path: string, method: 'GET' | 'POST' | 'PATCH',
-  decode: (value: unknown, operationId?: string) => T, body?: string | FormData, key?: string, binary?: 'pdf' | 'wav', stream?: ConversationStream): Promise<T> {
+  decode: (value: unknown, operationId?: string) => T | Promise<T>, body?: string | FormData, key?: string,
+  binary?: 'pdf' | 'wav' | 'wav-or-json', stream?: ConversationStream): Promise<T> {
   const origin = normalizeMobileApiBaseUrl(options.baseUrl), lease = apiBackoff.capture();
   if (key !== undefined) validateStoryProjectId(key);
   const timeout = options.timeoutMs ?? 60_000;
@@ -357,7 +429,7 @@ async function execute<T>(options: ListStoryProjectsOptions, path: string, metho
   const abort = () => stop('cancelled'); options.signal?.addEventListener('abort', abort, { once: true });
   if (options.signal?.aborted) abort();
   const timer = setTimeout(() => stop('timeout'), timeout);
-  const responseError = (status: number, code: string | undefined, recoveryHeader: string | null, retryHeader: string | null) => {
+  const responseError = (status: number, code: string | undefined, recoveryHeader: string | null, retryHeader: string | null, errorOperationId?: string) => {
       const recovery = recoveryFor(code, recoveryHeader, status);
       const admissionCode = code === 'API_BUSY' ? 'API_BUSY' : 'RATE_LIMITED';
       const retry = recovery === 'wait' ? parseRetryAdvice(status,
@@ -369,10 +441,10 @@ async function execute<T>(options: ListStoryProjectsOptions, path: string, metho
       const provenNotDispatched = !!code && RECOVERY_STATUSES[code] === status &&
         (NO_DISPATCH_CODES.has(code) || (recovery === 'wait' && !MAY_DISPATCH_CODES.has(code)));
       const inconsistentRecoveryStatus = !!code && Object.hasOwn(RECOVERY_STATUSES, code) && RECOVERY_STATUSES[code] !== status;
-      return new RealAiError(kind, status, method !== 'GET' && (!!operationId || inconsistentRecoveryStatus ||
+      return new RealAiError(kind, status, method !== 'GET' && (!!errorOperationId || inconsistentRecoveryStatus ||
         MAY_DISPATCH_CODES.has(code ?? '') || recovery === 'check-saved' ||
         ['AI_OPERATION_IN_PROGRESS', 'AI_OPERATION_UNCERTAIN', 'AI_OPERATION_FAILED'].includes(code ?? '') ||
-        (status >= 500 && !provenNotDispatched && !(status === 503 && code === 'TEXT_CHAT_NOT_READY'))), code, retry, operationId, recovery);
+        (status >= 500 && !provenNotDispatched && !(status === 503 && code === 'TEXT_CHAT_NOT_READY'))), code, retry, errorOperationId, recovery);
   };
   const operation = (async () => {
     check(); admission();
@@ -382,7 +454,7 @@ async function execute<T>(options: ListStoryProjectsOptions, path: string, metho
     dispatched = true;
     let response: Response;
     try { response = await request(`${origin}/api/v2/${path}`, { method, headers: {
-      Authorization: `Bearer ${token}`, Accept: binary === 'pdf' ? 'application/pdf' : binary === 'wav' ? 'audio/wav' : stream ? 'text/event-stream' : 'application/json',
+      Authorization: `Bearer ${token}`, Accept: binary === 'pdf' ? 'application/pdf' : binary ? 'audio/wav' : stream ? 'text/event-stream' : 'application/json',
       ...(typeof body === 'string' ? { 'Content-Type': 'application/json' } : {}), ...(key ? { 'Idempotency-Key': key } : {}),
     }, ...(body !== undefined ? { body } : {}), credentials: 'omit', cache: 'no-store', redirect: 'error', signal: controller.signal }); }
     catch { check(); throw new RealAiError('network', undefined, method !== 'GET'); }
@@ -395,26 +467,33 @@ async function execute<T>(options: ListStoryProjectsOptions, path: string, metho
         if (SAFE_CODES.has(raw)) code = raw;
       } catch { /* Never expose an upstream body. */ }
       check();
-      throw responseError(response.status, code, response.headers.get('x-memy-recovery'), response.headers.get('retry-after'));
+      throw responseError(response.status, code, response.headers.get('x-memy-recovery'), response.headers.get('retry-after'), operationId);
     }
     let value: unknown, privateBytes: Uint8Array | undefined;
     try {
-      const maximum = binary === 'wav' ? 10_000_000 : binary === 'pdf' ? 2_000_000 : 2_000_000;
+      const contentType = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase();
+      const expectedType = binary === 'pdf' ? 'application/pdf' : binary === 'wav' ||
+        (binary === 'wav-or-json' && contentType !== 'application/json') ? 'audio/wav' : undefined;
+      const maximum = expectedType === 'audio/wav' ? 10_000_000 : 2_000_000;
       const length = response.headers.get('content-length');
-      if (length && (!/^\d+$/.test(length) || Number(length) > maximum)) invalid();
-      if (stream && response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() === 'text/event-stream') {
+      const hasStream = stream && contentType === 'text/event-stream';
+      const maximumLength = hasStream && stream.autoplay ? MAX_VOICE_STREAM_BYTES : maximum;
+      if (length && (!/^\d+$/.test(length) || Number(length) > maximumLength)) invalid();
+      if (hasStream) {
         const result = await readConversationStream(response, stream, decode, operationId, check,
-          reader => { streamReader = reader; }, cancelStream, releaseStream, interrupted, () => clearTimeout(timer), responseError);
+          reader => { streamReader = reader; }, cancelStream, releaseStream, interrupted, () => clearTimeout(timer), responseError,
+          () => { operationId = undefined; });
         check(); return result;
       }
-      if (binary) {
+      if (expectedType) {
+        if (contentType !== expectedType || !response.headers.get('cache-control')?.toLowerCase().includes('no-store')) invalid();
         const bytes = new Uint8Array(await response.arrayBuffer()); privateBytes = bytes; check();
-        if (!bytes.length || bytes.length > maximum || response.headers.get('content-type')?.split(';')[0].trim() !== (binary === 'pdf' ? 'application/pdf' : 'audio/wav') ||
-          !response.headers.get('cache-control')?.toLowerCase().includes('no-store')) invalid();
+        if (!bytes.length || bytes.length > maximum) invalid();
         value = { bytes, headers: response.headers };
       } else { const raw = await response.text(); check(); if (raw.length > maximum) invalid(); value = JSON.parse(raw); }
-      const result = decode(value, operationId); check(); return result;
+      const result = await decode(value, operationId); check(); return result;
     } catch (error) { privateBytes?.fill(0); if (stream) controller.abort(); check(); if (error instanceof StreamTerminalFailure) throw error.failure;
+      if (error instanceof PostSaveSpeechFailure) throw new RealAiError('invalid-response', undefined, true, undefined, undefined, undefined, 'check-saved');
       if (error instanceof RealAiError && method === 'GET') throw error;
       throw new RealAiError('invalid-response', undefined, method !== 'GET', undefined, undefined, operationId); }
   })();
@@ -448,9 +527,18 @@ export function getRealMessages(scope: RealScope, offset = 0) {
     if (new Set(items.map(v => v.sequence)).size !== items.length) invalid(); return items.sort((a, b) => a.sequence - b.sequence);
   });
 }
-export function sendRealMessage(scope: RealScope, input: { source_transcript_id: string }, key: string, onProgress?: (event: RealConversationProgress) => void) {
+export function sendRealMessage(scope: RealScope, input: { source_transcript_id: string }, key: string,
+  onProgress?: (event: RealConversationProgress) => void, autoplay?: VoicePlaybackCallbacks) {
   const sourceId = validateStoryProjectId(input.source_transcript_id), expectedScope = onProgress ? { ...scope } : scope;
-  return execute(expectedScope, scopePath(expectedScope, 'messages'), 'POST', value => {
+  const query = new URLSearchParams();
+  if (onProgress && autoplay) query.set('autoplay', 'true');
+  if (isTalkPreview()) {
+    query.set('talk_preview', 'true');
+    if (onProgress && autoplay?.onSpeechChunk) query.set('stream_audio', 'true');
+  }
+  const params = query.toString();
+  const endpoint = params ? `messages?${params}` : 'messages';
+  return execute(expectedScope, scopePath(expectedScope, endpoint), 'POST', value => {
     const v = row(value, ['user_message', 'message', 'memories', 'mode']);
     if (v.mode !== 'real') invalid();
     const user = decodeMessage(v.user_message, expectedScope), assistant = decodeMessage(v.message, expectedScope);
@@ -461,7 +549,7 @@ export function sendRealMessage(scope: RealScope, input: { source_transcript_id:
       user.source_transcript_id !== sourceId) invalid();
     if (user.source_text_input_id !== null || assistant.source_text_input_id !== null) invalid();
     return { user_message: user, message: assistant, memories, mode: 'real' as const };
-  }, JSON.stringify({ ...input, language: expectedScope.language }), key, undefined, onProgress ? { scope: expectedScope, onProgress } : undefined);
+  }, JSON.stringify({ ...input, language: expectedScope.language }), key, undefined, onProgress ? { scope: expectedScope, onProgress, autoplay } : undefined);
 }
 /** Native SHA-256 of exact UTF-8 wording; only its digest belongs in pending metadata. */
 export async function hashRealText(original: string): Promise<string> {
@@ -492,7 +580,8 @@ export function sendRealTextMessage(scope: RealScope, original: string, key: str
   if (!text(original, 4000)) throw new RealAiError('validation');
   validateStoryProjectId(key);
   const expectedScope = onProgress ? { ...scope } : scope;
-  return execute(expectedScope, scopePath(expectedScope, 'text-messages'), 'POST',
+  const endpoint = isTalkPreview() ? 'text-messages?talk_preview=true' : 'text-messages';
+  return execute(expectedScope, scopePath(expectedScope, endpoint), 'POST',
     (value, operationId) => decodeRealTextTurn(value, expectedScope, original, operationId),
     JSON.stringify({ text: original, language: expectedScope.language }), key, undefined, onProgress ? { scope: expectedScope, onProgress } : undefined);
 }
@@ -636,16 +725,34 @@ export function getPreparedRealSpeech(scope: RealScope, assistantId: string) {
     value => decodeSpeech(value, scope, assistantId));
 }
 export function createRealSpeech(scope: RealScope, assistantId: string, key: string) {
-  return execute(scope, `conversation-messages/${validateStoryProjectId(assistantId)}/speech`, 'POST',
-    value => decodeSpeech(value, scope, assistantId), JSON.stringify({ language: scope.language }), key);
+  return execute<SpeechMetadata & { audio?: Uint8Array }>(scope, `conversation-messages/${validateStoryProjectId(assistantId)}/speech`, 'POST',
+    async value => {
+      const inline = value as { bytes?: Uint8Array; headers?: Headers } | null;
+      if (!(inline?.bytes instanceof Uint8Array) || !inline.headers) return decodeSpeech(value, scope, assistantId);
+      const { bytes, headers } = inline;
+      const raw = headers.get('x-memy-speech-metadata');
+      if (!raw || raw.length > 1024) invalid();
+      const metadata = decodeSpeech(JSON.parse(raw!), scope, assistantId);
+      if (headers.get('x-memy-speech-id') !== metadata.speech_id || headers.get('x-memy-audio-sha256') !== metadata.audio_sha256) invalid();
+      checkSpeechBytes(bytes, metadata);
+      await verifySpeechHash(scope, bytes, metadata);
+      if (Date.parse(metadata.expires_at) <= Date.now()) invalid();
+      return { ...metadata, audio: bytes };
+    }, JSON.stringify({ language: scope.language }), key, 'wav-or-json');
+}
+function checkSpeechBytes(bytes: Uint8Array, metadata: SpeechMetadata) {
+  if (bytes.length !== metadata.audio_size || bytes.length < 44 || String.fromCharCode(...bytes.subarray(0, 4)) !== 'RIFF' ||
+      String.fromCharCode(...bytes.subarray(8, 12)) !== 'WAVE') invalid();
 }
 export async function getRealSpeechAudio(scope: RealScope, metadata: SpeechMetadata) {
   if (Date.parse(metadata.expires_at) <= Date.now()) throw new RealAiError('not-found', 410, false, 'SPEECH_EXPIRED');
   const bytes = await execute(scope, `spoken-replies/${validateStoryProjectId(metadata.speech_id)}/audio`, 'GET', value => {
     const { bytes } = value as { bytes: Uint8Array };
-    if (bytes.length !== metadata.audio_size || bytes.length < 44 || String.fromCharCode(...bytes.subarray(0, 4)) !== 'RIFF' ||
-      String.fromCharCode(...bytes.subarray(8, 12)) !== 'WAVE') invalid(); return bytes;
+    checkSpeechBytes(bytes, metadata); return bytes;
   }, undefined, undefined, 'wav');
+  return verifySpeechHash(scope, bytes, metadata);
+}
+async function verifySpeechHash(scope: RealScope, bytes: Uint8Array, metadata: SpeechMetadata) {
   const digestInput = Uint8Array.from(bytes); let verified = false;
   try {
     const hash = new Uint8Array(await digest(CryptoDigestAlgorithm.SHA256, digestInput.buffer));

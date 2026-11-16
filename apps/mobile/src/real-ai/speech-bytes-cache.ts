@@ -30,7 +30,7 @@ export class SpeechBytesCache {
     this.entries.delete(metadata.speech_id); this.entries.set(metadata.speech_id, entry);
     return Uint8Array.from(entry.bytes);
   }
-  /** Caller must supply the bytes already validated by getRealSpeechAudio. Copies prevent playback cleanup mutating the cache. */
+  /** Accepts only bytes the caller has verified. A copy keeps playback cleanup from modifying the cache. */
   put(metadata: SpeechMetadata, verified: Uint8Array): void {
     this.drop(metadata.speech_id);
     const expiry = Date.parse(metadata.expires_at);

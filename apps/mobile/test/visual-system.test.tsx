@@ -25,11 +25,14 @@ it.each(['en', 'sv'] as const)('keeps recording icons labelled, large and action
   const button = screen.getByRole('button', { name: t.stop });
   expect(button).toHaveStyle({ minWidth: 56, minHeight: 56 });
   expect(screen.getByRole('button', { name: t.discard })).toHaveStyle({ minWidth: 56, minHeight: 56 });
-  expect(screen.getByText(t.recordingReady)).toHaveProp('allowFontScaling', true);
+  expect(screen.getByText(t.recordingLimitReached)).toHaveProp('allowFontScaling', true);
+  expect(screen.getByText(t.recordingLimitReached)).toHaveProp('accessibilityLiveRegion', 'polite');
   await fireEvent.press(button); expect(send).toHaveBeenCalledTimes(1);
   await fireEvent.press(screen.getByRole('button', { name: t.discard })); expect(discard).toHaveBeenCalledTimes(1);
   await view.rerender(<VoiceRecordingControls language={language} duration={60000} retained disabled sendDisabled onDiscard={discard} onSend={send} />);
   await fireEvent.press(screen.getByRole('button', { name: t.stop })); expect(send).toHaveBeenCalledTimes(1);
+  await view.rerender(<VoiceRecordingControls language={language} duration={51000} retained={false} disabled={false} sendDisabled={false} onDiscard={discard} onSend={send} />);
+  expect(screen.getByText(t.recordingEnding)).toHaveProp('accessibilityLiveRegion', 'polite');
 });
 it('shows keyboard focus on the coral microphone without starting capture', async () => {
   const start = jest.fn(); await render(<VoiceAction language="en" label="Microphone" icon="mic" onPress={start} />);

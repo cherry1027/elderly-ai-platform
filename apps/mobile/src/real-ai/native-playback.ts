@@ -10,8 +10,15 @@ type Player = { play(): void; pause(): void; remove(): void;
 export interface PlaybackDependencies {
   foreground(): boolean; mode(): Promise<void>; file(): OwnedFile; player(uri: string): Player;
 }
+export interface StreamingPlayback {
+  push(pcm: Uint8Array): boolean;
+  finish(): boolean;
+  cancel(): void;
+}
 export interface RealPlayback {
   prepare?(): void;
+  prepareStream?(): void;
+  openStream?(onFirstSound: (at: number) => void, onFinish: () => void): StreamingPlayback | undefined;
   play(bytes: Uint8Array, onFinish: () => void, onError?: () => void): Promise<void>;
   stop(): Promise<void>;
   dispose(): Promise<void>;

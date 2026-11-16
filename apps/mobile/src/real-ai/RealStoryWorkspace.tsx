@@ -18,12 +18,12 @@ import { useGuardedLeave } from '../navigation/useGuardedLeave';
 import { colors, layout } from '../theme';
 import { createRealSpeech, downloadRealExport, editRealDraft, exportRealDraft, findRealOperation, generateRealDraft, getRealCapabilities, getRealDraftHistory, getRealExports,
   getRealDraft, getRealDrafts, getRealMemories, getRealMessages, getRealOperation, getRealSpeechAudio, getPreparedRealSpeech, getRealTranscripts,
-  RealAiError, decodeRealTextTurn, hashRealText, reviewRealMemory, saveRealMemoryFromMessage, sendRealMessage, sendRealTextMessage, transcribeRealRecording,
+  RealAiError, decodeRealTextTurn, hashRealText, isTalkPreview, reviewRealMemory, saveRealMemoryFromMessage, sendRealMessage, sendRealTextMessage, transcribeRealRecording,
   type RealCapabilities, type RealDraft, type RealExport, type RealMemory, type RealMessage, type RealScope, type RealTranscript, type RealTurn,
   type SpeechMetadata, type RealConversationProgress } from './api';
 import type { RealAiConfig } from './config';
 import { realCopy } from './copy';
-import { createRealPlayback, RealPlaybackError, type RealPlayback } from './native-playback';
+import { createRealPlayback, RealPlaybackError, type RealPlayback, type StreamingPlayback } from './native-playback';
 import { conversationModeCopy, readConversationMode, saveConversationMode, type ConversationMode } from './conversation-mode';
 import { mediaPrivacy } from './media-privacy';
 import { MemoriesContent, AutobiographyContent, SavedWordsContent, isSavedMessageMemory, storyContentCopy } from './StoryContent';
@@ -39,7 +39,7 @@ interface Props {
   initialTab?: 'chat' | 'memories' | 'book'; initialDraftId?: string; onAuthenticationFailure?(): void; onStoryDetails?(): void;
 }
 type Pending = { key: string; operationId?: string; assistantId?: string; inputType?: 'typed'; textDigest?: string; voice?: true; voiceTranscriptId?: string; kind: 'transcription' | 'conversation' | 'generation' | 'speech' };
-type Activity = 'recording' | 'speech' | 'story' | 'pdf' | 'checking' | 'saving';
+type Activity = 'recording' | 'recording-limit' | 'speech' | 'story' | 'pdf' | 'checking' | 'saving';
 type TypedOutbox = { key: string; text: string };
 type Resource = 'transcripts' | 'messages' | 'memories' | 'drafts' | 'history' | 'exports';
 type Pages = Record<Resource, number | null>;
@@ -152,6 +152,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const [textDraft, setTextDraft] = useState(''), [textSending, setTextSending] = useState(false);
   const [outbox, setOutbox] = useState<TypedOutbox | null>(null), [activity, setActivity] = useState<Activity | null>(null);
   const [replyPreview, setReplyPreview] = useState<{ text: string; saving: boolean } | null>(null);
+  const [voiceStartMs, setVoiceStartMs] = useState<number | null>(null);
   const [latestReplyId, setLatestReplyId] = useState<string | null>(null), [replyAnchor, setReplyAnchor] = useState<{ id: string; y: number } | null>(null);
   const latestReply = useRef<string | null>(null), replyLayouts = useRef(new Map<string, number>());
   const scrollOffsets = useRef({ body: 0, workspace: 0, thread: 0 });
@@ -159,12 +160,13 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const mounted = useRef(false), active = useRef(false), epoch = useRef(0), locked = useRef(false);
   const controller = useRef<AbortController | null>(null), recorder = useRef<RecordingDriver | null>(null);
   const audio = useRef<AudioRecording | null>(null), capturing = useRef(false), playback = useRef<RealPlayback | null>(null);
+  const voiceSentAt = useRef<number | null>(null), autoplayStopped = useRef(false);
   const pdfStore = useRef<PrivatePdfStore | null>(null), pending = useRef<Pending | null>(null);
   const [speechBytes] = useState(() => new SpeechBytesCache());
   const speakCurrent = useRef<(message: RealMessage, automatic?: boolean) => void>(() => {});
   const onSpeak = useCallback((message: RealMessage) => speakCurrent.current(message), []);
   const speech = useRef(new Map<string, SpeechMetadata>()), latest = useRef({ onBack, onSignOut, privacy, onAuthenticationFailure, onStoryDetails });
-  const stopRecordingAction = useRef<() => void>(() => {});
+  const stopRecordingAction = useRef<(atLimit?: boolean) => void>(() => {});
   const voiceConsent = useRef<string | null>(null), consentIntent = useRef<{ epoch: number; scope: string } | null>(null);
   const voiceContext = useRef({ capabilities, usageBlocked, sessionId });
   const voiceScope = () => `${user.id}:${project.id}:${project.language}:${voiceContext.current.sessionId}`;
@@ -199,6 +201,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const releasePdf = () => { if (pdfStore.current) latest.current.privacy.release(pdfStore.current); pdfStore.current = null; };
   const cleanupAudio = () => {
     nextSpokenReply.current = null;
+    voiceSentAt.current = null; autoplayStopped.current = true;
     speechBytes.clear();
     const previous = recorder.current; recorder.current = null; audio.current = null; capturing.current = false;
     if (previous) void mediaPrivacy.retire(previous);
@@ -472,7 +475,19 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       let completedDraft: RealDraft | undefined;
       if (pending.current) {
         const action = pending.current, expectedTyped = action.inputType === 'typed';
-        const state = await readSavedOperation(scope(signal), action); check();
+        let state;
+        try {
+          state = await readSavedOperation(scope(signal), action);
+        } catch (error) {
+          check();
+          // The stream can stop after the conversation save but before the
+          // speech claim. A later Listen uses the same stable key.
+          if (action.kind !== 'speech' || action.key !== action.assistantId || action.operationId ||
+              !(error instanceof RealAiError && error.kind === 'not-found' && error.status === 404)) throw error;
+          await refresh(signal, check, sessionId); check();
+          pending.current = null; setUnresolved(null); setNotice(t.checked); return;
+        }
+        check();
         if (pending.current?.key !== action.key || state.kind !== action.kind) throw new RealAiError('invalid-response');
         if (pending.current) pending.current.operationId = state.operation_id;
         if (state.status === 'in_progress' || state.status === 'uncertain') { setNotice(t.operationPending); return; }
@@ -491,6 +506,9 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
           if (!state.result || state.result.assistant_message_id !== pending.current?.assistantId) throw new RealAiError('invalid-response');
           speech.current.set(state.result.assistant_message_id, state.result);
           if (Date.parse(state.result.expires_at) <= Date.now()) setRenewSpeech(previous => new Set(previous).add(state.result!.assistant_message_id));
+        }
+        if (state.status === 'failed' && action.kind === 'speech' && action.key === action.assistantId) {
+          setRenewSpeech(previous => new Set(previous).add(action.key));
         }
         if (state.status === 'completed' && audio.current && recorder.current) {
           await recorder.current.discard(audio.current); check(); audio.current = null; setLocalRecording(null);
@@ -533,15 +551,76 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       }
     };
   }
+  function prepareVoiceReply() {
+    autoplayStopped.current = false;
+    playback.current?.prepare?.();
+    if (isTalkPreview()) {
+      voiceSentAt.current = performance.now();
+      setVoiceStartMs(null);
+      playback.current?.prepareStream?.();
+    }
+  }
   async function voiceReply(signal: AbortSignal, check: () => void, transcript: RealTranscript, key: string) {
     check();
     pending.current = { key, kind: 'conversation', voiceTranscriptId: transcript.transcript_id };
     setSafeReplyId(null); clearLatestReply(); setVoiceReplySending(true);
-    const result = await sendRealMessage(scope(signal), { source_transcript_id: transcript.transcript_id }, key, receiveReplyProgress(key, check)); check();
-    setReplyPreview(null);
-    setMessages(previous => appendUnique(previous, [result.user_message, result.message], item => item.id).sort((a, b) => a.sequence - b.sequence));
-    setMemories(previous => appendUnique(previous, result.memories, item => item.id)); presentReply(result.message); setNotice(t.recordingSaved);
-    if (modeRef.current === 'voice' && voiceConsent.current === voiceScope()) nextSpokenReply.current = result.message;
+    const showSaved = (result: RealTurn) => {
+      setReplyPreview(null);
+      setMessages(previous => appendUnique(previous, [result.user_message, result.message], item => item.id).sort((a, b) => a.sequence - b.sequence));
+      setMemories(previous => appendUnique(previous, result.memories, item => item.id)); presentReply(result.message); setNotice(t.recordingSaved);
+    };
+    const autoplay = currentSection.current === 'chat' && modeRef.current === 'voice' &&
+      voiceConsent.current === voiceScope() && !!voiceContext.current.capabilities?.speech;
+    const owned = scope(signal), input = { source_transcript_id: transcript.transcript_id };
+    const progress = receiveReplyProgress(key, check);
+    const sentAt = voiceSentAt.current;
+    const streaming = isTalkPreview() && playback.current?.openStream;
+    const canAutoplay = () => !autoplayStopped.current && currentSection.current === 'chat'
+      && modeRef.current === 'voice' && voiceConsent.current === voiceScope();
+    let saved: RealTurn | undefined, output: StreamingPlayback | undefined;
+    let audioStartedAt: number | undefined, verifiedAudio = false;
+    const showTiming = () => {
+      if (verifiedAudio && audioStartedAt !== undefined && sentAt !== null && canAutoplay() &&
+          saved?.message.provenance.model === 'gpt-6-luna') {
+        setVoiceStartMs(Math.round(Math.max(0, audioStartedAt - sentAt)));
+      }
+    };
+    try {
+      const result = autoplay ? await sendRealMessage(owned, input, key, progress, {
+        onSaved(turn) {
+          check(); saved = turn;
+          pending.current = { key: turn.message.id, kind: 'speech', assistantId: turn.message.id };
+          showSaved(turn); setVoiceReplySending(false); setActivity('speech');
+          if (streaming && canAutoplay()) output = playback.current?.openStream?.(at => {
+            audioStartedAt = at;
+            if (mounted.current && active.current) showTiming();
+          }, () => {
+            if (mounted.current && active.current) setPlaying(false);
+          });
+        },
+        ...(streaming ? { onSpeechChunk(bytes: Uint8Array) {
+          check();
+          if (canAutoplay() && output?.push(bytes)) setPlaying(true);
+        } } : {}),
+        onSpeech(metadata, bytes) {
+          check();
+          if (!saved || voiceConsent.current !== voiceScope()) { output?.cancel(); return; }
+          speech.current.set(metadata.assistant_message_id, metadata);
+          speechBytes.put(metadata, bytes);
+          verifiedAudio = true;
+          showTiming();
+          if (!output?.finish() && canAutoplay() && audioStartedAt === undefined) nextSpokenReply.current = saved.message;
+        },
+      }) : await sendRealMessage(owned, input, key, progress);
+      check();
+      if (!saved) {
+        showSaved(result);
+        if (autoplay && canAutoplay()) nextSpokenReply.current = result.message;
+      }
+    } catch (error) {
+      output?.cancel();
+      throw error;
+    }
   }
   async function transcribeAndReply(signal: AbortSignal, check: () => void, captured: AudioRecording, key: string) {
     check();
@@ -565,30 +644,33 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     // Local retirement uses the existing privacy owner and creates no write.
     void run(async (_signal, check) => { await mediaPrivacy.retire(capturedBy); check(); });
   };
-  const stopCapture = (userGesture = false) => {
+  const stopCapture = (userGesture = false, atLimit = false) => {
     if (!capturing.current || !recorder.current || locked.current) return;
     // A second gesture can restore browser playback permission after the mic dialog.
-    if (userGesture) playback.current?.prepare?.();
+    if (userGesture) prepareVoiceReply();
     capturing.current = false; setRecording(false);
     void run(async (signal, check, beginOperation) => {
       const recorded = await recorder.current!.stop(); check(); audio.current = recorded;
-      setLocalRecording(recorded); setDuration(recorded.durationMs);
+      setLocalRecording(recorded); setDuration(atLimit ? MAX_RECORDING_MS : recorded.durationMs);
       // A time limit retains the clip. Only the arrow authorizes a write.
       if (userGesture) {
         const key = createRecordingId();
         beginOperation({ key, kind: 'transcription', voice: true });
         await transcribeAndReply(signal, check, recorded, key);
       }
-    }, undefined, userGesture ? 'recording' : null);
+    }, undefined, userGesture ? 'recording' : atLimit ? 'recording-limit' : null);
   };
-  useLayoutEffect(() => { stopRecordingAction.current = stopCapture; });
+  useLayoutEffect(() => { stopRecordingAction.current = atLimit => stopCapture(false, atLimit); });
   useEffect(() => {
     if (!recording) return;
     const timer = setInterval(() => {
       if (!active.current || !capturing.current || !recorder.current) return;
       try {
         const status = recorder.current.getStatus(); setDuration(status.durationMs);
-        if (status.interrupted || !status.isRecording || status.durationMs >= MAX_RECORDING_MS) stopRecordingAction.current();
+        if (status.interrupted || !status.isRecording || status.durationMs >= MAX_RECORDING_MS) {
+          // Native auto-stop can reset the timer between samples.
+          stopRecordingAction.current(!status.interrupted && status.durationMs >= MAX_RECORDING_MS - 1000);
+        }
       } catch { stopRecordingAction.current(); }
     }, 250);
     return () => clearInterval(timer);
@@ -620,7 +702,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   };
   const retryRecording = () => {
     if (!audio.current || locked.current || unresolved || ambiguousEdit || usageBlocked || serviceBlocked || voiceConsent.current !== voiceScope()) return;
-    playback.current?.prepare?.();
+    prepareVoiceReply();
     const captured = audio.current, key = createRecordingId();
     void run((signal, check) => transcribeAndReply(signal, check, captured, key), { key, kind: 'transcription', voice: true }, 'recording');
   };
@@ -638,7 +720,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     if (pending.current || !replyAllowed() || !canReply(transcript)) return;
     if (capabilities?.speech) {
       playback.current ??= createRealPlayback();
-      playback.current.prepare?.();
+      prepareVoiceReply();
     }
     const key = createRecordingId();
     void run((signal, check) => voiceReply(signal, check, transcript, key), { key, kind: 'conversation', voiceTranscriptId: transcript.transcript_id });
@@ -674,7 +756,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       playback.current.prepare?.();
     }
     const renewing = renewSpeech.has(message.id);
-    const cached = renewing ? undefined : speech.current.get(message.id), key = createRecordingId();
+    const cached = renewing ? undefined : speech.current.get(message.id);
     void run(async (signal, check, beginOperation) => {
       // Browser prepare already stops previous playback. Avoid an async
       // boundary before starting a verified cached clip from the replay tap.
@@ -682,18 +764,19 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       check(); setPlaying(false);
       if (currentSection.current !== 'chat') return;
       const current = scope(signal);
-      let metadata = cached, bytes: Uint8Array | undefined, fromCache = false;
+      let metadata = cached, bytes: Uint8Array | undefined, fromCache = false, expired = renewing;
       // One deliberate Listen may reuse owned audio or prepare one fresh clip.
       // Only verified free-read expiry authorizes moving to preparation below.
       try {
         if (metadata && Date.parse(metadata.expires_at) <= Date.now()) {
-          speechBytes.get(metadata); speech.current.delete(message.id); metadata = undefined;
+          speechBytes.get(metadata); speech.current.delete(message.id); metadata = undefined; expired = true;
         }
         if (!metadata && !renewing) {
           try { metadata = await getPreparedRealSpeech(current, message.id); check(); }
           catch (error) {
             check();
             if (!(error instanceof RealAiError && error.status === 404) && !knownFreeSpeechExpiry(error)) throw error;
+            expired ||= knownFreeSpeechExpiry(error);
           }
         }
         if (metadata) {
@@ -703,20 +786,26 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
           } catch (error) {
             check();
             if (!knownFreeSpeechExpiry(error)) throw error;
-            speech.current.delete(message.id); metadata = undefined;
+            speech.current.delete(message.id); metadata = undefined; expired = true;
           }
         }
         if (!metadata) {
           if (currentSection.current !== 'chat') return;
+          if (automatic && expired) {
+            setRenewSpeech(previous => new Set(previous).add(message.id));
+            setNotice(t.voiceExpired); return;
+          }
           if (!capabilities?.speech || usageBlocked || serviceBlocked) {
             setRenewSpeech(previous => new Set(previous).add(message.id));
             setNotice(usageBlocked ? t.usageLimit : t.serviceUnavailable); return;
           }
+          const key = expired ? createRecordingId() : message.id;
           check(); beginOperation({ key, kind: 'speech', assistantId: message.id });
           try {
-            metadata = await createRealSpeech(current, message.id, key); check();
+            const { audio: inlineAudio, ...prepared } = await createRealSpeech(current, message.id, key);
+            bytes = inlineAudio; check(); metadata = prepared;
             speech.current.set(message.id, metadata);
-            bytes = await getRealSpeechAudio(current, metadata); check();
+            bytes ??= await getRealSpeechAudio(current, metadata); check();
           } catch (error) {
             check();
             // A paid attempt has already begun. Never start another synthesis
@@ -768,6 +857,8 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   }, [busy, opening, recording, localRecording, finishRequested, tab, mode, suspended, unresolved, capabilities, usageBlocked, serviceBlocked]);
   const stopVoice = () => {
     if (!playback.current) return;
+    autoplayStopped.current = true;
+    nextSpokenReply.current = null;
     // Stop is always available, including while a separate request is pending.
     void playback.current.stop().then(() => { if (mounted.current && active.current) setPlaying(false); },
       () => { if (mounted.current && active.current) setNotice(t.audioFailure); });
@@ -970,7 +1061,8 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const chatReady = readStates.messages.loaded && readStates.transcripts.loaded;
   const inputBlocked = busy || suspended || !!unresolved || ambiguousEdit || recording || !!localRecording || mediaBlocked || !chatReady;
   const actionDefaults = { language, disabled: blocked };
-  const busyLabel = activity === 'recording' ? t.thinking : activity === 'speech' ? t.preparingVoice : activity === 'story' ? t.creatingStory
+  const busyLabel = activity === 'recording' ? t.transcribing : activity === 'recording-limit' ? t.recordingLimitPreparing
+    : activity === 'speech' ? t.preparingVoice : activity === 'story' ? t.creatingStory
     : activity === 'pdf' ? t.preparingPdf : activity === 'checking' ? t.checkingSaved : activity === 'saving' ? t.savingChanges : t.busy;
   const note = (value: string) => <Text allowFontScaling accessibilityLanguage={locale} style={styles.note}>{value}</Text>;
   const checkbox = (label: string, checked: boolean, action: () => void, disabled: boolean) => <Pressable accessibilityRole="checkbox"
@@ -989,6 +1081,9 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     </>;
   }
   const composer = !suspended && tab === 'chat' && <View testID="conversation-composer" style={styles.composer}>
+    {isTalkPreview() && voiceStartMs !== null && note(t.voiceTiming((voiceStartMs / 1000).toLocaleString(locale, {
+      minimumFractionDigits: 1, maximumFractionDigits: 1,
+    })))}
     {replyPreview && <View testID="live-reply-preview" style={styles.replyPreview}>
       <Text allowFontScaling accessibilityLanguage={locale} style={styles.speaker}>{t.replyPreviewTitle}</Text>
       <Text allowFontScaling selectable accessibilityLanguage={accessibilityLanguages[project.language]} style={styles.body}>{replyPreview.text}</Text>
@@ -999,7 +1094,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     {(textSending || voiceReplySending) && !replyPreview && <Text allowFontScaling accessibilityLiveRegion="polite" style={styles.note}>{t.thinking}</Text>}
     {busy && !localRecording && !textSending && !voiceReplySending && <Text allowFontScaling accessibilityLiveRegion="polite" style={styles.note}>{busyLabel}</Text>}
     {recording || localRecording ? <>
-      {busy && note(t.thinking)}
+      {busy && <Text allowFontScaling accessibilityLanguage={locale} accessibilityLiveRegion="polite" style={styles.note}>{busyLabel}</Text>}
       <VoiceRecordingControls language={language} duration={duration} retained={!recording}
         disabled={busy || !!unresolved} sendDisabled={usageBlocked || serviceBlocked || mediaBlocked || !capabilities?.transcription}
         onDiscard={recording ? discardCapture : discardAudio} onSend={recording ? () => stopCapture(true) : retryRecording} />

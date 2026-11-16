@@ -1,6 +1,7 @@
 /** The browser player keeps one foreground-only media element per workspace. */
-import type { RealPlayback } from './native-playback';
-export type { RealPlayback, PlaybackDependencies } from './native-playback';
+import type { RealPlayback, StreamingPlayback } from './native-playback';
+import { SPEECH_CHUNK_BYTES, SPEECH_SAMPLE_RATE, speechWav } from './voice-pcm';
+export type { RealPlayback, PlaybackDependencies, StreamingPlayback } from './native-playback';
 export class RealPlaybackError extends Error {
   constructor() { super('The spoken reply could not be played safely.'); this.name = 'RealPlaybackError'; }
 }
@@ -8,24 +9,8 @@ export class RealPlaybackError extends Error {
 let audioOwner: object | null = null;
 
 function silentPrimer(): Blob {
-  // 50 ms of zero-valued 16-bit mono PCM. A Blob URL follows the web CSP and
-  // allows us to prime the unmuted element without networking or a recording.
-  const sampleRate = 24000, pcmBytes = sampleRate / 10;
-  const wav = new ArrayBuffer(44 + pcmBytes), view = new DataView(wav);
-  view.setUint32(0, 0x52494646); // RIFF
-  view.setUint32(4, wav.byteLength - 8, true);
-  view.setUint32(8, 0x57415645); // WAVE
-  view.setUint32(12, 0x666d7420); // fmt
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  view.setUint32(36, 0x64617461); // data
-  view.setUint32(40, pcmBytes, true);
-  return new Blob([wav], { type: 'audio/wav' });
+  // This silent local clip primes the replay/fallback element in WebKit.
+  return new Blob([speechWav([], SPEECH_SAMPLE_RATE / 10).buffer], { type: 'audio/wav' });
 }
 
 function enterPlaybackAudioSession(): () => void {
@@ -51,6 +36,8 @@ export function createRealPlayback(): RealPlayback {
   let closed = false, epoch = 0;
   let element: HTMLAudioElement | null = null, url: string | null = null;
   let cancelStart: (() => void) | null = null, restoreSession: (() => void) | null = null;
+  let context: AudioContext | null = null;
+  let streaming: StreamingPlayback | null = null;
   const foreground = () => typeof document !== 'undefined' && document.visibilityState !== 'hidden';
   const detach = () => {
     cancelStart?.(); cancelStart = null;
@@ -82,7 +69,7 @@ export function createRealPlayback(): RealPlayback {
     try { media.src = url; }
     finally { if (previous) URL.revokeObjectURL(previous); }
   };
-  const stop = async () => { epoch++; clearSource(); };
+  const stop = async () => { epoch++; streaming?.cancel(); clearSource(); };
   const background = () => { if (!foreground()) void stop(); };
   const pageHide = () => { void stop(); };
   if (typeof document !== 'undefined') document.addEventListener('visibilitychange', background);
@@ -91,6 +78,7 @@ export function createRealPlayback(): RealPlayback {
   return {
     prepare() {
       if (closed || !foreground() || typeof Audio === 'undefined' || (audioOwner && audioOwner !== owner)) return;
+      streaming?.cancel();
       const version = ++epoch;
       try {
         detach();
@@ -101,11 +89,97 @@ export function createRealPlayback(): RealPlayback {
         void media.play().catch(() => { if (version === epoch) clearSource(); });
       } catch { clearSource(); }
     },
+    prepareStream() {
+      if (closed || !foreground() || typeof window === 'undefined' || (audioOwner && audioOwner !== owner)) return;
+      try {
+        const AudioEngine = window.AudioContext ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!context && AudioEngine) context = new AudioEngine();
+        if (context && context.state !== 'running') void context.resume().catch(() => {});
+      } catch { /* Use the verified WAV fallback if Web Audio is unavailable. */ }
+    },
+    openStream(onFirstSound, onFinish) {
+      const engine = context;
+      if (closed || streaming || !foreground() || !engine || engine.state !== 'running' ||
+        (audioOwner && audioOwner !== owner)) return;
+      epoch++;
+      clearSource();
+      audioOwner = owner;
+      restoreSession = enterPlaybackAudioSession();
+      const nodes = new Map<AudioBufferSourceNode, AudioBuffer>();
+      let nextAt = 0, ended = false, heardSample = false;
+      let firstSoundTimer: ReturnType<typeof setTimeout> | undefined;
+      function close() {
+        if (streaming !== stream) return;
+        clearTimeout(firstSoundTimer);
+        for (const [source, buffer] of nodes) {
+          source.onended = null;
+          try { source.stop(); } catch { /* Already ended. */ }
+          source.disconnect();
+          buffer.getChannelData(0).fill(0);
+        }
+        nodes.clear();
+        streaming = null;
+        clearSource();
+        onFinish();
+      }
+      const stream: StreamingPlayback = {
+        push(pcm) {
+          if (ended || streaming !== stream || !foreground() || engine.state !== 'running' ||
+              !pcm.length || pcm.length % 2 || pcm.length > SPEECH_CHUNK_BYTES) return false;
+          try {
+            const buffer = engine.createBuffer(1, pcm.length / 2, SPEECH_SAMPLE_RATE);
+            const samples = buffer.getChannelData(0);
+            const view = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+            let firstSound = -1;
+            for (let index = 0; index < samples.length; index++) {
+              const sample = view.getInt16(index * 2, true);
+              samples[index] = sample / 32768;
+              if (!heardSample && firstSound === -1 && Math.abs(sample) > 64) firstSound = index;
+            }
+            const source = engine.createBufferSource();
+            nodes.set(source, buffer);
+            source.buffer = buffer;
+            source.connect(engine.destination);
+            const now = engine.currentTime;
+            const at = Math.max(now + 0.05, nextAt);
+            nextAt = at + buffer.duration;
+            source.onended = () => {
+              source.disconnect();
+              samples.fill(0);
+              nodes.delete(source);
+              if (ended && nodes.size === 0) close();
+            };
+            source.start(at);
+            if (firstSound !== -1) {
+              heardSample = true;
+              const delay = 1000 * (at - now + firstSound / SPEECH_SAMPLE_RATE + (engine.outputLatency || engine.baseLatency || 0));
+              const audibleAt = performance.now() + delay;
+              firstSoundTimer = setTimeout(() => {
+                if (streaming === stream && foreground() && engine.state === 'running') onFirstSound(audibleAt);
+              }, delay);
+            }
+            return true;
+          } catch {
+            close();
+            return false;
+          }
+        },
+        finish() {
+          ended = true;
+          if (!nodes.size) close();
+          return heardSample;
+        },
+        cancel: close,
+      };
+      streaming = stream;
+      return stream;
+    },
     async play(bytes, onFinish, onError) {
       if (closed || !foreground() || typeof Audio === 'undefined' || !(bytes instanceof Uint8Array) ||
           bytes.length < 44 || bytes.length > 10_000_000 ||
           String.fromCharCode(...bytes.subarray(0, 4)) !== 'RIFF' ||
           String.fromCharCode(...bytes.subarray(8, 12)) !== 'WAVE') throw new RealPlaybackError();
+      streaming?.cancel();
       const version = ++epoch, copy = Uint8Array.from(bytes);
       const current = () => !closed && version === epoch && foreground();
       let started = false;
@@ -145,6 +219,8 @@ export function createRealPlayback(): RealPlayback {
       if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', background);
       if (typeof window !== 'undefined') window.removeEventListener('pagehide', pageHide);
       await stop();
+      await context?.close().catch(() => {});
+      context = null;
       element = null;
     },
   };

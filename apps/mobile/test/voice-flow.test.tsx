@@ -229,7 +229,7 @@ describe('voice consent and automatic chaining — synthetic transports only', (
     await opened(); await permitVoice();
     recorder.stop.mockResolvedValueOnce({ ...clip, durationMs: 60000 });
     recorder.getStatus.mockReturnValue({ durationMs: 60000, isRecording: false, interrupted: false });
-    await waitFor(() => expect(screen.getByText(t.recordingReady)).toBeOnTheScreen());
+    await waitFor(() => expect(screen.getByText(t.recordingLimitReached)).toBeOnTheScreen());
     expect(api.transcribeRealRecording).not.toHaveBeenCalled();
     expect(createRecordingId).not.toHaveBeenCalled();
     const send = getComponents(VoiceRecordingControls)[0]!.props.onSend;
@@ -238,12 +238,18 @@ describe('voice consent and automatic chaining — synthetic transports only', (
     expect(api.transcribeRealRecording).toHaveBeenCalledTimes(1);
     expect(recorder.stop).toHaveBeenCalledTimes(1);
   });
-  it('allows discarding the retained limit clip without sending', async () => {
+  it('explains the limit when native auto-stop resets the clock between polls and allows discard', async () => {
     await opened(); await permitVoice();
-    recorder.getStatus.mockReturnValue({ durationMs: 60000, isRecording: false, interrupted: false });
-    await waitFor(() => expect(screen.getByText(t.recordingReady)).toBeOnTheScreen());
+    const lastNativeClip = { ...clip, durationMs: 59750 };
+    let finish!: (recorded: typeof clip) => void;
+    recorder.stop.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    recorder.getStatus.mockReturnValue({ durationMs: 59750, isRecording: false, interrupted: false });
+    await screen.findByText(t.recordingLimitPreparing);
+    expect(api.transcribeRealRecording).not.toHaveBeenCalled();
+    await act(async () => finish(lastNativeClip));
+    await waitFor(() => expect(screen.getByText(t.recordingLimitReached)).toBeOnTheScreen());
     await press(t.discard);
-    expect(recorder.discard).toHaveBeenCalledWith(clip);
+    expect(recorder.discard).toHaveBeenCalledWith(lastNativeClip);
     expect(api.transcribeRealRecording).not.toHaveBeenCalled();
     expect(api.sendRealMessage).not.toHaveBeenCalled();
   });

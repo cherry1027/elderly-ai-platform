@@ -430,6 +430,41 @@ def test_request_voice_override_preserves_default_and_verifies_cedar():
     assert governor.calls == [("speech_synthesis", SPEECH_MODEL)]
 
 
+@pytest.mark.parametrize(("language", "voice", "text"), [
+    ("sv", "cedar", "Vad minns du från Malmö?"),
+    ("en", "marin", "What do you remember?"),
+])
+def test_realtime_streams_correlated_pcm_before_completion_and_preserves_the_exact_wav(language, voice, text):
+    pcm = b"\x10\x04" * 6500
+    events = speech_events(text, pcm)
+    events[-1]["response"]["audio"]["output"]["voice"] = voice
+    speech, socket, _, governor = speech_setup(events)
+    packets = []
+
+    async def on_pcm(data):
+        packets.append((len(socket.events), data))
+
+    audio = asyncio.run(speech.synthesize(text, language, voice=voice, on_pcm=on_pcm))
+
+    assert [(remaining, len(data)) for remaining, data in packets] == [(3, 12000), (0, 1000)]
+    assert b"".join(data for _, data in packets) == audio.data[44:] == pcm
+    assert audio.sha256 == sha256(audio.data).hexdigest() and audio.voice == voice
+    assert governor.calls == [("speech_synthesis", SPEECH_MODEL)]
+
+
+def test_first_speech_mismatch_never_dispatches_pcm():
+    events = speech_events("Exact.", b"\x10\x04" * 7000)
+    events[5]["delta"] = "Different"
+    speech, _, _, governor = speech_setup(events)
+    chunks = []
+
+    async def on_pcm(data):
+        chunks.append(data)
+
+    with pytest.raises(APIError, match="spoken reply could not be verified"):
+        asyncio.run(speech.synthesize("Exact.", "en", on_pcm=on_pcm))
+    assert not chunks and governor.calls == [("speech_synthesis", SPEECH_MODEL)]
+
 @pytest.mark.parametrize("text,language", [("Hello.", "en"), ("Hur minns du Malmö?", "sv")])
 def test_current_realtime_speech_buffers_exact_transcript_then_returns_valid_private_wav(text, language):
     speech, socket, connector, governor = speech_setup(speech_events(text))

@@ -7,12 +7,13 @@ import pytest
 from tests.test_real_ai_provider import ScriptedClient, extracted, fact, provider
 
 
-def respond(language, source, reply, *, history=(), facts=(), prior=(), combined):
+def respond(language, source, reply, *, history=(), facts=(), prior=(), combined, natural=False):
     extraction = {"language": language, "facts": list(facts)}
     raw_reply = {"language": language, "text": reply}
     responses = [{"extraction": extraction, "reply": raw_reply}] if combined else [extraction, raw_reply]
     client = ScriptedClient(responses)
-    result = asyncio.run(provider(client, combined_turn=combined).respond(source, language, list(prior), list(history)))
+    result = asyncio.run(provider(client, combined_turn=combined, natural_interview=natural)
+                         .respond(source, language, list(prior), list(history)))
     assert [call["operation"] for call in client.calls] == (["conversation"] if combined else ["memory_extraction", "conversation"])
     return result, client
 
@@ -84,18 +85,31 @@ def test_no_local_inference_from_uncertain_or_nonstandalone_sources(source):
 
 
 @pytest.mark.parametrize("combined", [False, True])
-def test_pivot_offer_after_three_questions_and_does_not_repeat_the_offer_on_next_turn(combined):
+def test_keeps_listening_after_three_questions_then_follows_the_new_topic(combined):
     history = [{"role": "assistant", "text": question} for question in (
-        "Vad minns du från skolan?", "Vilka träffade du där?", "Vad brukade ni göra på rasterna?",
+        "Vad minns du från skolan?", "Vilka gick du i klass med?", "Vad brukade ni göra på rasterna?",
     )]
-    result, _ = respond("sv", "Jag bodde i Lund.", "Vad hände på nästa rast?", history=history, combined=combined)
-    assert result.text == "Vill du berätta mer om det här eller gå vidare till ett annat minne?"
-    assert result.facts[0].value == "Jag bodde i Lund."
+    reply = "Hur lärde ni er att hoppa långrep?"
+    result, client = respond("sv", "Vi hoppade långrep tillsammans.", reply, history=history, combined=combined, natural=True)
+    assert result.text == reply
+    assert "everyday\nspoken Swedish" in client.calls[-1]["instructions"]
+    assert "Only confirmed_context and the current source may support biographical claims" in client.calls[-1]["instructions"]
+    legacy, _ = respond("sv", "Vi hoppade långrep tillsammans.", reply, history=history, combined=combined)
+    assert legacy.text == "Vill du berätta mer om det här eller gå vidare till ett annat minne?"
 
     next_reply = "Vad minns du från ditt första arbete?"
     history.append({"role": "assistant", "text": result.text})
-    following, _ = respond("sv", "Jag började arbeta på ett bibliotek.", next_reply, history=history, combined=combined)
+    following, _ = respond("sv", "Jag började arbeta på ett bibliotek.", next_reply, history=history, combined=combined, natural=True)
     assert following.text == next_reply
+
+
+@pytest.mark.parametrize("combined", [False, True])
+def test_a_repeated_question_leaves_space_to_continue_without_switching_topics(combined):
+    history = [{"role": "assistant", "text": "Vad minns du från skolan?"}]
+    result, _ = respond("sv", "Jag bodde i Lund.", "Jag förstår. Vad minns du från skolan?",
+                        history=history, combined=combined, natural=True)
+    assert result.text == "Ta den tid du behöver. Fortsätt där du vill."
+    assert result.facts[0].value == "Jag bodde i Lund."
 
 
 @pytest.mark.parametrize("language,source,reply,expected", [

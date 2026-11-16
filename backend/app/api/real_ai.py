@@ -91,7 +91,15 @@ def check_operation_policy(request, *, kind, typed=False):
 
 def require_provider(request, *, kind, typed=False):
     check_operation_policy(request, kind=kind, typed=typed)
+    if kind == "conversation" and uses_talk_preview(request):
+        return request.app.state.real_ai.require_preview_talk()
     return request.app.state.real_ai.require()
+
+
+def uses_talk_preview(request):
+    return (request.app.state.settings.real_ai_preview_talk_enabled
+            and request.headers.getlist("origin") == [_SWEDISH_PREVIEW_ORIGIN]
+            and request.query_params.getlist("talk_preview") == ["true"])
 
 
 async def execute(request, gateway, *, project_id, session_id, kind, key, fingerprint, produce, model,
@@ -252,20 +260,20 @@ async def verify_source_transcript(gateway, transcript_id, session_id, session):
 
 @router.post("/story-sessions/{session_id}/messages", response_model=RealTurn)
 async def send_message(session_id: UUID, payload: RealMessageCreate, request: Request, gateway: Gateway, idempotency_key: Key,
-                       autoplay: bool = False):
+                       autoplay: bool = False, stream_audio: bool = False):
     if (request.headers.get("accept") == "text/event-stream"
         and request.app.state.settings.real_ai_stream_turn_enabled
         and request.app.state.settings.real_ai_combined_turn_enabled):
-        async def prepare_reply(result):
+        async def prepare_reply(result, on_pcm=None):
             message = result["message"]
             # Stable across reconnects and manual first playback. Never
             # synthesize a provisional reply or renew an expired clip here.
-            metadata, audio = await prepare_speech(request, gateway, message, UUID(message["id"]))
+            metadata, audio = await prepare_speech(request, gateway, message, UUID(message["id"]), on_pcm=on_pcm)
             return metadata, audio
 
         return await stream_turn_response(request,
             lambda: _send_message(session_id, payload, request, gateway, idempotency_key),
-            prepare_reply if autoplay else None)
+            prepare_reply if autoplay else None, stream_audio=stream_audio and uses_talk_preview(request))
     return await _send_message(session_id, payload, request, gateway, idempotency_key)
 
 
@@ -294,7 +302,7 @@ async def _send_message(session_id: UUID, payload: RealMessageCreate, request: R
 
     result = await execute(request, gateway, project_id=UUID(session["project_id"]), session_id=session_id,
         kind="conversation", key=idempotency_key, fingerprint=digest(payload.model_dump(mode="json")),
-        produce=produce, model=request.app.state.settings.openai_text_model)
+        produce=produce, model=provider.text_model if uses_talk_preview(request) else request.app.state.settings.openai_text_model)
     if (result["user_message"]["source_transcript_id"] != str(payload.source_transcript_id)
         or result["message"]["language"] != payload.language):
         raise unavailable()
@@ -365,7 +373,8 @@ async def _send_text_message(session_id: UUID, payload: RealTextMessageCreate, r
         kind="conversation", key=idempotency_key,
         fingerprint=digest({"input_type": "typed", "action_key": str(idempotency_key),
                             **payload.model_dump(mode="json")}),
-        produce=produce, model=request.app.state.settings.openai_text_model, typed=True)
+        produce=produce, model=provider.text_model if uses_talk_preview(request) else request.app.state.settings.openai_text_model,
+        typed=True)
     if (result["user_message"]["text"] != payload.text
         or result["user_message"]["source_transcript_id"] is not None
         or result["user_message"]["source_text_input_id"] is None
@@ -546,7 +555,7 @@ async def speak(message_id: UUID, payload: RealSpeechRequest, request: Request, 
     return result
 
 
-async def prepare_speech(request, gateway, message, idempotency_key):
+async def prepare_speech(request, gateway, message, idempotency_key, *, on_pcm=None):
     message_id = UUID(message["id"])
     language = message["language"]
     preview_voice = uses_swedish_cedar(request, language)
@@ -555,12 +564,12 @@ async def prepare_speech(request, gateway, message, idempotency_key):
 
     async def produce(provider):
         nonlocal audio
-        if preview_voice:
-            audio = await provider.synthesize(message["text"], language, voice="cedar")
-            if audio.voice != "cedar":
-                raise unavailable()
-        else:
-            audio = await provider.synthesize(message["text"], language)
+        options = {"voice": "cedar"} if preview_voice else {}
+        if on_pcm is not None:
+            options["on_pcm"] = on_pcm
+        audio = await provider.synthesize(message["text"], language, **options)
+        if preview_voice and audio.voice != "cedar":
+            raise unavailable()
         return {"assistant_message_id": str(message_id), "media_type": audio.media_type,
             "audio_sha256": audio.sha256, "audio_size": len(audio.data),
             "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=request.app.state.real_ai.cache.ttl)).isoformat()}

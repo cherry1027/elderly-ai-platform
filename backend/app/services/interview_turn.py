@@ -34,6 +34,14 @@ _PAUSE_REPLY = {"en": "Of course. We can stop here.", "sv": "Självklart. Vi kan
 _CHANGE_REPLY = {"en": "Of course. What other memory would you like to share?",
                  "sv": "Självklart. Vilket annat minne vill du berätta om?"}
 _RESTATEMENT_REPLY = {
+    "en": "How would you put that in your own words?",
+    "sv": "Hur skulle du säga det med egna ord?",
+}
+_CONTINUE_REPLY = {
+    "en": "Take your time. Pick up wherever you’d like.",
+    "sv": "Ta den tid du behöver. Fortsätt där du vill.",
+}
+_LEGACY_RESTATEMENT_REPLY = {
     "en": "Could you tell me that detail in your own words so I can capture it accurately?",
     "sv": "Kan du berätta den detaljen med egna ord så att jag får med den rätt?",
 }
@@ -77,18 +85,19 @@ class InterviewTurn:
     reply: str | None
     memory_source: str
     recent_questions: tuple[str, ...] = ()
+    natural: bool = False
 
     def render_reply(self, reply: str, maximum: int) -> str:
         if self.reply is not None:
             return self.reply
         if _complete_question(reply) and _phrase(_last_sentence(reply)) in self.recent_questions:
-            return _PIVOT_REPLY[self.language]
+            return (_CONTINUE_REPLY if self.natural else _PIVOT_REPLY)[self.language]
         introduction, name, short_intro = _INTRODUCTION[self.language]
         localized = introduction.sub(r"\g<1>" + name, reply, count=1)
         return localized if len(localized) <= maximum else short_intro
 
 
-def plan_interview_turn(text: str, language: str, history: list[dict[str, str]]) -> InterviewTurn:
+def plan_interview_turn(text: str, language: str, history: list[dict[str, str]], *, natural: bool = False) -> InterviewTurn:
     source = text.strip()
     last = re.split(r"(?<=[.!?])\s+|\n+", source)[-1]
     phrase = _phrase(last)
@@ -97,14 +106,16 @@ def plan_interview_turn(text: str, language: str, history: list[dict[str, str]])
         return InterviewTurn(language, reply[language], source[:-len(last)].rstrip())
     if _phrase(source) in _AFFIRMATIVE:
         after_question = bool(history and history[-1]["role"] == "assistant" and _complete_question(history[-1]["text"]))
-        return InterviewTurn(language, _RESTATEMENT_REPLY[language] if after_question else None, "")
+        restatement = _RESTATEMENT_REPLY if natural else _LEGACY_RESTATEMENT_REPLY
+        return InterviewTurn(language, restatement[language] if after_question else None, "")
 
-    recent = [row["text"] for row in history if row["role"] == "assistant"][-_FOLLOWUPS_BEFORE_PIVOT:]
+    recent = [row["text"] for row in history if row["role"] == "assistant"]
+    if not natural:
+        recent = recent[-_FOLLOWUPS_BEFORE_PIVOT:]
     followups = tuple(_phrase(_last_sentence(reply)) for reply in recent if _complete_question(reply))
-    previous_pivot = _phrase(_PIVOT_REPLY[language]) in followups
-    if len(followups) == _FOLLOWUPS_BEFORE_PIVOT and not previous_pivot:
+    if not natural and len(followups) == _FOLLOWUPS_BEFORE_PIVOT and _phrase(_PIVOT_REPLY[language]) not in followups:
         return InterviewTurn(language, _PIVOT_REPLY[language], source)
-    return InterviewTurn(language, None, source, followups)
+    return InterviewTurn(language, None, source, followups, natural)
 
 
 def suggest_explicit_memory(source: str, language: str) -> FactCandidate | None:

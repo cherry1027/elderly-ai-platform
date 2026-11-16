@@ -305,14 +305,18 @@ def observed_cost_microusd(operation, model, usage, status, service_tier):
 def request_ceiling_microusd(model, input_bytes, max_output_tokens):
     """A token is never shorter than one input byte; include the full envelope.
 
-    Only the pinned standard text model is supported for dynamic reservation.
+    Only reviewed models are supported for dynamic reservation.
     Other models keep the explicitly approved fixed per-attempt ceiling.
     """
-    if model not in {"gpt-6.1-terra", "gpt-realtime-2.1-mini"}:
+    if model not in {"gpt-6.1-terra", "gpt-6-luna", "gpt-realtime-2.1-mini"}:
         return None
     if (type(input_bytes) is not int or not 1 <= input_bytes <= 128_000
         or type(max_output_tokens) is not int or not 16 <= max_output_tokens <= 4096):
         raise unavailable()
+    if model == "gpt-6-luna":
+        # Use the higher cache-write input rate ($0.125/M), $0.50/M output,
+        # and the ordinary 25% safety margin.
+        return ((input_bytes + max_output_tokens * 4) * 5 + 31) // 32 + 2
     base = ((input_bytes + max_output_tokens * 5) if model == "gpt-6.1-terra"
             else input_bytes * 10 + max_output_tokens * 20)
     return base * 5 // 4 + 2

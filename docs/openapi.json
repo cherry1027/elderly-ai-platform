@@ -9398,6 +9398,16 @@
             }
           },
           {
+            "in": "query",
+            "name": "stream_audio",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Stream Audio",
+              "type": "boolean"
+            }
+          },
+          {
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,

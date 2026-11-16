@@ -74,7 +74,7 @@ def structured_body(model, operation, instructions, payload, schema, max_output_
     }
     # The selected evaluation model documents this mode. Keep short responses
     # from spending their output allowance on hidden reasoning tokens.
-    if model == "gpt-6.1-terra":
+    if model in {"gpt-6.1-terra", "gpt-6-luna"}:
         body["reasoning"] = {"effort": "none"}
     return body
 

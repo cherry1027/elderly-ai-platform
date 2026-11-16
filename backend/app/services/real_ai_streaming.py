@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from app.core.errors import APIError, api_error_handler
 from app.schemas.real_ai import RealTurn
 from app.services.real_ai_progress import turn_progress
+from app.services.real_ai_provider import MAX_SPEECH_PCM_BYTES, SPEECH_CHUNK_BYTES
 from app.services.real_ai_resources import validated
 
 MAX_EVENT_BYTES = 1_000_000
@@ -28,7 +29,7 @@ def _frame(event, maximum=MAX_EVENT_BYTES):
     return b"data: " + data + b"\n\n"
 
 
-async def stream_turn_response(request, action, prepare_speech=None):
+async def stream_turn_response(request, action, prepare_speech=None, *, stream_audio=False):
     queue = asyncio.Queue(maxsize=4)
     operation = None
     reply = None
@@ -72,10 +73,32 @@ async def stream_turn_response(request, action, prepare_speech=None):
                 # The conversation claim and workflow are already complete.
                 # A speech failure must never change the saved turn's status.
                 await queue.put(("event", {"type": "saved", "result": result}))
+                sequence = streamed_bytes = 0
+
+                async def on_pcm(chunk):
+                    nonlocal sequence, streamed_bytes
+                    if (len(chunk) % 2 or not 0 < len(chunk) <= SPEECH_CHUNK_BYTES
+                        or streamed_bytes + len(chunk) > MAX_SPEECH_PCM_BYTES
+                        or streamed_bytes != sequence * SPEECH_CHUNK_BYTES):
+                        raise ValueError("Invalid audio frame")
+                    await queue.put(("event", {"type": "speech-chunk",
+                        "assistant_message_id": result["message"]["id"], "sequence": sequence,
+                        "pcm": b64encode(chunk).decode("ascii")}))
+                    sequence += 1
+                    streamed_bytes += len(chunk)
+
                 try:
-                    metadata, audio = await prepare_speech(result)
-                    speech = _frame({"type": "speech", "metadata": metadata,
-                                     "audio": b64encode(audio).decode("ascii")}, MAX_SPEECH_EVENT_BYTES)
+                    if stream_audio:
+                        metadata, audio = await prepare_speech(result, on_pcm)
+                    else:
+                        metadata, audio = await prepare_speech(result)
+                    if sequence:
+                        if streamed_bytes != len(audio) - 44:
+                            raise ValueError("Incomplete streamed audio")
+                        speech = _frame({"type": "speech-complete", "metadata": metadata})
+                    else:
+                        speech = _frame({"type": "speech", "metadata": metadata,
+                                         "audio": b64encode(audio).decode("ascii")}, MAX_SPEECH_EVENT_BYTES)
                 except asyncio.CancelledError:
                     if closing:
                         raise

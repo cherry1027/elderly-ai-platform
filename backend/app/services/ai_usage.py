@@ -224,6 +224,10 @@ class UsageObserver:
         if model == "gpt-realtime-2.1-mini":
             # Count every token at the higher audio rate, even text-only input.
             return (Decimal(usage["input_tokens"]) * 10 + Decimal(usage["output_tokens"]) * 20) / 1_000_000
+        if model == "gpt-6-luna":
+            if row["service_tier"] != "default":
+                return None
+            return (Decimal(usage["input_tokens"]) + Decimal(usage["output_tokens"]) * 4) / 8_000_000
         if model == "gpt-6.1-terra":
             factor = {"default": Decimal(1), "flex": Decimal("0.5"), "priority": Decimal(2), "fast": Decimal(2)}.get(row["service_tier"])
             if factor is None:

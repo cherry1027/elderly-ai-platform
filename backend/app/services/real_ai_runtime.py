@@ -11,6 +11,8 @@ from app.services.ai_controls import AISpendingGovernor
 from app.services.openai_client import OpenAIClient, MODEL_NAME
 from app.services.real_ai_provider import RealAIProvider, RealtimeSpeechProvider
 
+PREVIEW_TALK_MODEL = "gpt-6-luna"
+
 
 class SpeechCache:
     """Single-process, private audio; restart/expiry requires explicit re-synthesis."""
@@ -64,6 +66,7 @@ class RealAIRuntime:
     def __init__(self, settings, provider=None):
         self.settings = settings
         self.provider = provider
+        self.preview_provider = None
         self.governor = AISpendingGovernor(settings.live_ai_approval_path, settings.ai_usage_ledger_path,
                                           budget_policy_path=settings.ai_budget_policy_path)
         if settings.real_ai_speech_storage_path is not None:
@@ -97,6 +100,12 @@ class RealAIRuntime:
             self.provider = RealAIProvider(client, transcription_model=settings.real_ai_transcription_model,
                                            verifier_client=verifier, speech=speech,
                                            combined_turn=settings.real_ai_combined_turn_enabled)
+            if settings.real_ai_preview_talk_enabled and settings.ai_budget_policy_path and settings.real_ai_combined_turn_enabled:
+                preview_client = OpenAIClient(settings.openai_api_key, PREVIEW_TALK_MODEL, self.governor,
+                    timeout_seconds=settings.openai_timeout_seconds, usage_observer=self.usage_observer)
+                self._http_clients += (preview_client,)
+                self.preview_provider = RealAIProvider(preview_client, transcription_model=settings.real_ai_transcription_model,
+                    verifier_client=verifier, combined_turn=True, natural_interview=True)
 
     @property
     def needs_http_pool(self):
@@ -122,6 +131,13 @@ class RealAIRuntime:
             raise APIError(503, "REAL_AI_NOT_CONFIGURED", "Real AI configuration is incomplete.")
         self.governor.check_approval(self.models)
         return self.provider
+
+    def require_preview_talk(self):
+        self.require()
+        if self.preview_provider is None:
+            raise APIError(503, "REAL_AI_NOT_CONFIGURED", "The Talk preview is not configured.")
+        self.governor.check_approval((PREVIEW_TALK_MODEL,))
+        return self.preview_provider
 
     def capabilities(self):
         reason = "READY"

@@ -538,18 +538,30 @@ export function sendRealMessage(scope: RealScope, input: { source_transcript_id:
   }
   const params = query.toString();
   const endpoint = params ? `messages?${params}` : 'messages';
-  return execute(expectedScope, scopePath(expectedScope, endpoint), 'POST', value => {
-    const v = row(value, ['user_message', 'message', 'memories', 'mode']);
-    if (v.mode !== 'real') invalid();
-    const user = decodeMessage(v.user_message, expectedScope), assistant = decodeMessage(v.message, expectedScope);
-    const memories = list(v.memories, item => decodeMemory(item, expectedScope), item => item.id);
-    if (user.role !== 'user' || assistant.role !== 'assistant' || assistant.sequence !== user.sequence + 1 ||
-      assistant.id === user.id || assistant.source_transcript_id !== user.source_transcript_id ||
-      memories.some(item => item.status !== 'pending' || item.source_message_id !== user.id) ||
-      user.source_transcript_id !== sourceId) invalid();
-    if (user.source_text_input_id !== null || assistant.source_text_input_id !== null) invalid();
-    return { user_message: user, message: assistant, memories, mode: 'real' as const };
-  }, JSON.stringify({ ...input, language: expectedScope.language }), key, undefined, onProgress ? { scope: expectedScope, onProgress, autoplay } : undefined);
+  return execute(expectedScope, scopePath(expectedScope, endpoint), 'POST',
+    value => decodeRecordedTurn(value, expectedScope, sourceId), JSON.stringify({ ...input, language: expectedScope.language }),
+    key, undefined, onProgress ? { scope: expectedScope, onProgress, autoplay } : undefined);
+}
+
+function decodeRecordedTurn(value: unknown, scope: RealScope, sourceId: string): RealTurn {
+  const v = row(value, ['user_message', 'message', 'memories', 'mode']);
+  if (v.mode !== 'real') invalid();
+  const user = decodeMessage(v.user_message, scope), assistant = decodeMessage(v.message, scope);
+  const memories = list(v.memories, item => decodeMemory(item, scope), item => item.id);
+  if (user.role !== 'user' || assistant.role !== 'assistant' || assistant.sequence !== user.sequence + 1 ||
+    assistant.id === user.id || assistant.source_transcript_id !== user.source_transcript_id ||
+    memories.some(item => item.status !== 'pending' || item.source_message_id !== user.id) ||
+    user.source_transcript_id !== sourceId || user.source_text_input_id !== null || assistant.source_text_input_id !== null) invalid();
+  return { user_message: user, message: assistant, memories, mode: 'real' };
+}
+
+export function decodeLiveTalkSaved(value: unknown, scope: RealScope) {
+  const v = row(value, ['type', 'transcript', 'turn', 'memories_checked']);
+  const transcript = decodeTranscript(v.transcript, scope);
+  if (v.type !== 'saved' || typeof v.memories_checked !== 'boolean' || transcript.provenance.model !== 'gpt-live-1') invalid();
+  const turn = v.turn === null ? null : decodeRecordedTurn(v.turn, scope, transcript.transcript_id);
+  if (turn && (turn.user_message.text !== transcript.text || turn.message.provenance.model !== 'gpt-live-1')) invalid();
+  return { transcript, turn, memoriesChecked: v.memories_checked === true };
 }
 /** Native SHA-256 of exact UTF-8 wording; only its digest belongs in pending metadata. */
 export async function hashRealText(original: string): Promise<string> {

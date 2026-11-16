@@ -7,10 +7,12 @@ function publicHostSettings(config, html) {
   const hashes = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)]
     .filter(match => !/\bsrc\s*=/i.test(match[1]) && match[2].trim())
     .map(match => `'sha256-${crypto.createHash('sha256').update(match[2]).digest('base64')}'`);
+  const liveSocket = config.webOrigin === 'https://memy-visual-redesign-preview.onrender.com' &&
+    config.apiOrigin === 'https://memy-pilot-api.onrender.com' ? ' wss://memy-pilot-api.onrender.com' : '';
   const headers = {
     'Content-Security-Policy': ["default-src 'none'", "base-uri 'none'", `script-src 'self' ${hashes.join(' ')}`.trim(),
       "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:", "font-src 'self'", "media-src blob:",
-      `connect-src 'self' ${config.apiOrigin} ${config.supabaseUrl}`, "object-src 'none'", "frame-ancestors 'none'", "form-action 'self'", 'upgrade-insecure-requests'].join('; '),
+      `connect-src 'self' ${config.apiOrigin} ${config.supabaseUrl}${liveSocket}`, "object-src 'none'", "frame-ancestors 'none'", "form-action 'self'", 'upgrade-insecure-requests'].join('; '),
     'Referrer-Policy': 'no-referrer',
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',

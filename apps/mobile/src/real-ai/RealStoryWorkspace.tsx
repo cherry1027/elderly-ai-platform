@@ -24,6 +24,7 @@ import { createRealSpeech, downloadRealExport, editRealDraft, exportRealDraft, f
 import type { RealAiConfig } from './config';
 import { realCopy } from './copy';
 import { createRealPlayback, RealPlaybackError, type RealPlayback, type StreamingPlayback } from './native-playback';
+import { createLiveTalk, type LiveTalkDriver } from './live-talk';
 import { conversationModeCopy, readConversationMode, saveConversationMode, type ConversationMode } from './conversation-mode';
 import { mediaPrivacy } from './media-privacy';
 import { MemoriesContent, AutobiographyContent, SavedWordsContent, isSavedMessageMemory, storyContentCopy } from './StoryContent';
@@ -153,6 +154,10 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const [outbox, setOutbox] = useState<TypedOutbox | null>(null), [activity, setActivity] = useState<Activity | null>(null);
   const [replyPreview, setReplyPreview] = useState<{ text: string; saving: boolean } | null>(null);
   const [voiceStartMs, setVoiceStartMs] = useState<number | null>(null);
+  const [liveStartMs, setLiveStartMs] = useState<number | null>(null);
+  const [liveConsentOpen, setLiveConsentOpen] = useState(false);
+  const [liveStatus, setLiveStatus] = useState<'connecting' | 'listening' | 'speaking' | 'saving' | null>(null);
+  const liveDriver = useRef<LiveTalkDriver | null>(null);
   const [latestReplyId, setLatestReplyId] = useState<string | null>(null), [replyAnchor, setReplyAnchor] = useState<{ id: string; y: number } | null>(null);
   const latestReply = useRef<string | null>(null), replyLayouts = useRef(new Map<string, number>());
   const scrollOffsets = useRef({ body: 0, workspace: 0, thread: 0 });
@@ -203,6 +208,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     nextSpokenReply.current = null;
     voiceSentAt.current = null; autoplayStopped.current = true;
     speechBytes.clear();
+    liveDriver.current?.dispose(); liveDriver.current = null;
     const previous = recorder.current; recorder.current = null; audio.current = null; capturing.current = false;
     if (previous) void mediaPrivacy.retire(previous);
     if (playback.current) void mediaPrivacy.retire(playback.current); playback.current = null;
@@ -230,6 +236,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     voiceConsent.current = null; consentIntent.current = null; setConsentOpen(false); setVoiceReplySending(false); setSafeReplyId(null);
     setGenerationConsent(false); setPlaying(false); setSavedWordsOpen(false); setFinishRequested(false);
     setTextDraft(''); setTextSending(false);
+    setLiveConsentOpen(false); setLiveStatus(null); setLiveStartMs(null);
     setPages(emptyPages());
   };
   const scope = (signal: AbortSignal, id = sessionId): RealScope => {
@@ -1059,6 +1066,70 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     rememberMode(next);
   };
   const chatReady = readStates.messages.loaded && readStates.transcripts.loaded;
+  const liveAvailable = isTalkPreview() && project.language === 'sv' && !!capabilities?.speech && !!capabilities.transcription;
+  const startLiveVoice = () => {
+    if (!liveAvailable || !sessionId || blocked || !chatReady || usageBlocked || serviceBlocked ||
+        !active.current || !mounted.current || locked.current || pending.current || bootstrap.current ||
+        authenticationBlocked.current || currentSection.current !== 'chat') return;
+    setLiveConsentOpen(false);
+    let driver: LiveTalkDriver | null = null;
+    try {
+      driver = createLiveTalk();
+      if (!driver) { setNotice(t.audioFailure); return; }
+      playback.current ??= createRealPlayback();
+      playback.current.prepareStream?.();
+    } catch { driver?.dispose(); setNotice(t.audioFailure); return; }
+    const currentDriver = driver;
+    liveDriver.current = driver;
+    rememberMode('voice');
+    setVoiceStartMs(null); setLiveStartMs(null); setLiveStatus('connecting'); setPlaying(false);
+    const key = createRecordingId();
+    void run(async (signal, check, beginOperation) => {
+      let output: StreamingPlayback | undefined;
+      let firstVoice = false, keptOutput = false;
+      try {
+        const result = await currentDriver.run(scope(signal), key, {
+          onOperation(id) {
+            beginOperation({ key, kind: 'transcription', voice: true, operationId: id });
+          },
+          onReady() { check(); setLiveStatus('listening'); },
+          onVoice(pcm, heardAt) {
+            check();
+            if (!firstVoice) {
+              firstVoice = true;
+              setLiveStatus('speaking');
+              output = playback.current?.openStream?.(playedAt => {
+                if (active.current && mounted.current && !signal.aborted && heardAt !== undefined) {
+                  setLiveStartMs(Math.max(0, Math.round(playedAt - heardAt)));
+                }
+              }, () => {
+                if (active.current && mounted.current) setPlaying(false);
+              });
+            }
+            if (output?.push(pcm)) setPlaying(true);
+          },
+          onSaving() { check(); setLiveStatus('saving'); },
+        });
+        check();
+        keptOutput = output?.finish() === true;
+        setTranscripts(previous => [result.transcript, ...previous.filter(item => item.transcript_id !== result.transcript.transcript_id)]);
+        if (result.turn) {
+          const turn = result.turn;
+          setMessages(previous => appendUnique(previous, [turn.user_message, turn.message], item => item.id).sort((a, b) => a.sequence - b.sequence));
+          setMemories(previous => appendUnique(previous, turn.memories, item => item.id)); presentReply(turn.message);
+          setNotice(keptOutput ? (result.memoriesChecked ? t.recordingSaved : t.liveWordsSaved) : t.spokenReplyReady);
+        } else {
+          setSafeReplyId(result.transcript.transcript_id);
+          setNotice(t.recordingSavedReplyLater);
+        }
+      } finally {
+        if (!keptOutput) output?.cancel();
+        currentDriver.dispose();
+        if (liveDriver.current === currentDriver) liveDriver.current = null;
+        if (mounted.current && active.current && !signal.aborted) setLiveStatus(null);
+      }
+    });
+  };
   const inputBlocked = busy || suspended || !!unresolved || ambiguousEdit || recording || !!localRecording || mediaBlocked || !chatReady;
   const actionDefaults = { language, disabled: blocked };
   const busyLabel = activity === 'recording' ? t.transcribing : activity === 'recording-limit' ? t.recordingLimitPreparing
@@ -1081,6 +1152,15 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     </>;
   }
   const composer = !suspended && tab === 'chat' && <View testID="conversation-composer" style={styles.composer}>
+    {liveStartMs !== null && note(t.liveTiming((liveStartMs / 1000).toLocaleString(locale, { maximumFractionDigits: 2 })))}
+    {liveStatus && <Text allowFontScaling accessibilityLanguage={locale} accessibilityLiveRegion="polite" style={styles.note}>
+      {liveStatus === 'connecting' ? t.liveConnecting : liveStatus === 'listening' ? t.liveListening
+        : liveStatus === 'speaking' ? t.liveSpeaking : t.replySaving}
+    </Text>}
+    {liveAvailable && !recording && !localRecording && (liveStatus === 'listening'
+      ? <ActionButton language={language} label={t.liveStop} onPress={() => { liveDriver.current?.stopInput(); setLiveStatus('saving'); }} />
+      : !liveStatus && <ActionButton language={language} label={t.liveTry} onPress={() => setLiveConsentOpen(true)}
+        disabled={blocked || !chatReady || usageBlocked || serviceBlocked || !sessionId} />)}
     {isTalkPreview() && voiceStartMs !== null && note(t.voiceTiming((voiceStartMs / 1000).toLocaleString(locale, {
       minimumFractionDigits: 1, maximumFractionDigits: 1,
     })))}
@@ -1092,7 +1172,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     {latestReplyId && replyAnchor?.id === latestReplyId && messages.some(message => message.id === latestReplyId) &&
       <ActionButton language={language} label={t.viewLatestReply} onPress={viewLatestReply} disabled={blocked} />}
     {(textSending || voiceReplySending) && !replyPreview && <Text allowFontScaling accessibilityLiveRegion="polite" style={styles.note}>{t.thinking}</Text>}
-    {busy && !localRecording && !textSending && !voiceReplySending && <Text allowFontScaling accessibilityLiveRegion="polite" style={styles.note}>{busyLabel}</Text>}
+    {busy && !liveStatus && !localRecording && !textSending && !voiceReplySending && <Text allowFontScaling accessibilityLiveRegion="polite" style={styles.note}>{busyLabel}</Text>}
     {recording || localRecording ? <>
       {busy && <Text allowFontScaling accessibilityLanguage={locale} accessibilityLiveRegion="polite" style={styles.note}>{busyLabel}</Text>}
       <VoiceRecordingControls language={language} duration={duration} retained={!recording}
@@ -1258,6 +1338,15 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         <Text allowFontScaling accessibilityLanguage={locale} style={styles.body}>{t.recordingLimit}</Text>
         <ActionButton language={language} label={t.consentContinue} onPress={acceptConsent} primary />
         <ActionButton language={language} label={t.consentCancel} onPress={cancelConsent} />
+      </View></Screen>
+    </Modal>}
+    {liveConsentOpen && <Modal visible transparent={false} animationType="none"
+      onRequestClose={() => setLiveConsentOpen(false)}>
+      <Screen><View accessibilityViewIsModal style={styles.workspace}>
+        <StoryHeading language={language} title={t.liveTry} />
+        <Text allowFontScaling accessibilityLanguage={locale} style={styles.body}>{t.liveConsent}</Text>
+        <ActionButton language={language} label={t.liveStart} onPress={startLiveVoice} primary />
+        <ActionButton language={language} label={t.consentCancel} onPress={() => setLiveConsentOpen(false)} />
       </View></Screen>
     </Modal>}
     {leave.dialog}

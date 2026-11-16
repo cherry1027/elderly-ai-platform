@@ -67,6 +67,7 @@ class RealAIRuntime:
         self.settings = settings
         self.provider = provider
         self.preview_provider = None
+        self.live_talk_provider = None
         self.governor = AISpendingGovernor(settings.live_ai_approval_path, settings.ai_usage_ledger_path,
                                           budget_policy_path=settings.ai_budget_policy_path)
         if settings.real_ai_speech_storage_path is not None:
@@ -106,6 +107,9 @@ class RealAIRuntime:
                 self._http_clients += (preview_client,)
                 self.preview_provider = RealAIProvider(preview_client, transcription_model=settings.real_ai_transcription_model,
                     verifier_client=verifier, combined_turn=True, natural_interview=True)
+                if settings.real_ai_live_talk_enabled and settings.real_ai_swedish_preview_cedar:
+                    from app.services.live_talk import LiveTalkProvider
+                    self.live_talk_provider = LiveTalkProvider(settings.openai_api_key, self.governor, self.usage_observer)
 
     @property
     def needs_http_pool(self):

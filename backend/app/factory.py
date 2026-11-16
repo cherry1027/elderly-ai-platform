@@ -16,6 +16,7 @@ from app.api.conversations import router as conversations_router
 from app.api.story_drafts import router as story_drafts_router
 from app.api.exports import router as exports_router
 from app.api.real_ai import router as real_ai_router
+from app.api.real_ai_live import router as live_talk_router
 from app.core.config import Settings
 from app.core.api_safety import APISafetyMiddleware
 from app.core.errors import APIError, api_error_handler, validation_error_handler
@@ -60,6 +61,8 @@ def create_app(
     async def lifespan(application: FastAPI):
         application.state.audio_slots = asyncio.Semaphore(2)
         application.state.real_ai_slots = asyncio.Semaphore(2)
+        application.state.live_talk_slots = asyncio.Semaphore(2)
+        application.state.live_talk_users = set()
         application.state.pdf_slots = asyncio.Semaphore(2)
         application.state.pdf_tasks = set()
         async with httpx.AsyncClient(
@@ -140,5 +143,6 @@ def create_app(
     application.include_router(story_drafts_router, responses=API_GUARD_RESPONSES)
     application.include_router(exports_router, responses=API_GUARD_RESPONSES)
     application.include_router(real_ai_router, responses=API_GUARD_RESPONSES)
+    application.include_router(live_talk_router)
     return application
 

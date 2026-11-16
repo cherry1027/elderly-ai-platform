@@ -351,6 +351,7 @@ def main(argv=None):
             uvicorn.run(app, host="0.0.0.0", port=port, workers=1, access_log=False,
                         proxy_headers=False, forwarded_allow_ips="", server_header=False,
                         limit_concurrency=32, timeout_keep_alive=5,
+                        ws_max_size=24_000, ws_max_queue=4, ws_per_message_deflate=False,
                         timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS, **tls)
         finally:
             stop.set()

@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     real_ai_stream_turn_enabled: bool = False
     # Limit the lower-latency Talk model and incremental speech to the redesign preview.
     real_ai_preview_talk_enabled: bool = False
+    real_ai_live_talk_enabled: bool = False
     # A reversible server policy: only explicitly typed conversation may spend.
     # The normal live gate, private approval and cumulative ledger still apply.
     real_ai_text_only: bool = False

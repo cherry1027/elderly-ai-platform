@@ -283,7 +283,7 @@ def observed_cost_microusd(operation, model, usage, status, service_tier):
         return None
     if service_tier is not None and not isinstance(service_tier, str):
         return None
-    if model in {"gpt-transcribe", "gpt-realtime-2.1-mini"} and service_tier not in {None, "default"}:
+    if model in {"gpt-transcribe", "gpt-realtime-2.1-mini", "gpt-live-1"} and service_tier not in {None, "default"}:
         return None
     for field in ("input_tokens", "output_tokens", "total_tokens"):
         if field in usage and field not in clean:
@@ -300,6 +300,12 @@ def observed_cost_microusd(operation, model, usage, status, service_tier):
     if estimate is None or not estimate.is_finite() or estimate < 0:
         return None
     return int((estimate * 1_250_000).to_integral_value(rounding=ROUND_CEILING)) + 1
+
+
+def live_talk_ceiling_microusd(seconds):
+    if type(seconds) is not int or not 1 <= seconds <= 90:
+        raise unavailable()
+    return (seconds * 62_500 + 59) // 60 + 2  # $0.05/minute plus 25%.
 
 
 def request_ceiling_microusd(model, input_bytes, max_output_tokens):

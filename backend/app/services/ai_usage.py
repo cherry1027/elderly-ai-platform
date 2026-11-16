@@ -213,10 +213,11 @@ class UsageObserver:
         """Conservative public-rate calculation; cached discounts are ignored."""
         usage = row["usage"]
         model = row["model"]
-        if model == "gpt-transcribe":
+        if model in {"gpt-transcribe", "gpt-live-1"}:
             if "seconds" not in usage:
                 return None
-            return Decimal(str(usage["seconds"])) / 60 * Decimal("0.0045")
+            minute_rate = "0.05" if model == "gpt-live-1" else "0.0045"
+            return Decimal(str(usage["seconds"])) / 60 * Decimal(minute_rate)
         if "input_tokens" not in usage or "output_tokens" not in usage:
             return None
         if "total_tokens" in usage and usage["input_tokens"] + usage["output_tokens"] != usage["total_tokens"]:

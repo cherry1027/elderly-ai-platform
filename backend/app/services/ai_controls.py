@@ -304,6 +304,13 @@ class AISpendingGovernor:
             ceiling = transcription_ceiling_microusd(seconds)
         return self.reserve("transcription", model, _ceiling_microusd=ceiling)
 
+    def reserve_live_talk(self, seconds):
+        if self.budget_policy_path is None:
+            raise _not_approved()
+        from app.services.ai_budget import live_talk_ceiling_microusd
+        with self.workflow():
+            return self.reserve("conversation", "gpt-live-1", _ceiling_microusd=live_talk_ceiling_microusd(seconds))
+
     def check_request_group(self, requests):
         """Check the complete workflow before paying for its first stage.
 

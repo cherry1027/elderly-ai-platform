@@ -570,6 +570,14 @@ class RealAIProvider:
         except Exception:
             raise _provider_failed() from None
 
+    async def extract_live_memories(self, transcript: str, language: str, prior_facts: list[dict]):
+        confirmed, pending, known = _prepare_context(prior_facts)
+        raw = await self._client.structured(operation="memory_extraction", instructions=_REAL_EXTRACTION_INSTRUCTIONS,
+            payload={"language": language, "source_text": transcript,
+                     "confirmed_context": confirmed, "pending_context": pending},
+            schema=EXTRACTION_SCHEMA, max_output_tokens=1_400)
+        return _turn_memories(raw, transcript, language, known, plan_interview_turn(transcript, language, [], natural=True))
+
     async def write(self, language: str, style: str, source_memories: list[dict]) -> str:
         # The writer requires owned confirmed snapshots and a separate model
         # verifier. v2's authoritative snapshot sentence is the effective value,

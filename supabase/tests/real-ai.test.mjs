@@ -293,6 +293,32 @@ test('real AI local persistence trust boundary and source lifecycle',async t=>{
       assert.equal((await context(db)).blocking_clarifications.length,0);
     });
 
+    await t.test('a new omission invalidates an in-flight draft even without a change to its confirmed sources', async()=>{
+      const first = 'I joined a gardening club.';
+      const second = 'I taught a garden class.';
+      const correction = 'I taught a seed-saving class.';
+      const source = await transcript(db, `${first} ${second}`);
+      const result = await turn(db, source, [first, second].map(text=>({fact_type:'event',value:text,evidence:text})));
+      await review(db,result.memories[1].id,1,'confirmed',correction);
+      await review(db,result.memories[1].id,2,'rejected');
+      const generationContext = (owner=A)=>user(db,owner,()=>rpc(db,'get_real_story_generation_context',[PA],['uuid']));
+      await assert.rejects(()=>generationContext(B),errorCode('P0002'));
+      const before = await generationContext();
+      assert.ok(before.rejected_details.includes(second));
+      assert.ok(before.rejected_details.includes(correction));
+      const operation = await claim(db,'generation',randomUUID(),A,PA,null);
+      await review(db,result.memories[0].id,1,'rejected');
+      const after = await generationContext();
+      assert.deepEqual(before.source_memories,after.source_memories);
+      assert.ok(after.rejected_details.includes(first));
+      const payload = {content:'I lived in Uppsala.',source_memories:before.source_memories,
+        context_token:before.context_token,rejected_details:before.rejected_details,model_review:{unsupported_claims:[]}};
+      await assert.rejects(()=>complete(db,operation,payload),errorCode('40001'));
+      await assert.rejects(()=>complete(db,operation,{...payload,context_token:after.context_token}),errorCode('40001'));
+      assert.equal((await complete(db,operation,{...payload,context_token:after.context_token,
+        rejected_details:after.rejected_details})).content,payload.content);
+    });
+
     await t.test('completed/deleted project guards cannot be bypassed; new real records leave mock tables untouched',async()=>{
       const late=await claim(db);
       const replayKey=randomUUID(),finished=await claim(db,'transcription',replayKey);

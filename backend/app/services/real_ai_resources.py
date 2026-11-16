@@ -14,6 +14,7 @@ from app.schemas.conversations import ClarificationResponse
 from app.schemas.real_ai import (
     RealTranscript, RealMessage, RealMemory, RealTurn, RealDraft, RealSpeech,
     RealOperation, RealExportMetadata, RealSavedExport, RealTextMessageCreate,
+    RealStoryGenerationContext,
 )
 from app.schemas.story_drafts import StoryGenerationContext, StoryEditResponse
 from app.services.audio_resources import AudioGateway
@@ -284,6 +285,14 @@ class RealAIGateway(AudioGateway):
     async def context(self, project_id):
         await self.get_project(project_id)
         return await self._context_for_owned_project(project_id)
+
+    async def generation_context(self, project_id):
+        project = await self.get_project(project_id)
+        row = await self.rpc("get_real_story_generation_context", {"p_project_id": str(project_id)})
+        result = validated(RealStoryGenerationContext, row)
+        if result["project_id"] != str(project_id) or result["language"] != project["language"]:
+            raise unavailable()
+        return result
 
     async def _context_for_owned_project(self, project_id):
         # Only callers that just checked this project's ownership may use this.

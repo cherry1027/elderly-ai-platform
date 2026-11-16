@@ -431,19 +431,24 @@ async def generate(project_id: UUID, payload: StoryGenerationRequest, request: R
     project = await gateway.get_project(project_id)
     language_matches(payload.language, project)
     check_operation_policy(request, kind="generation")
-    context = await gateway.context(project_id)
+    context = await gateway.generation_context(project_id)
     if not context["source_memories"]:
         raise APIError(409, "NO_CONFIRMED_MEMORIES", "Review and confirm memories before writing your story.")
     if context["blocking_clarifications"]:
         raise APIError(409, "CLARIFICATION_REQUIRED", "Resolve memory questions before writing your story.")
 
+    rejected_details = context["rejected_details"]
+    omissions = {"rejected_details": rejected_details} if rejected_details else {}
+
     async def produce(provider):
-        content = await provider.write(payload.language, payload.style, context["source_memories"])
+        content = await provider.write(payload.language, payload.style, context["source_memories"], **omissions)
         return {"content": content, "source_memories": context["source_memories"],
+                "context_token": context["context_token"], "rejected_details": rejected_details,
                 "model_review": {"unsupported_claims": []}}
 
     result = await execute(request, gateway, project_id=project_id, session_id=None, kind="generation",
-        key=idempotency_key, fingerprint=digest({**payload.model_dump(mode="json"),"context":context["context_token"]}),
+        key=idempotency_key, fingerprint=digest({**payload.model_dump(mode="json"),
+            "context": context["context_token"], **omissions}),
         produce=produce, model=request.app.state.settings.openai_text_model)
     return await gateway.draft(UUID(result["draft_id"]))
 

@@ -56,17 +56,19 @@ async function setup(){
     GRANT EXECUTE ON FUNCTION auth.uid() TO anon,authenticated;
     ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon,authenticated;`);
   const dir=new URL('../migrations/',import.meta.url);
-  for(const name of (await readdir(dir)).filter(n=>n.endsWith('.sql')&&n!==typedMigration).sort()){
+  const migrations=(await readdir(dir)).filter(n=>n.endsWith('.sql')).sort();
+  async function apply(name){
     const sql=(await readFile(new URL(name,dir),'utf8')).replace(/^CREATE EXTENSION IF NOT EXISTS pg_(?:cron|net) .*;\s*$/gm,'');
     try{await db.exec(sql);}catch(error){throw new Error(`Migration failed: ${name}`,{cause:error});}
   }
+  for(const name of migrations.filter(n=>n<typedMigration)) await apply(name);
   await db.query('INSERT INTO auth.users(id,email) VALUES($1,$2),($3,$4)',[A,'typed-a@example.invalid',B,'typed-b@example.invalid']);
   await db.query('INSERT INTO public.books(id,user_id,title,language) VALUES($1,$2,$3,$4),($5,$6,$7,$8)',[PA,A,'English fixture','en',PB,B,'Svenska minnen','sv']);
   await db.query('INSERT INTO public.conversation_sessions(id,project_id,language) VALUES($1,$2,$3),($4,$5,$6)',[SA,PA,'en',SB,PB,'sv']);
   const legacy=await voice(db);
   assert.equal('source_text_input_id' in legacy.turn.user_message,false);
   const columns=(await db.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='real_conversation_messages' ORDER BY ordinal_position")).rows;
-  await db.exec(await readFile(new URL(typedMigration,dir),'utf8'));
+  for(const name of migrations.filter(n=>n>=typedMigration)) await apply(name);
   return {db,legacy,columns};
 }
 

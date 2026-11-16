@@ -261,6 +261,33 @@ def test_story_uses_confirmed_snapshots_and_separate_verifier_but_requires_human
     assert instance.verifier_model == reviewer.text_model
 
 
+@pytest.mark.parametrize("language,kept,omitted", [
+    ("en", "I opened a community garden.", "I joined the garden club in 1984."),
+    ("sv", "Jag öppnade en handelsträdgård.", "Jag flyttade till Malmö 1984."),
+])
+def test_story_excludes_rejected_overlap_from_confirmed_passage_and_candidate(language, kept, omitted):
+    passage = f"{kept} {omitted}"
+    source = {
+        "memory_id": CONFIRMED_ID, "memory_version": 1, "source_message_id": PENDING_ID,
+        "fact_type": "event", "value": passage, "evidence": passage, "sentence": passage,
+        "year": 1984, "slot": None, "corrected_value": None,
+    }
+    writer = ScriptedClient([{"language": language, "content": f"{kept}\n\n{omitted.upper()}"}])
+    reviewer = ScriptedClient([{
+        "language": language, "passed": True, "unsupported_claims": [],
+        "paragraphs": [{"number": 1, "source_ids": [CONFIRMED_ID], "supported": True}],
+    }])
+    instance = provider(writer, verifier_client=reviewer)
+    assert asyncio.run(instance.write(language, "warm", [source], rejected_details=[omitted])) == kept
+    assert source["sentence"] == passage
+    for call in [writer.calls[0], reviewer.calls[0]]:
+        assert call["payload"]["rejected_details"] == [omitted]
+        assert call["payload"]["confirmed_sources"] == [{**source, "value": kept, "evidence": kept,
+                                                          "sentence": kept, "year": None}]
+    assert reviewer.calls[0]["payload"]["candidate_paragraphs"] == [{"number": 1, "text": kept}]
+    assert "in other words" in reviewer.calls[0]["instructions"]
+
+
 @pytest.mark.parametrize("language,value,fact_type", [
     ("en", "Malmö", "location"), ("sv", "1974", "date"),
 ])

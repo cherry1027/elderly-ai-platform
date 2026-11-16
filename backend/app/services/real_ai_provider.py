@@ -578,7 +578,7 @@ class RealAIProvider:
             schema=EXTRACTION_SCHEMA, max_output_tokens=1_400)
         return _turn_memories(raw, transcript, language, known, plan_interview_turn(transcript, language, [], natural=True))
 
-    async def write(self, language: str, style: str, source_memories: list[dict]) -> str:
+    async def write(self, language: str, style: str, source_memories: list[dict], *, rejected_details=()) -> str:
         # The writer requires owned confirmed snapshots and a separate model
         # verifier. v2's authoritative snapshot sentence is the effective value,
         # not v1's mock-generated prose. Quote that value without assigning any
@@ -587,6 +587,10 @@ class RealAIProvider:
         try:
             if not isinstance(source_memories, list) or len(source_memories) > 200:
                 raise ValueError
+            if not isinstance(rejected_details, (tuple, list)) or len(rejected_details) > 400:
+                raise ValueError
+            for detail in rejected_details:
+                _safe_text(detail, 1_000)
             sources = []
             for row in source_memories:
                 snapshot = StorySourceMemory.model_validate(row).model_dump(mode="json")
@@ -618,7 +622,7 @@ class RealAIProvider:
             # action consuming the verifier's room between these two stages.
             governor.check_request_group([(self.text_model, MAX_JSON_BYTES, 4_096),
                                            (self.verifier_model, MAX_JSON_BYTES, 4_096)])
-        return await self._writer.write(language, style, sources)
+        return await self._writer.write(language, style, sources, rejected_details=rejected_details)
 
     async def synthesize(self, text: str, language: str, *, voice: str | None = None,
                          on_pcm: Callable[[bytes], Awaitable[None]] | None = None) -> SpeechAudio:

@@ -1,14 +1,14 @@
 """Real-provider contracts: never reuse the explicitly simulated v1 labels."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import AwareDatetime, Field, field_validator, model_validator
 
 from app.schemas.story_projects import StrictRequest, StrictResponse, LanguageCode
 from app.schemas.conversations import MemoryResponse, ClarificationResponse
-from app.schemas.story_drafts import StorySourceMemory, StoryEditResponse
+from app.schemas.story_drafts import StoryGenerationContext, StorySourceMemory, StoryEditResponse
 from app.schemas.exports import StoryExportMetadata
 
 
@@ -21,6 +21,10 @@ def original_text(value):
     except UnicodeEncodeError:
         raise ValueError("Use valid Unicode text") from None
     return value
+
+
+class RealStoryGenerationContext(StoryGenerationContext):
+    rejected_details: list[Annotated[str, Field(min_length=1, max_length=1000)]] = Field(max_length=400)
 
 
 class Provenance(StrictResponse):

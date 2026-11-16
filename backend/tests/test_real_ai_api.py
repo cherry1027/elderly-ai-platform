@@ -122,6 +122,9 @@ class FakeGateway:
     async def context(self, project_id):
         return {"source_memories":[],"blocking_clarifications":[],"context_token":"a"*64}
 
+    async def generation_context(self, project_id):
+        return {"rejected_details": [], **await self.context(project_id)}
+
 
 @pytest.fixture
 def harness():

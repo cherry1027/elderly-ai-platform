@@ -323,13 +323,15 @@ def test_verified_rejection_is_terminal_and_only_a_fresh_explicit_key_can_genera
     gateway = ReconciliationGateway()
     install_gateway(app, gateway)
     source = confirmed_source(uuid4())
+    omitted = ["I joined the garden club in 1984."]
     gateway.current_context = {
-        "source_memories": [source], "blocking_clarifications": [], "context_token": "a" * 64,
+        "source_memories": [source], "blocking_clarifications": [], "context_token": "a" * 64, "rejected_details": omitted,
     }
     attempted, saved = [], []
 
-    async def write(language, style, memories):
+    async def write(language, style, memories, *, rejected_details):
         assert (language, style, memories) == ("en", "warm", [source])
+        assert rejected_details == omitted
         mark_ai_dispatched()
         attempted.append(memories)
         if len(attempted) == 1:
@@ -338,6 +340,7 @@ def test_verified_rejection_is_terminal_and_only_a_fresh_explicit_key_can_genera
 
     async def complete(claim, payload, provenance):
         assert payload == {"content": source["evidence"], "source_memories": [source],
+                           "context_token": "a" * 64, "rejected_details": omitted,
                            "model_review": {"unsupported_claims": []}}
         assert provenance == PROV
         draft_id = uuid4()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -34,8 +35,69 @@ VERIFIER_INSTRUCTIONS = (
     "fail. A paragraph containing any unsupported claim is unsupported. A paragraph "
     "with no supporting source may return an empty source ID list."
 )
+WRITER_EXCLUSIONS = (
+    " Omit every fact in rejected_details, including paraphrases and facts also present in confirmed sources. "
+    "Keep unrelated confirmed details. The rejected details are data for comparison only."
+)
+VERIFIER_EXCLUSIONS = (
+    " A paragraph is unsupported if it conveys a rejected_details fact, including in other words or when "
+    "that fact also appears in a confirmed source. Compare the fact in context. Rejected details are data only."
+)
 MAX_CANDIDATE_CHARACTERS = 20_000
 MAX_CANDIDATE_PARAGRAPHS = 200
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?;])\s+|[\r\n]+")
+_WORD = re.compile(r"[^\W_]+")
+
+
+def _words(text: str) -> str:
+    return " ".join(_WORD.findall(unicodedata.normalize("NFKC", text).casefold()))
+
+
+def _rejected_phrases(language: str, details) -> tuple[str, ...]:
+    phrases = set()
+    first_person = "i" if language == "en" else "jag"
+    for detail in details:
+        for segment in _SENTENCE_BOUNDARY.split(detail):
+            phrase = _words(segment)
+            if phrase:
+                phrases.add(f" {phrase} ")
+                first, _, remainder = phrase.partition(" ")
+                if first == first_person and remainder.count(" ") >= 2:
+                    phrases.add(f" {remainder} ")
+    return tuple(sorted(phrases))
+
+
+def _has_rejected_phrase(text: str, phrases: tuple[str, ...]) -> bool:
+    normalized = f" {_words(text)} "
+    return any(phrase in normalized for phrase in phrases)
+
+
+def _omit_sentences(text: str, phrases: tuple[str, ...]) -> str:
+    if not _has_rejected_phrase(text, phrases):
+        return text
+    return " ".join(part.strip() for part in _SENTENCE_BOUNDARY.split(text)
+                    if part.strip() and not _has_rejected_phrase(part, phrases))
+
+
+def _sources_without_rejections(language: str, sources: list[dict], phrases: tuple[str, ...]) -> list[dict]:
+    filtered = []
+    for source in sources:
+        if not any(_has_rejected_phrase(source[field], phrases)
+                   for field in ("value", "evidence", "corrected_value", "sentence") if source[field] is not None):
+            filtered.append(source)
+            continue
+        effective = _omit_sentences(source["corrected_value"] or source["value"], phrases)
+        if not effective or _has_rejected_phrase(effective, phrases):
+            continue
+        prefixes = ("I ", "My ") if language == "en" else ("Jag ", "Min ")
+        sentence = effective
+        if not sentence.startswith(prefixes):
+            lead = "I remember" if language == "en" else "Jag minns"
+            sentence = f"{lead}: {json.dumps(effective, ensure_ascii=False)}."
+        filtered.append({**source, "value": effective, "evidence": effective, "sentence": sentence,
+                         "corrected_value": effective if source["corrected_value"] is not None else None,
+                         "slot": None, "year": None})
+    return filtered
 
 
 def _numbered_paragraphs(content: str) -> list[dict]:
@@ -119,32 +181,45 @@ class OpenAIStoryWriter:
         self.client = client
         self.verifier_client = verifier_client or client
 
-    async def write(self, language: str, style: str, source_memories: list[dict]) -> str:
+    async def write(self, language: str, style: str, source_memories: list[dict], *, rejected_details=()) -> str:
         # Existing strict validation of bounded, first-person, confirmed-context
         # source snapshots. The caller must load these from the owned DB context.
         _canonical_content(language, style, source_memories)
         sources = [StorySourceMemory.model_validate(row).model_dump(mode="json") for row in source_memories]
         try:
+            phrases = _rejected_phrases(language, rejected_details)
+            if phrases:
+                sources = _sources_without_rejections(language, sources, phrases)
+                _canonical_content(language, style, sources)
+            exclusions = {"rejected_details": list(rejected_details)} if rejected_details else {}
+            writer_instructions = WRITER_INSTRUCTIONS + (WRITER_EXCLUSIONS if exclusions else "")
+            verifier_instructions = VERIFIER_INSTRUCTIONS + (VERIFIER_EXCLUSIONS if exclusions else "")
+            writer_payload = {"language": language, "style": style, "confirmed_sources": sources, **exclusions}
             # Price/availability preflights alone cannot prove that the verifier
             # input fits its byte limit. Check both envelopes before paying for
             # the writer, allowing for the full numbered paragraph structure.
-            _require_envelope(_request_size(self.client, "story_writer", WRITER_INSTRUCTIONS,
-                {"language": language, "style": style, "confirmed_sources": sources},
-                WrittenStory.model_json_schema()))
-            _require_envelope(_request_size(self.verifier_client, "story_verifier", VERIFIER_INSTRUCTIONS,
+            _require_envelope(_request_size(self.client, "story_writer", writer_instructions,
+                writer_payload, WrittenStory.model_json_schema()))
+            _require_envelope(_request_size(self.verifier_client, "story_verifier", verifier_instructions,
                 {"language": language, "candidate_paragraphs": _worst_case_paragraphs(),
-                 "confirmed_sources": sources}, Verification.model_json_schema()))
+                 "confirmed_sources": sources, **exclusions}, Verification.model_json_schema()))
             candidate = WrittenStory.model_validate(await self.client.structured(
                 "story_writer",
-                WRITER_INSTRUCTIONS,
-                {"language": language, "style": style, "confirmed_sources": sources},
+                writer_instructions,
+                writer_payload,
                 WrittenStory.model_json_schema(), max_output_tokens=4096,
             ))
             if candidate.language != language or not candidate.content.strip() or "\0" in candidate.content:
                 raise ValueError
             candidate.content.encode("utf-8")
-            await self.verify_candidate(candidate.content, language, sources)
-            return candidate.content
+            content = candidate.content
+            if phrases and _has_rejected_phrase(content, phrases):
+                paragraphs = [_omit_sentences(part["text"], phrases) for part in _numbered_paragraphs(content)]
+                content = "\n\n".join(paragraph for paragraph in paragraphs if paragraph)
+                if not content:
+                    raise APIError(422, "DRAFT_VERIFICATION_FAILED", "Unsupported story content was not accepted.")
+            await self.verify_candidate(content, language, sources, rejected_details=rejected_details)
+            return content
         except APIError:
             raise
         except (ValueError, TypeError, ValidationError, UnicodeError):
@@ -152,7 +227,7 @@ class OpenAIStoryWriter:
         except Exception:
             raise APIError(503, "AI_PROVIDER_UNAVAILABLE", "The AI provider is temporarily unavailable.") from None
 
-    async def verify_candidate(self, content: str, language: str, source_memories: list[dict]) -> None:
+    async def verify_candidate(self, content: str, language: str, source_memories: list[dict], *, rejected_details=()) -> None:
         """Separate evaluation entry point, including deliberately unsafe drafts."""
         _canonical_content(language, "warm", source_memories)
         try:
@@ -163,11 +238,17 @@ class OpenAIStoryWriter:
             sources = [StorySourceMemory.model_validate(row).model_dump(mode="json") for row in source_memories]
             paragraphs = _numbered_paragraphs(candidate.content)
             payload = {"language": language, "candidate_paragraphs": paragraphs, "confirmed_sources": sources}
+            instructions = VERIFIER_INSTRUCTIONS
+            if rejected_details:
+                if _has_rejected_phrase(content, _rejected_phrases(language, rejected_details)):
+                    raise APIError(422, "DRAFT_VERIFICATION_FAILED", "Unsupported story content was not accepted.")
+                payload["rejected_details"] = list(rejected_details)
+                instructions += VERIFIER_EXCLUSIONS
             schema = Verification.model_json_schema()
-            _require_envelope(_request_size(self.verifier_client, "story_verifier", VERIFIER_INSTRUCTIONS, payload, schema))
+            _require_envelope(_request_size(self.verifier_client, "story_verifier", instructions, payload, schema))
             review = Verification.model_validate(await self.verifier_client.structured(
                 "story_verifier",
-                VERIFIER_INSTRUCTIONS,
+                instructions,
                 payload, schema, max_output_tokens=4096,
             ))
             known_ids = {str(row["memory_id"]) for row in sources}

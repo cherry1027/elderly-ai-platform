@@ -80,6 +80,11 @@ function noPaidActions() {
   expect(api.transcribeRealRecording).not.toHaveBeenCalled(); expect(api.generateRealDraft).not.toHaveBeenCalled();
   expect(api.createRealSpeech).not.toHaveBeenCalled();
 }
+const generationOperation = (saved?: api.RealDraft): api.RealOperation => ({
+  operation_id: ids.transcript, project_id: ids.project, session_id: null, kind: 'generation',
+  status: saved ? 'completed' : 'in_progress', created_at: project.created_at, updated_at: project.updated_at,
+  error_code: null, result: null, generatedDraft: saved,
+});
 beforeEach(() => {
   AppState.currentState = 'active'; listeners = [];
   jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, callback) => { listeners.push(callback); return { remove: () => { listeners = listeners.filter(item => item !== callback); } }; });
@@ -97,6 +102,8 @@ beforeEach(() => {
     memories: [realMemory()], mode: 'real',
   }));
   jest.mocked(api.generateRealDraft).mockReset().mockResolvedValue(realDraft());
+  jest.mocked(api.getRealOperation).mockReset();
+  jest.mocked(api.findRealOperation).mockReset();
   jest.mocked(createNativeRecorder).mockReturnValue(recorder);
   jest.mocked(api.transcribeRealRecording).mockReset().mockResolvedValue(realTranscript());
   jest.mocked(api.sendRealMessage).mockReset().mockResolvedValue({ user_message: realMessage(), message: realMessage('assistant'), memories: [realMemory()], mode: 'real' });
@@ -141,6 +148,29 @@ describe('Talk → Memories → My Story product flow — synthetic services onl
     expect(screen.getByText(realMessage('assistant').text)).toBeOnTheScreen();
     expect(api.getRealMessages).toHaveBeenCalledTimes(1); noPaidActions();
   });
+  it('reloads fresh draft and memories on Finish even when My Story was already loaded', async () => {
+    const story = storyContentCopy.en;
+    await opened();
+    await tab(t.book);
+    await screen.findByText(story.noMemoriesForDraft);
+    await tab(t.chat);
+
+    const memory = realMemory();
+    const saved = realDraft();
+    jest.mocked(api.getRealMemories).mockResolvedValueOnce([memory]);
+    jest.mocked(api.getRealDrafts).mockResolvedValueOnce([saved]);
+    jest.mocked(api.reviewRealMemory).mockResolvedValueOnce({ ...memory, status: 'confirmed', version: 2 });
+    await press(conversationModeCopy.en.finishAndOpenStory);
+    expect(await screen.findByText(saved.content)).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: t.edit })).toBeEnabled();
+    expect(screen.getByRole('button', { name: t.export })).toBeEnabled();
+    await tab(t.memories);
+    await press(t.confirm);
+    expect(api.reviewRealMemory).toHaveBeenCalledWith(expect.objectContaining({ projectId: ids.project, sessionId: ids.session }), memory, 'confirmed', undefined);
+    expect(api.getRealDrafts).toHaveBeenCalledTimes(2);
+    expect(api.getRealMemories).toHaveBeenCalledTimes(2);
+    expect(props.onSignOut).not.toHaveBeenCalled(); noPaidActions();
+  });
   it('keeps a successful message and its follow-up in Talk without demanding review or generating a story', async () => {
     await opened(); await fireEvent.changeText(screen.getByLabelText(t.input), 'We lived near the garden.'); await press(t.send);
     await waitFor(() => expect(screen.getByText('What do you remember about the garden?')).toBeOnTheScreen());
@@ -183,11 +213,15 @@ describe('Talk → Memories → My Story product flow — synthetic services onl
   });
   it('opens My Story after an uncertain message and keeps the saved-result check there', async () => {
     jest.mocked(api.sendRealTextMessage).mockRejectedValueOnce(new api.RealAiError('network', undefined, true));
+    jest.mocked(api.findRealOperation).mockResolvedValueOnce({ operation_id: ids.transcript, project_id: ids.project,
+      session_id: ids.session, kind: 'conversation', status: 'in_progress', created_at: project.created_at,
+      updated_at: project.updated_at, error_code: null, result: null });
     await opened(); await fireEvent.changeText(screen.getByLabelText(t.input), 'A message with an uncertain result.'); await press(t.send);
     await waitFor(() => expect(screen.getByText(t.uncertain)).toBeOnTheScreen()); await press(conversationModeCopy.en.finishAndOpenStory);
     expect(screen.getByRole('tab', { name: t.book }).props.accessibilityState.selected).toBe(true);
     expect(screen.getByRole('button', { name: t.check })).toBeEnabled();
     expect(await screen.findByRole('button', { name: storyContentCopy.en.useSavedWords })).toBeDisabled();
+    expect(api.findRealOperation).toHaveBeenCalledWith(expect.objectContaining({ projectId: ids.project }), 'conversation', ids.key, true);
     expect(api.sendRealTextMessage).toHaveBeenCalledTimes(1); expect(api.generateRealDraft).not.toHaveBeenCalled();
   });
   it.each(['en', 'sv'] as const)('keeps privacy information available behind the quiet menu in %s', async language => {
@@ -294,6 +328,38 @@ describe('Talk → Memories → My Story product flow — synthetic services onl
     await waitFor(() => expect(screen.getByText(realDraft().content)).toBeOnTheScreen()); expect(api.generateRealDraft).toHaveBeenCalledTimes(1);
     captureRenderedReview('My Story result');
     expect(api.sendRealTextMessage).not.toHaveBeenCalled(); expect(api.createRealSpeech).not.toHaveBeenCalled();
+  });
+  it('recovers the exact saved draft after a lost generation response with one read and no second generation', async () => {
+    jest.mocked(api.getRealMemories).mockResolvedValue([realMemory({ status: 'confirmed', version: 2, clarification_question: null })]);
+    const saved = realDraft();
+    jest.mocked(api.generateRealDraft).mockRejectedValueOnce(new api.RealAiError('network', undefined, true));
+    jest.mocked(api.findRealOperation).mockResolvedValueOnce(generationOperation(saved));
+    await opened(); await tab(t.book);
+    await fireEvent.press(await screen.findByRole('checkbox', { name: t.generationConsent }));
+    await press(t.generate);
+    expect(await screen.findByText(saved.content)).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: t.edit })).toBeEnabled();
+    expect(screen.getByRole('button', { name: t.export })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: t.check })).toBeNull();
+    expect(api.findRealOperation).toHaveBeenCalledWith(expect.objectContaining({ projectId: ids.project }), 'generation', ids.key);
+    expect(api.generateRealDraft).toHaveBeenCalledTimes(1);
+    expect(api.getRealDrafts).toHaveBeenCalledTimes(1);
+  });
+  it('keeps the explicit check when the recovery read still shows generation in progress', async () => {
+    jest.mocked(api.getRealMemories).mockResolvedValue([realMemory({ status: 'confirmed', version: 2, clarification_question: null })]);
+    const saved = realDraft();
+    const failed = new api.RealAiError('timeout', 504, true, 'AI_PROVIDER_TIMEOUT', undefined, ids.transcript);
+    jest.mocked(api.generateRealDraft).mockRejectedValueOnce(failed);
+    jest.mocked(api.getRealOperation).mockResolvedValueOnce(generationOperation()).mockResolvedValueOnce(generationOperation(saved));
+    await opened(); await tab(t.book);
+    await fireEvent.press(await screen.findByRole('checkbox', { name: t.generationConsent }));
+    await press(t.generate);
+    expect(screen.queryByText(saved.content)).toBeNull();
+    await press(t.check);
+    expect(await screen.findByText(saved.content)).toBeOnTheScreen();
+    expect(api.getRealOperation).toHaveBeenCalledTimes(2);
+    expect(api.getRealOperation).toHaveBeenLastCalledWith(expect.objectContaining({ projectId: ids.project }), ids.transcript);
+    expect(api.generateRealDraft).toHaveBeenCalledTimes(1);
   });
   it.each(['en', 'sv'] as const)('shows five new memories alongside the older draft and requires consent to update it in %s', async language => {
     const copy = realCopy[language], story = storyContentCopy[language];

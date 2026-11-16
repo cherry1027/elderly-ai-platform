@@ -588,7 +588,7 @@ export function downloadRealExport(scope: RealScope, metadata: RealExport) {
 export interface RealOperation {
   operation_id: string; kind: 'transcription' | 'conversation' | 'generation' | 'speech'; status: 'in_progress' | 'completed' | 'failed' | 'uncertain';
   project_id: string; session_id: string | null; created_at: string; updated_at: string;
-  error_code: string | null; result: SpeechMetadata | null; typedTurn?: RealTurn;
+  error_code: string | null; result: SpeechMetadata | null; typedTurn?: RealTurn; generatedDraft?: RealDraft;
 }
 function decodeOperation(value: unknown, scope: RealScope, id?: string, kind?: RealOperation['kind'], expectedTyped = false): RealOperation {
   const v = row(value, ['operation_id', 'kind', 'status', 'project_id', 'session_id', 'created_at', 'updated_at', 'error_code', 'result']);
@@ -598,8 +598,8 @@ function decodeOperation(value: unknown, scope: RealScope, id?: string, kind?: R
     !['in_progress', 'completed', 'failed', 'uncertain'].includes(v.status as string) ||
     !validDate(v.created_at) || !validDate(v.updated_at) || !(v.error_code === null || text(v.error_code, 100)) ||
     !(v.result === null || (typeof v.result === 'object' && !Array.isArray(v.result)))) invalid();
-  // Only the fixed speech metadata is reusable after a lost POST response. All
-  // transcript/turn/draft contents are reloaded through their owned strict decoders.
+  // Only results with a decoder that verifies their operation and owner scope
+  // are reusable. Other content is reloaded through its normal owned reads.
   let typedTurn: RealTurn | undefined;
   if (expectedTyped) {
     if (v.kind !== 'conversation' ||
@@ -609,7 +609,12 @@ function decodeOperation(value: unknown, scope: RealScope, id?: string, kind?: R
     if (v.status === 'completed') typedTurn = decodeRealTextTurn(v.result, scope, undefined, v.operation_id as string);
   }
   const result = v.kind === 'speech' && v.status === 'completed' ? decodeSpeech(v.result, scope, undefined, false) : null;
-  return { ...v, result, ...(typedTurn ? { typedTurn } : {}) } as unknown as RealOperation;
+  let generatedDraft: RealDraft | undefined;
+  if (v.kind === 'generation' && v.status === 'completed') {
+    if (v.result === null || v.error_code !== null) invalid();
+    generatedDraft = decodeDraft(v.result, scope);
+  }
+  return { ...v, result, ...(typedTurn ? { typedTurn } : {}), ...(generatedDraft ? { generatedDraft } : {}) } as unknown as RealOperation;
 }
 export function getRealOperation(scope: RealScope, id: string, expectedTyped = false) {
   return execute(scope, `operations/${validateStoryProjectId(id)}`, 'GET', value => decodeOperation(value, scope, id, undefined, expectedTyped));

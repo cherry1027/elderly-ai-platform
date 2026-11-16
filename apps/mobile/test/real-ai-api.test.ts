@@ -133,7 +133,21 @@ describe('real-v2 strict contracts with synthetic HTTP, no paid or hosted reques
     await expect(findRealOperation(f.scope, 'conversation', ids.key)).resolves.toMatchObject({ operation_id: ids.memory });
     expect(f.request.mock.calls[0][0]).toBe(`${f.scope.baseUrl}/api/v2/operations/by-key/conversation/${ids.key}`);
   });
-  it('preserves only validated owned speech metadata from a completed operation for read-only replay', async () => {
+  it('recovers only the verified draft of a completed project-level generation', async () => {
+    const saved = realDraft();
+    const receipt = { operation_id: ids.key, project_id: ids.project, session_id: null, kind: 'generation', status: 'completed',
+      created_at: realDate, updated_at: realDate, error_code: null, result: saved };
+    const f = fixture(receipt);
+    await expect(getRealOperation(f.scope, ids.key)).resolves.toMatchObject({ generatedDraft: saved, result: null });
+    expect(f.request.mock.calls[0][1]?.method).toBe('GET');
+    f.request.mockResolvedValueOnce(response({ ...receipt, result: { ...saved, project_id: ids.memory } }));
+    await expect(getRealOperation(f.scope, ids.key)).rejects.toMatchObject({ kind: 'invalid-response' });
+    f.request.mockResolvedValueOnce(response({ ...receipt, result: { ...saved, language: 'sv' } }));
+    await expect(getRealOperation(f.scope, ids.key)).rejects.toMatchObject({ kind: 'invalid-response' });
+    f.request.mockResolvedValueOnce(response({ ...receipt, result: null }));
+    await expect(getRealOperation(f.scope, ids.key)).rejects.toMatchObject({ kind: 'invalid-response' });
+  });
+  it('preserves validated owned speech metadata from a completed operation for read-only replay', async () => {
     const metadata = { speech_id: ids.draft, assistant_message_id: ids.assistant, language: 'en', media_type: 'audio/wav',
       audio_sha256: '0'.repeat(64), audio_size: 64, expires_at: '2020-10-29T12:00:00Z', status: 'ready' };
     const f = fixture({ operation_id: ids.memory, project_id: ids.project, session_id: ids.session, kind: 'speech', status: 'completed',

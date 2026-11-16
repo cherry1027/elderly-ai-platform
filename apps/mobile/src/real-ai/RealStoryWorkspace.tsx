@@ -451,20 +451,34 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  function readSavedOperation(owned: RealScope, action: Pending) {
+    const typed = action.inputType === 'typed' ? [true] as const : [] as const;
+    return action.operationId ? getRealOperation(owned, action.operationId, ...typed)
+      : findRealOperation(owned, action.kind, action.key, ...typed);
+  }
+  function showSavedDraft(result: RealDraft) {
+    setDrafts(previous => {
+      const existing = previous.find(item => item.draft_id === result.draft_id);
+      if (existing && existing.revision >= result.revision) return previous;
+      return [result, ...previous.filter(item => item.draft_id !== result.draft_id)].sort((a, b) => b.version - a.version);
+    });
+    setSelected(result.draft_id);
+    setGenerationConsent(false);
+  }
   const checkSaved = () => {
     if (!sessionId) { open(); return; }
     void run(async (signal, check) => {
       let completedTyped: RealTurn | null = null, typedFailed = false, failedVoiceId: string | null = null;
+      let completedDraft: RealDraft | undefined;
       if (pending.current) {
         const action = pending.current, expectedTyped = action.inputType === 'typed';
-        const state = action.operationId
-          ? expectedTyped ? await getRealOperation(scope(signal), action.operationId, true) : await getRealOperation(scope(signal), action.operationId)
-          : expectedTyped ? await findRealOperation(scope(signal), action.kind, action.key, true) : await findRealOperation(scope(signal), action.kind, action.key); check();
+        const state = await readSavedOperation(scope(signal), action); check();
         if (pending.current?.key !== action.key || state.kind !== action.kind) throw new RealAiError('invalid-response');
         if (pending.current) pending.current.operationId = state.operation_id;
         if (state.status === 'in_progress' || state.status === 'uncertain') { setNotice(t.operationPending); return; }
         typedFailed = expectedTyped && state.status === 'failed';
         if (state.status === 'failed' && action.voiceTranscriptId) failedVoiceId = action.voiceTranscriptId;
+        completedDraft = state.generatedDraft;
         if (expectedTyped && state.status === 'completed') {
           if (!state.typedTurn || !action.textDigest) throw new RealAiError('invalid-response');
           const turn = decodeRealTextTurn(state.typedTurn, scope(signal), undefined, state.operation_id);
@@ -482,7 +496,9 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
           await recorder.current.discard(audio.current); check(); audio.current = null; setLocalRecording(null);
         }
       }
-      await refresh(signal, check, sessionId); check(); pending.current = null; setUnresolved(null);
+      if (!completedDraft || !reads.current.drafts.loaded) await refresh(signal, check, sessionId);
+      check(); pending.current = null; setUnresolved(null);
+      if (completedDraft) showSavedDraft(completedDraft);
       if (completedTyped) {
         // The newest verified turn may lie beyond the first 100 saved messages.
         const turn = completedTyped;
@@ -492,7 +508,8 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       }
       // Only a verified failed operation permits another deliberate paid attempt.
       if (failedVoiceId) setSafeReplyId(failedVoiceId);
-      setAmbiguousEdit(false); editingDraft.current = null; setEditor(null); setNotice(typedFailed ? t.textNotSent : t.checked);
+      setAmbiguousEdit(false); editingDraft.current = null; setEditor(null);
+      setNotice(completedDraft ? t.bookCreated : typedFailed ? t.textNotSent : t.checked);
     }, undefined, 'checking');
   };
   const discardAudio = () => {
@@ -769,10 +786,28 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   };
   const generate = () => {
     if (!capabilities?.writing || !reads.current.memories.loaded || !generationConsent || hasOpenQuestions || unresolved || ambiguousEdit || usageBlocked || serviceBlocked || !hasConfirmedMemories) return;
-    const key = createRecordingId();
-    void run(async (signal, check) => { const result = await generateRealDraft(scope(signal), key); check();
-      setDrafts(previous => [result, ...previous]); setSelected(result.draft_id); setHistory(null); setGenerationConsent(false); setNotice(t.bookCreated);
-    }, { key, kind: 'generation' });
+    const action: Pending = { key: createRecordingId(), kind: 'generation' };
+    void run(async (signal, check) => {
+      let result: RealDraft;
+      try {
+        result = await generateRealDraft(scope(signal), action.key);
+      } catch (error) {
+        check();
+        if (!(error instanceof RealAiError) || !error.mayHaveWritten || error.kind === 'authentication') throw error;
+        setActivity('checking');
+        const saved = await readSavedOperation({ ...scope(signal), timeoutMs: 5000 }, { ...action, operationId: error.operationId })
+          .catch((readError: unknown) => {
+            if (readError instanceof StoryProjectsError && readError.kind === 'authentication') throw readError;
+            throw error;
+          });
+        check();
+        if (saved.kind !== 'generation' || saved.status !== 'completed' || !saved.generatedDraft) throw error;
+        result = saved.generatedDraft;
+      }
+      check();
+      showSavedDraft(result);
+      setNotice(t.bookCreated);
+    }, action);
   };
   const saveEdit = () => {
     if (!draft || editor === null || unresolved || ambiguousEdit) return;
@@ -861,6 +896,11 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       setSavedWordsOpen(false);
       setFinishRequested(false);
       setTab(next);
+      if (finishing) {
+        // Refresh the saved state at this explicit handoff, even after a warm return.
+        if (unresolved || ambiguousEdit) checkSaved();
+        else loadSection(next, true);
+      }
     };
     // Section changes retain the same owned runtime and unsent composer text.
     // Keep pending work available for recovery when Finish opens the same story.

@@ -11,6 +11,7 @@ import { usePdfPrivacy } from '../src/exports/PdfPrivacy';
 import { createRecordingId } from '../src/audio/native-recorder';
 import { realCopy } from '../src/real-ai/copy';
 import { storiesCopy } from '../src/stories-copy';
+import { createStoryCopy } from '../src/create-story-copy';
 import { storyDetailsCopy } from '../src/story-details-copy';
 import { rootNavigationCopy } from '../src/root-navigation-copy';
 import { leaveCopy } from '../src/navigation/useGuardedLeave';
@@ -21,7 +22,7 @@ jest.mock('expo-router', () => ({ useFocusEffect: jest.fn() }));
 jest.mock('../src/api/config', () => ({ readMobileApiConfig: jest.fn() }));
 jest.mock('../src/real-ai/config', () => ({ readRealAiConfig: jest.fn(), readRealAiRequested: jest.fn() }));
 jest.mock('../src/api/story-projects', () => ({ ...jest.requireActual('../src/api/story-projects'),
-  listStoryProjects: jest.fn(), getStoryProject: jest.fn(), updateStoryProject: jest.fn(), listStorySessions: jest.fn(), continueStoryProject: jest.fn() }));
+  listStoryProjects: jest.fn(), createStoryProject: jest.fn(), getStoryProject: jest.fn(), updateStoryProject: jest.fn(), listStorySessions: jest.fn(), continueStoryProject: jest.fn() }));
 jest.mock('../src/real-ai/api', () => ({ ...jest.requireActual('../src/real-ai/api'),
   getRealCapabilities: jest.fn(), getRealMessages: jest.fn(), getRealTranscripts: jest.fn(), getRealMemories: jest.fn(), getRealDrafts: jest.fn(),
   getRealDraftHistory: jest.fn(), getRealExports: jest.fn(), hashRealText: jest.fn(), sendRealTextMessage: jest.fn(), sendRealMessage: jest.fn(),
@@ -68,6 +69,7 @@ beforeEach(() => {
   jest.mocked(readRealAiConfig).mockReturnValue({ baseUrl: 'http://192.168.20.40:8000', apiContract: 'real-v2' });
   jest.mocked(readRealAiRequested).mockReturnValue(true);
   jest.mocked(projects.listStoryProjects).mockReset().mockImplementation(async options => { reads.push('list'); await options.getAccessToken(); return [{ ...project, title: 'Cached list story' }]; });
+  jest.mocked(projects.createStoryProject).mockReset();
   jest.mocked(projects.getStoryProject).mockReset().mockImplementation(async options => { reads.push('project'); await options.getAccessToken(); return project; });
   jest.mocked(projects.updateStoryProject).mockReset().mockResolvedValue({ ...project, title: 'Updated owned story' });
   jest.mocked(projects.listStorySessions).mockReset().mockImplementation(async () => { reads.push('sessions'); return [session]; });
@@ -105,6 +107,44 @@ it.each(['en', 'sv'] as const)('opens a story directly on Talk in %s with the ex
   expect(reads.filter(item => item === 'list')).toHaveLength(1); expect(projects.getStoryProject).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole('tab', { name: realCopy[language].chat })).toBeNull(); noPaidCalls();
 });
+it.each(['en', 'sv'] as const)('starts Talk as soon as a new %s story is saved', async language => {
+  const form = createStoryCopy[language], copy = realCopy[language];
+  const saved = { ...project, title: language === 'sv' ? 'En ny berättelse' : 'A new story', language };
+  const newSession = { ...session, language };
+  jest.mocked(projects.createStoryProject).mockResolvedValueOnce(saved);
+  jest.mocked(projects.listStorySessions).mockResolvedValueOnce([]);
+  jest.mocked(projects.continueStoryProject).mockResolvedValueOnce({ project_id: saved.id, language, session: newSession,
+    session_created: true, latest_draft: null, generation_triggered: false });
+  await render(<StoriesHome {...props(ownerA, language)} />); await listReady(language);
+  await press(storiesCopy[language].createStory);
+  await fireEvent.changeText(screen.getByLabelText(form.titleLabel), saved.title);
+  await press(form.create);
+  await talkReady(language);
+  expect(screen.getByText(saved.title)).toBeOnTheScreen();
+  expect(screen.getByRole('tab', { name: copy.chat }).props.accessibilityState.selected).toBe(true);
+  expect(projects.createStoryProject).toHaveBeenCalledTimes(1);
+  expect(projects.createStoryProject).toHaveBeenCalledWith(expect.objectContaining({ input: { title: saved.title, language } }));
+  expect(projects.continueStoryProject).toHaveBeenCalledTimes(1);
+  expect(projects.continueStoryProject).toHaveBeenCalledWith(expect.objectContaining({ projectId: saved.id, expectedLanguage: language }));
+  expect(projects.getStoryProject).not.toHaveBeenCalled();
+  expect(projects.listStoryProjects).toHaveBeenCalledTimes(1); noPaidCalls();
+});
+
+it('does not open Talk if the create response arrives after route blur', async () => {
+  const saved = deferred<projects.StoryProject>();
+  jest.mocked(projects.createStoryProject).mockReturnValueOnce(saved.promise);
+  await render(<StoriesHome {...props()} />); await listReady();
+  await press(storiesCopy.en.createStory);
+  await fireEvent.changeText(screen.getByLabelText(createStoryCopy.en.titleLabel), project.title);
+  await press(createStoryCopy.en.create);
+  const signal = jest.mocked(projects.createStoryProject).mock.calls[0][0].signal;
+  await act(() => leaveFocus?.());
+  expect(signal?.aborted).toBe(true);
+  await act(() => saved.resolve(project));
+  expect(screen.queryByText(project.title)).toBeNull();
+  expect(api.getRealCapabilities).not.toHaveBeenCalled(); noPaidCalls();
+});
+
 it('reopens the same selected story without another list read or duplicated workspace startup', async () => {
   await render(<StoriesHome {...props()} />); await listReady(); await openStory(); await talkReady();
   await fireEvent.press(screen.getByTestId('story-top-back')); await listReady(); await openStory(); await talkReady();

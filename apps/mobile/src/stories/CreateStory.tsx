@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { BackHandler } from 'react-native';
 import type { AuthUser } from '../auth/client';
 import { readMobileApiConfig } from '../api/config';
-import { createStoryProject, StoryProjectsError, validateCreateStoryInput, type CreateStoryProjectInput } from '../api/story-projects';
+import { createStoryProject, StoryProjectsError, validateCreateStoryInput, type CreateStoryProjectInput, type StoryProject } from '../api/story-projects';
 import type { Language } from '../i18n';
 import { CreateStoryScreen, type CreateStoryState } from '../screens/CreateStoryScreen';
 import type { LeaveHandle } from '../navigation/useGuardedLeave';
@@ -13,10 +13,11 @@ interface Props {
   getAccessToken: (expectedUserId: string) => Promise<string | null>;
   onBack: () => void;
   onSignOut: () => void;
+  onCreated?: (project: StoryProject) => void;
   onAuthenticationFailure?: () => void;
 }
 
-export function CreateStory({ language, user, getAccessToken, onBack, onSignOut, onAuthenticationFailure }: Props) {
+export function CreateStory({ language, user, getAccessToken, onBack, onSignOut, onCreated, onAuthenticationFailure }: Props) {
   const [config] = useState(readMobileApiConfig);
   const [result, setResult] = useState<{ owner: string; state: CreateStoryState }>({ owner: user.id, state: { status: 'idle' } });
   const alive = useRef(false);
@@ -72,6 +73,7 @@ export function CreateStory({ language, user, getAccessToken, onBack, onSignOut,
         if (!current()) return;
         finished.current = true;
         setResult({ owner, state: { status: 'success', project } });
+        onCreated?.(project);
       }).catch((error: unknown) => {
         if (!current()) return;
         const failure = error instanceof StoryProjectsError ? error : new StoryProjectsError('network', undefined, true);

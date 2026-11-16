@@ -139,10 +139,12 @@ function StoryViews(props: Props) {
   };
   const scopedProps = { ...props, onSignOut: signOut, onAuthenticationFailure: authenticationFailed };
   if (view.kind === 'inactive' || view.kind === 'returning') return <PreferenceLoading language={props.language} />;
-  if (view.kind === 'create') return <CreateStory {...scopedProps} onBack={() => {
-    if (!alive.current || !focused.current || currentView.current !== view) return;
-    invalidateProjects(); showList();
-  }} />;
+  if (view.kind === 'create') return <CreateStory {...scopedProps}
+    onCreated={realConfig ? project => navigate(view, { kind: 'conversation', project }) : undefined}
+    onBack={() => {
+      if (!alive.current || !focused.current || currentView.current !== view) return;
+      invalidateProjects(); showList();
+    }} />;
   if (realConfig && (view.kind === 'conversation' || view.kind === 'generation')) return <RealStoryWorkspace
     {...scopedProps} config={realConfig} project={view.project}
     initialTab={view.kind === 'generation' ? 'book' : view.reviewOnOpen ? 'memories' : 'chat'}

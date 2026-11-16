@@ -221,7 +221,7 @@ export function MemoriesContent(props: MemoriesContentProps) {
     current.onReview(memory, status);
   }, []);
   const card = (memory: RealMemory) => <MemoryCard key={memory.id} language={language} storyLanguage={storyLanguage}
-    memory={memory} correction={corrections[memory.id] ?? ''} blocked={blocked} busy={busy}
+    memory={memory} correction={corrections[memory.id]} blocked={blocked} busy={busy}
     onBeginCorrection={beginCorrection} onCorrection={correct} onReview={review} />;
   return <View style={styles.section}>
     {!!pending.length && <Text accessibilityRole="header" accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling style={styles.heading}>{t.pendingStatus}</Text>}
@@ -247,7 +247,7 @@ export function MemoriesContent(props: MemoriesContentProps) {
   </View>;
 }
 interface MemoryCardProps {
-  language: Language; storyLanguage: Language; memory: RealMemory; correction: string; blocked: boolean; busy: boolean;
+  language: Language; storyLanguage: Language; memory: RealMemory; correction?: string; blocked: boolean; busy: boolean;
   onBeginCorrection(memory: RealMemory): void; onCorrection(memory: RealMemory, value: string): void;
   onReview(memory: RealMemory, status: 'confirmed' | 'rejected'): void;
 }
@@ -257,11 +257,13 @@ const MemoryCard = memo(function MemoryCard({ language, storyLanguage, memory, c
   const [changeFocused, setChangeFocused] = useState(false);
   const { width, fontScale } = useWindowDimensions();
   const roomyActions = fontScale >= 1.3 || width < 350;
-  const correcting = correctionVersion !== null && (correctionVersion === memory.version || !!correction);
+  const correcting = correctionVersion !== null && (correctionVersion === memory.version || correction !== undefined);
+  const savedWording = memory.corrected_value ?? memory.value;
+  const editorWording = correction ?? savedWording;
+  const hasCorrection = !!correction?.trim() && correction.trim() !== savedWording.trim();
   const question = memory.clarification_question?.trim();
   // Legacy questions can contain a field label or a single word.
   const readableQuestion = question && /\s/.test(question) && question.endsWith('?') ? question : null;
-  const correctionUnchanged = memory.status === 'confirmed' && correction.trim() === memory.corrected_value;
   const toggleCorrection = () => {
     if (blocked) return;
     if (!correcting) onBeginCorrection?.(memory);
@@ -269,7 +271,7 @@ const MemoryCard = memo(function MemoryCard({ language, storyLanguage, memory, c
   };
   const actions = <>
     <View style={styles.memoryActions}>
-      {!correcting && memory.status !== 'confirmed' && <View style={[styles.memoryAction, roomyActions && styles.roomyAction]}><Button language={language} label={correction.trim() ? copy.saveCorrection : t.confirm}
+      {!correcting && memory.status !== 'confirmed' && <View style={[styles.memoryAction, roomyActions && styles.roomyAction]}><Button language={language} label={hasCorrection ? copy.saveCorrection : t.confirm}
         onPress={() => onReview(memory, 'confirmed')} disabled={blocked} primary /></View>}
       <Pressable accessibilityRole="button" accessibilityLabel={t.correctAction} accessibilityLanguage={accessibilityLanguages[language]}
         accessibilityState={{ expanded: correcting, disabled: blocked }} disabled={blocked}
@@ -282,10 +284,10 @@ const MemoryCard = memo(function MemoryCard({ language, storyLanguage, memory, c
     <View accessibilityElementsHidden={!correcting} importantForAccessibility={correcting ? 'auto' : 'no-hide-descendants'}
       style={[styles.section, !correcting && styles.hidden]}>
       <TextInput accessibilityLabel={t.correct} accessibilityLanguage={accessibilityLanguages[language]} allowFontScaling
-        placeholder={t.correct} value={correction} multiline maxLength={1000} editable={!blocked}
+        placeholder={t.correct} value={editorWording} multiline maxLength={1000} editable={!blocked}
         style={styles.input} onChangeText={value => { if (!busy) onCorrection(memory, value); }} />
       <Button language={language} label={copy.saveCorrection} onPress={() => onReview(memory, 'confirmed')}
-        disabled={blocked || !correction.trim() || correctionUnchanged} primary />
+        disabled={blocked || !hasCorrection} primary />
     </View>
   </>;
   return <View style={memory.status === 'pending' ? styles.memory : styles.reviewedMemory}>

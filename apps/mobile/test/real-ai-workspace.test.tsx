@@ -539,7 +539,10 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     jest.mocked(api.getRealMemories).mockResolvedValue([memory]);
     jest.mocked(api.reviewRealMemory).mockResolvedValueOnce(corrected).mockResolvedValueOnce({ ...corrected, status: 'rejected', version: 3 });
     await render(<RealStoryWorkspace {...props} language={language} initialTab="memories" />); await ready('memories');
-    await press(copy.correctAction); await fireEvent.changeText(screen.getByLabelText(copy.correct), 'My corrected memory');
+    await press(copy.correctAction);
+    expect(screen.getByLabelText(copy.correct).props.value).toBe(memory.value);
+    expect(screen.getByRole('button', { name: storyContentCopy[language].saveCorrection })).toBeDisabled();
+    await fireEvent.changeText(screen.getByLabelText(copy.correct), 'My corrected memory');
     for (const label of [copy.seeOriginal, copy.correctAction, copy.seeOriginal, copy.correctAction]) await press(label);
     const input = screen.getByLabelText(copy.correct);
     expect(input.props.value).toBe('My corrected memory'); expect(input.props.allowFontScaling).toBe(true);
@@ -551,7 +554,10 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     await press(storyContentCopy[language].saveCorrection);
     expect(api.reviewRealMemory).toHaveBeenNthCalledWith(1, expect.anything(), memory, 'confirmed', 'My corrected memory');
     expect(screen.getByText(corrected.corrected_value)).toBeOnTheScreen();
-    await press(storyContentCopy[language].changeDecision); await press(copy.reject);
+    await press(storyContentCopy[language].changeDecision); await press(copy.correctAction);
+    expect(screen.getByLabelText(copy.correct).props.value).toBe(corrected.corrected_value);
+    expect(screen.getByRole('button', { name: storyContentCopy[language].saveCorrection })).toBeDisabled();
+    await press(copy.correctAction); await press(copy.reject);
     expect(api.reviewRealMemory).toHaveBeenNthCalledWith(2, expect.anything(), corrected, 'rejected', undefined);
     expect(api.generateRealDraft).not.toHaveBeenCalled(); expect(api.sendRealMessage).not.toHaveBeenCalled();
   });

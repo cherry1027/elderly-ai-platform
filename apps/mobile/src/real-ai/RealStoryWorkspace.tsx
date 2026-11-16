@@ -872,7 +872,8 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   };
   const review = (memory: RealMemory, status: 'confirmed' | 'rejected') => {
     if (unresolved || ambiguousEdit) return;
-    const correction = status === 'confirmed' ? corrections[memory.id]?.trim() : undefined;
+    const edited = corrections[memory.id]?.trim();
+    const correction = status === 'confirmed' && edited !== (memory.corrected_value ?? memory.value).trim() ? edited : undefined;
     void run(async (signal, check) => {
       const before = correction ? correctionBases.current.get(memory.id) ?? memory : memory;
       const result = await reviewRealMemory(scope(signal), before, status, correction || undefined); check();

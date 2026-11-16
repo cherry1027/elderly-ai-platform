@@ -1,4 +1,4 @@
-"""Preview-only authenticated Swedish voice relay with background saves."""
+"""Preview-only authenticated English and Swedish voice relay with background saves."""
 
 import asyncio
 from dataclasses import asdict
@@ -16,7 +16,7 @@ from app.api.real_ai import digest, result_scope, speech_cache_id, uses_talk_pre
 from app.core.errors import APIError, invalid_token, unavailable
 from app.services.ai_controls import ai_budget_subject
 from app.services.auth import authenticate
-from app.services.live_talk import LIVE_MODEL, PCM_RATE, LiveTalkError
+from app.services.live_talk import LIVE_MODEL, LIVE_PROMPTS, PCM_RATE, LiveTalkError
 from app.services.openai_client import DispatchTrace, ai_dispatch_trace, strict_object
 from app.services.pilot_cohort import require_pilot_member
 from app.services.real_ai_resources import RealAIGateway
@@ -66,7 +66,8 @@ async def _cache_reply(runtime, gateway, project_id, session_id, message, pcm):
         wav.setparams((1, 2, PCM_RATE, 0, "NONE", "not compressed"))
         wav.writeframes(pcm)
     audio = data.getvalue()
-    fingerprint = digest({"assistant_id": str(message_id), "language": "sv",
+    language = message["language"]
+    fingerprint = digest({"assistant_id": str(message_id), "language": language,
                           "text_sha256": sha256(message["text"].encode()).hexdigest()})
     claim = await gateway.claim(project_id, session_id, "speech", message_id, fingerprint)
     if not claim["claimed"]:
@@ -77,7 +78,7 @@ async def _cache_reply(runtime, gateway, project_id, session_id, message, pcm):
         result = await _complete(gateway, claim, project_id, session_id,
             {"assistant_message_id": str(message_id), "media_type": "audio/wav",
              "audio_sha256": hash_hex, "audio_size": len(audio), "expires_at": expires.isoformat()}, assistant=message)
-        runtime.cache.put(gateway.user.id, speech_cache_id(UUID(result["speech_id"]), True),
+        runtime.cache.put(gateway.user.id, speech_cache_id(UUID(result["speech_id"]), language == "sv"),
                           audio, hash_hex, expires_at=expires.timestamp())
     except BaseException:
         await _close_claim(gateway, claim, "REAL_AI_UNCERTAIN", True)
@@ -85,8 +86,9 @@ async def _cache_reply(runtime, gateway, project_id, session_id, message, pcm):
 
 
 async def _save_spoken(runtime, gateway, project_id, session_id, key, transcript, spoken, extractor):
+    language = transcript["language"]
     conversation = await gateway.claim(project_id, session_id, "conversation", uuid5(key, "gpt-live-turn"),
-        digest({"source_transcript_id": transcript["transcript_id"], "language": "sv"}))
+        digest({"source_transcript_id": transcript["transcript_id"], "language": language}))
     if not conversation["claimed"]:
         raise unavailable()
     memories = []
@@ -96,7 +98,7 @@ async def _save_spoken(runtime, gateway, project_id, session_id, key, transcript
             async with asyncio.timeout(10):
                 prior = await gateway.project_memories(project_id)
                 with runtime.governor.workflow():
-                    memories = await extractor.extract_live_memories(transcript["text"], "sv", prior)
+                    memories = await extractor.extract_live_memories(transcript["text"], language, prior)
             memory_complete = True
         except (APIError, TimeoutError, ValueError, TypeError):
             # The verified original and audible reply survive optional extraction failure.
@@ -163,14 +165,15 @@ async def live_talk(socket: WebSocket, session_id: UUID):
                 raise APIError(429, "AI_BUSY", "A Live Talk turn is already open.")
             state.live_talk_users.add(identity)
             session = await gateway.get_owned_session(session_id, active=True)
-            if session["language"] != "sv":
-                raise APIError(422, "LANGUAGE_MISMATCH", "Live Talk is available for Swedish stories in this preview.")
+            language = session["language"]
+            if language not in LIVE_PROMPTS:
+                raise APIError(422, "LANGUAGE_MISMATCH", "Live Talk is available for English and Swedish stories in this preview.")
             extractor = runtime.require_preview_talk()
             project_id = UUID(session["project_id"])
             subject = ai_budget_subject.set(str(gateway.user.id))
             trace_token = ai_dispatch_trace.set(dispatched)
             claim = await gateway.claim(project_id, session_id, "transcription", key,
-                                       digest({"mode": "live-talk", "language": "sv"}))
+                                       digest({"mode": "live-talk", "language": language}))
             if not claim["claimed"]:
                 raise APIError(409, "AI_OPERATION_UNCERTAIN", "Check the saved turn before retrying.")
             recent = await gateway.messages(session_id, limit=4, recent=True)
@@ -179,7 +182,7 @@ async def live_talk(socket: WebSocket, session_id: UUID):
             }]} for item in recent if item["role"] in ("user", "assistant")]
             await send({"type": "operation", "id": claim["operation_id"]})
             spoken = await runtime.live_talk_provider.talk(history, microphone(),
-                lambda: send({"type": "ready"}), send)
+                lambda: send({"type": "ready"}), send, language=language)
             if not spoken.transcript:
                 raise LiveTalkError()
             await send({"type": "saving"})

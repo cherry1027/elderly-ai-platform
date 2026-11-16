@@ -17,7 +17,7 @@ from app.core.errors import APIError, invalid_token, unavailable
 from app.services.ai_controls import ai_budget_subject
 from app.services.auth import authenticate
 from app.services.live_talk import LIVE_MODEL, LIVE_PROMPTS, PCM_RATE, LiveTalkError
-from app.services.openai_client import DispatchTrace, ai_dispatch_trace, strict_object
+from app.services.openai_client import strict_object
 from app.services.pilot_cohort import require_pilot_member
 from app.services.real_ai_resources import RealAIGateway
 
@@ -154,9 +154,10 @@ async def live_talk(socket: WebSocket, session_id: UUID):
 
     async with state.live_talk_slots:
         await socket.accept()
-        gateway = subject = trace_token = identity = None
+        gateway = subject = identity = None
         claim = None
-        dispatched = DispatchTrace()
+        transcript_write_started = False
+        terminal_error = None
         try:
             gateway, key = await _authorized_hello(socket)
             identity = gateway.user.id
@@ -171,7 +172,6 @@ async def live_talk(socket: WebSocket, session_id: UUID):
             extractor = runtime.require_preview_talk()
             project_id = UUID(session["project_id"])
             subject = ai_budget_subject.set(str(gateway.user.id))
-            trace_token = ai_dispatch_trace.set(dispatched)
             claim = await gateway.claim(project_id, session_id, "transcription", key,
                                        digest({"mode": "live-talk", "language": language}))
             if not claim["claimed"]:
@@ -186,6 +186,7 @@ async def live_talk(socket: WebSocket, session_id: UUID):
             if not spoken.transcript:
                 raise LiveTalkError()
             await send({"type": "saving"})
+            transcript_write_started = True
             transcript = await _complete(gateway, claim, project_id, session_id, {"text": spoken.transcript})
             claim = None
             turn, memory_complete = None, False
@@ -196,17 +197,18 @@ async def live_talk(socket: WebSocket, session_id: UUID):
         except WebSocketDisconnect:
             connected = False
         except Exception as error:
-            code = error.code if isinstance(error, APIError) else "LIVE_TALK_INCOMPLETE"
-            await send({"type": "error", "code": code})
+            terminal_error = error.code if isinstance(error, APIError) else "LIVE_TALK_INCOMPLETE"
         finally:
             if claim and claim["claimed"] and gateway is not None:
-                await _close_claim(gateway, claim, "LIVE_TALK_INCOMPLETE", dispatched.dispatched)
-            if trace_token is not None:
-                ai_dispatch_trace.reset(trace_token)
+                # The provider can consume budget before any transcript write starts.
+                # Its spending reservation is settled separately by the provider adapter.
+                await _close_claim(gateway, claim, "LIVE_TALK_INCOMPLETE", transcript_write_started)
             if subject is not None:
                 ai_budget_subject.reset(subject)
             if identity is not None:
                 state.live_talk_users.discard(identity)
+            if terminal_error is not None:
+                await send({"type": "error", "code": terminal_error})
             if connected:
                 try:
                     await socket.close()

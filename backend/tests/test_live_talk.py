@@ -15,7 +15,8 @@ import pytest
 from app.api import real_ai_live
 from app.api.real_ai import speech_cache_id
 from app.services.ai_budget import live_talk_ceiling_microusd, observed_cost_microusd
-from app.services.live_talk import LIVE_MODEL, LIVE_SECONDS, LiveTalkProvider, SpokenTurn
+from app.services.live_talk import LIVE_MODEL, LIVE_SECONDS, LiveTalkError, LiveTalkProvider, SpokenTurn
+from app.services.openai_client import mark_ai_dispatched
 from tests.test_real_ai_api import SESSION, harness
 from tests.test_real_ai_reconciliation import ReconciliationGateway
 
@@ -130,6 +131,7 @@ def mounted_live(harness, monkeypatch, request):
 
     async def talk(_history, microphone, ready, voice, *, language):
         assert language == gateway.language
+        mark_ai_dispatched()
         await ready()
         async for pcm in microphone:
             assert pcm == PCM
@@ -174,6 +176,37 @@ def test_socket_sends_audio_before_saving_the_owned_turn(mounted_live):
     assert message["provenance"]["model"] == LIVE_MODEL
     assert message["text"] == spoken.reply and message["language"] == language and saved["memories_checked"]
     assert len(gateway.claims) == 3
+
+
+@pytest.mark.parametrize("write_started,expected_status", [(False, "failed"), (True, "uncertain")])
+def test_interrupted_live_turn_publishes_its_persistence_state_before_the_error(mounted_live, write_started, expected_status):
+    app, gateway, _ = mounted_live
+    key = uuid4()
+
+    async def interrupted_talk(_history, microphone, ready, _voice, *, language):
+        mark_ai_dispatched()
+        await ready()
+        assert await anext(microphone) == PCM
+        raise LiveTalkError()
+
+    async def interrupted_save(_claim, _payload, _provenance):
+        raise LiveTalkError()
+
+    if write_started:
+        gateway.complete = interrupted_save
+    else:
+        app.state.real_ai.live_talk_provider.talk = interrupted_talk
+    with TestClient(app) as client, client.websocket_connect(PATH, headers={"Origin": PREVIEW}) as ws:
+        ws.send_json({"token": "test", "key": str(key)})
+        assert ws.receive_json()["type"] == "operation"
+        assert ws.receive_json() == {"type": "ready"}
+        ws.send_bytes(PCM)
+        if write_started:
+            assert ws.receive_bytes() == PCM
+            assert ws.receive_json() == {"type": "saving"}
+        assert ws.receive_json() == {"type": "error", "code": "LIVE_TALK_INCOMPLETE"}
+        assert gateway.claims[("transcription", key)]["status"] == expected_status
+        assert len(gateway.claims) == 1
 
 
 @pytest.mark.parametrize("origin,path", [

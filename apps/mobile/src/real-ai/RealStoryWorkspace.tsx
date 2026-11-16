@@ -1066,7 +1066,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     rememberMode(next);
   };
   const chatReady = readStates.messages.loaded && readStates.transcripts.loaded;
-  const liveAvailable = isTalkPreview() && project.language === 'sv' && !!capabilities?.speech && !!capabilities.transcription;
+  const liveAvailable = isTalkPreview() && !!capabilities?.speech && !!capabilities.transcription && !!capabilities.conversation;
   const startLiveVoice = () => {
     if (!liveAvailable || !sessionId || blocked || !chatReady || usageBlocked || serviceBlocked ||
         !active.current || !mounted.current || locked.current || pending.current || bootstrap.current ||

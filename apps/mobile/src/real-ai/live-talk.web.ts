@@ -44,7 +44,7 @@ export function createLiveTalk(): LiveTalkDriver | null {
   return {
     stopInput, dispose,
     async run(scope, key, events) {
-      if (normalizeMobileApiBaseUrl(scope.baseUrl) !== API_ORIGIN || scope.language !== 'sv' || closed) {
+      if (normalizeMobileApiBaseUrl(scope.baseUrl) !== API_ORIGIN || !['en', 'sv'].includes(scope.language) || closed) {
         dispose(); throw new RealAiError('configuration');
       }
       const id = validateStoryProjectId(scope.sessionId);

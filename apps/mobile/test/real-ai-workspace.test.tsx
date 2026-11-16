@@ -28,7 +28,7 @@ jest.mock('../src/real-ai/ChatMessageHistory', () => {
   return { ...actual, ChatMessageHistory: observeComponent(actual.ChatMessageHistory) };
 });
 jest.mock('../src/real-ai/api', () => ({ ...jest.requireActual('../src/real-ai/api'),
-  hashRealText: jest.fn(), getRealCapabilities: jest.fn(), getRealTranscripts: jest.fn(), getRealMessages: jest.fn(), getRealMemories: jest.fn(),
+  isTalkPreview: jest.fn(), hashRealText: jest.fn(), getRealCapabilities: jest.fn(), getRealTranscripts: jest.fn(), getRealMessages: jest.fn(), getRealMemories: jest.fn(),
   getRealDrafts: jest.fn(), transcribeRealRecording: jest.fn(), sendRealMessage: jest.fn(), sendRealTextMessage: jest.fn(), reviewRealMemory: jest.fn(),
   generateRealDraft: jest.fn(), editRealDraft: jest.fn(), getRealDraftHistory: jest.fn(), exportRealDraft: jest.fn(),
   getPreparedRealSpeech: jest.fn(), createRealSpeech: jest.fn(), getRealSpeechAudio: jest.fn(), getRealOperation: jest.fn(),
@@ -91,6 +91,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 beforeEach(() => {
+  jest.mocked(api.isTalkPreview).mockReturnValue(false);
   jest.mocked(readConversationMode).mockResolvedValue(null);
   jest.mocked(api.hashRealText).mockImplementation(async original => createHash('sha256').update(original, 'utf8').digest('hex'));
   AppState.currentState = 'active'; listeners = [];
@@ -119,6 +120,20 @@ beforeEach(() => {
 afterEach(async () => { await mediaPrivacy.retry(); jest.restoreAllMocks(); AppState.currentState = 'active'; });
 
 describe('real mobile workspace, synthetic controller checks only; physical phone acceptance remains separate', () => {
+  it.each(['en', 'sv'] as const)('offers Live Talk for %s stories on the preview only', async language => {
+    const preview = jest.mocked(api.isTalkPreview).mockReturnValue(true);
+    jest.mocked(storyApi.listStorySessions).mockResolvedValue([{ id: ids.session, project_id: ids.project,
+      language, status: 'active', created_at: project.created_at, updated_at: project.created_at, ended_at: null }]);
+    const workspace = <RealStoryWorkspace {...props} language={language} project={{ ...project, language }} />;
+    const view = await render(workspace); await ready();
+    await press(realCopy[language].liveTry);
+    expect(screen.getByRole('button', { name: realCopy[language].liveStart })).toBeOnTheScreen();
+    await view.unmount();
+    preview.mockReturnValue(false);
+    await render(workspace); await ready();
+    expect(screen.queryByRole('button', { name: realCopy[language].liveTry })).toBeNull();
+  });
+
   it.each(['en', 'sv'] as const)('shows a short AI-off status and accessible Details in %s without enabling AI', async language => {
     const copy = realCopy[language];
     jest.mocked(api.getRealCapabilities).mockResolvedValue({ contract: 'real-v2', mode: 'real', enabled: false, transcription: false, conversation: false, writing: false, speech: false, reason: 'LIVE_AI_DISABLED' });

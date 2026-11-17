@@ -1,6 +1,7 @@
 import asyncio
 from base64 import b64encode
 from contextlib import nullcontext
+from dataclasses import replace
 import json
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -19,6 +20,7 @@ from app.services.live_talk import LIVE_MODEL, LIVE_SECONDS, LiveTalkError, Live
 from app.services.openai_client import mark_ai_dispatched
 from tests.test_real_ai_api import SESSION, harness
 from tests.test_real_ai_reconciliation import ReconciliationGateway
+from tests.test_softer_cedar import voiced_pcm
 
 PREVIEW = "https://memy-visual-redesign-preview.onrender.com"
 PCM = b"\x00\x08" * 240
@@ -53,7 +55,7 @@ class FakeLiveSocket:
             for kind, text in (("input", self.spoken.transcript), ("output", self.spoken.reply)):
                 self.events.put_nowait({"type": f"session.{kind}_transcript.delta", "delta": text,
                                         "start_ms": 250, "end_ms": 700})
-            self.events.put_nowait({"type": "session.output_audio.delta", "delta": b64encode(PCM).decode()})
+            self.events.put_nowait({"type": "session.output_audio.delta", "delta": b64encode(self.spoken.pcm).decode()})
         elif event["type"] == "session.close":
             self.events.put_nowait({"type": "session.closed", "usage": {"seconds": 4}, "session": {"id": "test"}})
 
@@ -64,7 +66,7 @@ class FakeLiveSocket:
 ])
 def test_live_speech_streams_with_cedar_and_settles_the_same_reservation(language, prompt_fragment):
     async def scenario():
-        spoken = SPOKEN[language]
+        spoken = replace(SPOKEN[language], pcm=voiced_pcm())
         socket = FakeLiveSocket(spoken)
         events = []
         governor = SimpleNamespace(
@@ -88,9 +90,12 @@ def test_live_speech_streams_with_cedar_and_settles_the_same_reservation(languag
             events.append(pcm)
 
         provider = LiveTalkProvider(SecretStr("test"), governor, connector=connect)
-        assert await provider.talk([], mic(), ready, voice, language=language) == spoken
-        assert events == [("reserved", LIVE_SECONDS + 5), "ready", PCM,
-                          ("settled", ("one", "conversation", LIVE_MODEL, {"seconds": 4}), {"status": "completed"})]
+        result = await provider.talk([], mic(), ready, voice, language=language)
+        assert result.transcript == spoken.transcript and result.reply == spoken.reply
+        assert result.pcm == b"".join(events[2:-1]) and result.pcm != spoken.pcm
+        assert len(result.pcm) == len(spoken.pcm)
+        assert events[:2] == [("reserved", LIVE_SECONDS + 5), "ready"]
+        assert events[-1] == ("settled", ("one", "conversation", LIVE_MODEL, {"seconds": 4}), {"status": "completed"})
         setup = socket.sent[0]["session"]
         assert setup["model"] == LIVE_MODEL and setup["audio"]["output"]["voice"] == "cedar" and not setup["store"]
         assert "softly feminine resonance" in setup["instructions"]

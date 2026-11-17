@@ -24,6 +24,7 @@ from app.services.real_ai_provider import (
     RealAIProvider,
     RealtimeSpeechProvider,
 )
+from tests.test_softer_cedar import voiced_pcm
 
 
 CONFIRMED_ID = "11111111-1111-4111-8111-111111111111"
@@ -462,11 +463,17 @@ def test_request_voice_override_preserves_default_and_verifies_cedar():
     ("en", "What do you remember from Malmö?", "Keep the English wording"),
 ])
 def test_minna_cedar_uses_the_same_feminine_delivery_and_reads_the_saved_language(language, text, delivery):
-    events = speech_events(text)
+    original = voiced_pcm()
+    events = speech_events(text, original)
     events[-1]["response"]["audio"]["output"]["voice"] = "cedar"
     speech, socket, _, _ = speech_setup(events)
 
-    audio = asyncio.run(speech.synthesize(text, language, voice="cedar", minna_delivery=True))
+    packets = []
+
+    async def collect(pcm):
+        packets.append(pcm)
+
+    audio = asyncio.run(speech.synthesize(text, language, voice="cedar", minna_delivery=True, on_pcm=collect))
 
     request = socket.sent[0]["response"]
     assert audio.voice == request["audio"]["output"]["voice"] == "cedar"
@@ -474,6 +481,10 @@ def test_minna_cedar_uses_the_same_feminine_delivery_and_reads_the_saved_languag
     assert "softly feminine resonance" in request["instructions"]
     payload = json.loads(request["input"][0]["content"][0]["text"])
     assert payload == {"language": language, "saved_assistant_text": text}
+    with wave.open(io.BytesIO(audio.data), "rb") as wav:
+        saved_pcm = wav.readframes(wav.getnframes())
+    assert saved_pcm == b"".join(packets) and len(saved_pcm) == len(original)
+    assert saved_pcm != original
 
 
 @pytest.mark.parametrize(("language", "voice", "text"), [

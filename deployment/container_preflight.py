@@ -22,6 +22,7 @@ def check_runtime():
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     from app.services.audio_upload import probe_duration
     from app.services.pdf_export import RealPdfRenderer
+    from app.services.softer_cedar import SofterCedar
 
     # Verify the decoders the app accepts; no encoder or system ffmpeg is needed.
     for name in ("pcm_s16le", "aac", "alac", "mp3", "opus", "vorbis"):
@@ -31,6 +32,9 @@ def check_runtime():
     nonce, sample = b"\0" * 12, b"synthetic-image-check"
     if cipher.decrypt(nonce, cipher.encrypt(nonce, sample, b"test"), b"test") != sample:
         raise ValueError("Synthetic encryption check failed")
+    silence = b"\0\0" * 1200
+    if asyncio.run(SofterCedar().push(silence, final=True)) != (silence,):
+        raise ValueError("Synthetic Cedar output check failed")
     with TemporaryDirectory(prefix="memy-image-check-") as directory:
         path = Path(directory) / "synthetic.wav"
         with wave.open(str(path), "wb") as output:

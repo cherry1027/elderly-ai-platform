@@ -130,12 +130,22 @@ class LiveTalkProvider:
             self.governor.settle(reservation, "conversation", LIVE_MODEL, usage, status=status)
 
     async def _exchange(self, socket, session_id, microphone, on_voice):
+        from app.services.softer_cedar import SofterCedar
+
         audio = bytearray()
+        softer_cedar = SofterCedar()
+        received_audio_bytes = 0
+        pending_audio = False
         user, reply = [], []
         heard_user = False
         last_spoken = stopped = closing = None
         clock = asyncio.get_running_loop().time
         began = clock()
+
+        async def emit_speech(pcm, *, final=False):
+            for packet in await softer_cedar.push(pcm, final=final):
+                audio.extend(packet)
+                await on_voice(packet)
 
         async def capture():
             nonlocal heard_user, stopped
@@ -172,6 +182,10 @@ class LiveTalkProvider:
                 try:
                     event = _event(await asyncio.wait_for(socket.recv(), timeout=0.25))
                 except TimeoutError:
+                    if pending_audio:
+                        # Flush the last syllable through a pause without waiting for session close.
+                        await emit_speech(b"", final=True)
+                        pending_audio = False
                     continue
                 kind = event.get("type")
                 if kind == "session.input_transcript.delta":
@@ -180,19 +194,24 @@ class LiveTalkProvider:
                     _append(reply, event, 1_000)
                 elif kind == "session.output_audio.delta" and heard_user:
                     pcm = b64decode(event["delta"], validate=True)
-                    if not pcm or len(pcm) % 2 or len(audio) + len(pcm) > MAX_REPLY_PCM:
+                    if not pcm or len(pcm) % 2 or received_audio_bytes + len(pcm) > MAX_REPLY_PCM:
                         raise LiveTalkError()
                     if has_voice(pcm):
                         last_spoken = clock()
                     if last_spoken is not None:
-                        audio.extend(pcm)
-                        await on_voice(pcm)
+                        received_audio_bytes += len(pcm)
+                        await emit_speech(pcm)
+                        pending_audio = True
                 elif kind == "session.closed":
                     usage = event.get("usage")
                     session = event.get("session")
                     seconds = usage.get("seconds") if isinstance(usage, dict) else None
                     if (not isinstance(session, dict) or session.get("id") != session_id
                         or type(seconds) not in {int, float} or not math.isfinite(seconds) or seconds < 0):
+                        raise LiveTalkError()
+                    if pending_audio:
+                        await emit_speech(b"", final=True)
+                    if len(audio) != received_audio_bytes:
                         raise LiveTalkError()
                     result = SpokenTurn("".join(user).strip(), "".join(reply).strip(), bytes(audio))
                     return result, {"seconds": seconds}

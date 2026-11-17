@@ -937,6 +937,24 @@ class RealtimeSpeechProvider:
                     max_output_tokens=1_536)
             state = _SpeechAssembly(text, voice)
             emitted_bytes = 0
+            softened_pcm = bytearray()
+            softer_cedar = None
+            if minna_delivery:
+                from app.services.softer_cedar import SofterCedar
+
+                softer_cedar = SofterCedar()
+
+            async def soften_available(*, final=False):
+                nonlocal emitted_bytes
+                pcm = bytes(state.pcm[emitted_bytes:])
+                if not pcm and not final:
+                    return
+                for packet in await softer_cedar.push(pcm, final=final):
+                    softened_pcm.extend(packet)
+                    if on_pcm is not None:
+                        await on_pcm(packet)
+                emitted_bytes = len(state.pcm)
+
             async with asyncio.timeout(self.timeout_seconds):
                 # No proxy inheritance, redirect loop, reconnect iterator or retries.
                 mark_ai_dispatched()
@@ -963,27 +981,35 @@ class RealtimeSpeechProvider:
                             state.transcript_done
                             or len(state.transcript) >= len(text.split(maxsplit=1)[0])
                         ):
-                            while len(state.pcm) - emitted_bytes >= SPEECH_CHUNK_BYTES:
-                                end = emitted_bytes + SPEECH_CHUNK_BYTES
-                                await on_pcm(bytes(state.pcm[emitted_bytes:end]))
-                                emitted_bytes = end
+                            if softer_cedar is not None:
+                                await soften_available()
+                            else:
+                                while len(state.pcm) - emitted_bytes >= SPEECH_CHUNK_BYTES:
+                                    end = emitted_bytes + SPEECH_CHUNK_BYTES
+                                    await on_pcm(bytes(state.pcm[emitted_bytes:end]))
+                                    emitted_bytes = end
                         if completed:
-                            if on_pcm is not None and len(state.pcm) > emitted_bytes:
+                            if softer_cedar is not None:
+                                await soften_available(final=True)
+                            elif on_pcm is not None and len(state.pcm) > emitted_bytes:
                                 await on_pcm(bytes(state.pcm[emitted_bytes:]))
                             break
                     else:
                         raise ValueError
+            pcm = softened_pcm if softer_cedar is not None else state.pcm
+            if len(pcm) != len(state.pcm):
+                raise ValueError("Cedar processing changed the audio duration")
             content = io.BytesIO()
             with wave.open(content, "wb") as stream:
                 stream.setnchannels(1)
                 stream.setsampwidth(2)
                 stream.setframerate(SPEECH_SAMPLE_RATE)
-                stream.writeframes(bytes(state.pcm))
+                stream.writeframes(bytes(pcm))
             data = content.getvalue()
             outcome = "completed"
             return SpeechAudio(
                 data=data, media_type="audio/wav", sha256=sha256(data).hexdigest(),
-                duration_seconds=len(state.pcm) / (2 * SPEECH_SAMPLE_RATE),
+                duration_seconds=len(pcm) / (2 * SPEECH_SAMPLE_RATE),
                 model=self.model, voice=voice,
             )
         except APIError:

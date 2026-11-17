@@ -74,6 +74,33 @@ def test_explicit_ai_off_bootstrap_never_initializes_a_ledger(staging, monkeypat
     assert not (staging / "ledger.sqlite3").exists()
 
 
+@pytest.mark.parametrize("code,starts", [
+    ("AI_USAGE_LIMIT", True),
+    ("AI_GLOBAL_BUDGET_EXHAUSTED", True),
+    ("AI_SPENDING_NOT_APPROVED", False),
+    ("AI_USAGE_UNAVAILABLE", False),
+])
+def test_budget_exhaustion_pauses_ai_without_preventing_staging_start(staging, monkeypatch, code, starts):
+    from app.core.errors import APIError
+    from app.services.real_ai_runtime import RealAIRuntime
+
+    settings, options = staging_configuration()
+    settings = settings.model_copy(update={"real_ai_enabled": True})
+    def check_budget(self):
+        raise APIError(429, code, "Synthetic spending denial")
+    monkeypatch.setattr(RealAIRuntime, "require", lambda self: object())
+    monkeypatch.setattr("app.services.ai_controls.AISpendingGovernor.check_budget", check_budget)
+
+    if not starts:
+        with pytest.raises(StateError, match="LIVE_APPROVAL_OR_PROVIDER_UNAVAILABLE"):
+            staging_app(settings, options)
+        return
+    with TestClient(staging_app(settings, options), base_url="https://memy-stage.example.com") as client:
+        assert client.get("/health").status_code == 200
+        capabilities = client.get("/api/v2/capabilities").json()
+        assert capabilities["enabled"] is False and capabilities["reason"] == code
+
+
 def test_missing_history_without_explicit_bootstrap_fails_without_reset(staging, monkeypatch):
     monkeypatch.setenv("STAGING_BOOTSTRAP_AI_OFF", "false")
     with pytest.raises(FileNotFoundError):

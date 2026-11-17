@@ -180,8 +180,13 @@ def staging_app(settings, options):
     from starlette.middleware.trustedhost import TrustedHostMiddleware
 
     app = create_app(settings)
-    if settings.real_ai_enabled and not app.state.real_ai.capabilities()["enabled"]:
-        raise StateError("LIVE_APPROVAL_OR_PROVIDER_UNAVAILABLE")
+    if settings.real_ai_enabled:
+        capabilities = app.state.real_ai.capabilities()
+        # Exhausting an approved allowance pauses paid routes at runtime.
+        if not capabilities["enabled"] and capabilities["reason"] not in {
+            "AI_USAGE_LIMIT", "AI_GLOBAL_BUDGET_EXHAUSTED",
+        }:
+            raise StateError("LIVE_APPROVAL_OR_PROVIDER_UNAVAILABLE")
     app.add_middleware(SecurityHeaders)
     app.add_middleware(TrustedHostMiddleware,
                        allowed_hosts=[urlsplit(options["origin"]).hostname], www_redirect=False)

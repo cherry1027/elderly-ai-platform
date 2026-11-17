@@ -15,7 +15,7 @@ import pytest
 
 from app.core.errors import APIError
 from app.services.ai_controls import AISpendingGovernor, ai_budget_subject
-from app.services.ai_budget import baseline_fingerprint, request_ceiling_microusd
+from app.services.ai_budget import baseline_fingerprint, live_talk_ceiling_microusd, load_policy, request_ceiling_microusd
 from app.services.ai_usage import UsageObserver
 from app.services.openai_client import OpenAIClient
 
@@ -200,6 +200,70 @@ def test_preflight_reports_used_call_limit_without_spending(budget):
     assert not budget[2].exists()
     with user(): reserve(budget[-1]())
     err('AI_USAGE_LIMIT',lambda:budget[-1]().check_budget())
+
+
+def test_scoped_topups_reopen_exhausted_window_and_keep_each_budget_separate(budget):
+    _, approval, ledger, policy_path, data, rules, write, make = budget
+    rules["per_user_budget_microusd"] = 250_000
+    data["max_calls"] = 1
+    write(policy_path, rules)
+    write(approval, data)
+    policy = load_policy(policy_path)
+    governor = make()
+
+    with user(USER_A):
+        previous = governor.reserve("speech_synthesis", "gpt-realtime-2.1-mini")
+        err("AI_USAGE_LIMIT", governor.check_budget)
+    with sqlite3.connect(ledger) as db:
+        old_row = db.execute("SELECT * FROM reservations WHERE reservation_id=?", (previous,)).fetchone()
+
+    data.update(
+        approval_id="selected-pilot-topups",
+        max_calls=10,
+        budget_microusd=300_000,
+        allowed_models=["gpt-live-1"],
+        user_topups_microusd={policy.subject(USER_A): 150_000, policy.subject(USER_B): 150_000},
+    )
+    write(approval, data)
+    next_turn = live_talk_ceiling_microusd(80)
+
+    governor.check_budget(minimum_microusd=next_turn)  # Public capabilities preflight.
+    with user(USER_A):
+        governor.check_budget(minimum_microusd=next_turn)
+        governor.reserve_live_talk(80)
+        err("AI_USER_BUDGET_EXHAUSTED", lambda: governor.check_budget(minimum_microusd=next_turn))
+        err("AI_USER_BUDGET_EXHAUSTED", lambda: governor.reserve_live_talk(80))
+    with user(str(uuid4())):
+        err("AI_USER_BUDGET_EXHAUSTED", governor.check_budget)
+        err("AI_USER_BUDGET_EXHAUSTED", lambda: governor.reserve_live_talk(80))
+    with user(USER_B):
+        governor.check_budget(minimum_microusd=next_turn)
+        governor.reserve_live_talk(80)
+
+    with sqlite3.connect(ledger) as db:
+        assert db.execute("SELECT * FROM reservations WHERE reservation_id=?", (previous,)).fetchone() == old_row
+        assert db.execute("SELECT COUNT(*) FROM reservations").fetchone() == (3,)
+
+
+@pytest.mark.parametrize("topups", [None, {}, {"fake-subject": 500_000},
+                                    {"a" * 64: True}, {"a" * 64: 499_999}])
+def test_invalid_scoped_topup_approval_fails_closed(budget, topups):
+    _, approval, ledger, _, data, _, write, make = budget
+    write(approval, {**data, "user_topups_microusd": topups})
+
+    err("AI_SPENDING_NOT_APPROVED", make().check_budget)
+    assert not ledger.exists()
+
+
+def test_scoped_topup_approval_requires_cumulative_accounting(budget):
+    _, approval, ledger, policy_path, data, _, write, _ = budget
+    subject = load_policy(policy_path).subject(USER_A)
+    write(approval, {**data, "user_topups_microusd": {subject: data["budget_microusd"]}})
+    governor = AISpendingGovernor(approval, ledger, clock=lambda: NOW)
+
+    err("AI_SPENDING_NOT_APPROVED", governor.check_budget)
+    err("AI_SPENDING_NOT_APPROVED", lambda: governor.reserve("conversation", "gpt-6.1-terra"))
+    assert not ledger.exists()
 
 
 def test_legacy_baseline_must_match_all_pinned_immutable_rows(budget):

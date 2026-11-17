@@ -36,6 +36,8 @@ _APPROVAL_FIELDS = frozenset({
     "approval_id", "approved_by", "expires_at", "max_calls", "max_calls_per_minute",
     "budget_microusd", "reserve_per_call_microusd", "allowed_models",
 })
+_USER_TOPUPS_FIELD = "user_topups_microusd"
+_SUBJECT_DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}\Z")
 _SAFE_MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,99}\Z")
 _MAX_INTEGER = 2**53 - 1
@@ -64,6 +66,7 @@ class _Approval:
     budget_microusd: int
     reserve_per_call_microusd: int
     allowed_models: frozenset[str]
+    user_topups_microusd: dict[str, int] | None = None
 
 
 def _private_parent(path: Path) -> None:
@@ -112,7 +115,7 @@ def _load_approval(path: Path | None) -> _Approval:
             if len(raw) > 16_384:
                 raise ValueError("Approval too large")
             data = json.loads(raw, object_pairs_hook=_unique_object)
-        if not isinstance(data, dict) or set(data) != _APPROVAL_FIELDS:
+        if not isinstance(data, dict) or set(data) - {_USER_TOPUPS_FIELD} != _APPROVAL_FIELDS:
             raise ValueError("Unexpected approval fields")
         approval_id, approved_by = data["approval_id"], data["approved_by"]
         if not isinstance(approval_id, str) or not _SAFE_ID.fullmatch(approval_id):
@@ -136,6 +139,14 @@ def _load_approval(path: Path | None) -> _Approval:
             or any(not isinstance(model, str) or not _SAFE_MODEL.fullmatch(model) for model in models)
             or len(set(models)) != len(models)):
             raise ValueError("Invalid approved models")
+        topups = None
+        if _USER_TOPUPS_FIELD in data:
+            topups = data[_USER_TOPUPS_FIELD]
+            if (not isinstance(topups, dict) or not topups
+                or any(not _SUBJECT_DIGEST.fullmatch(subject) or type(amount) is not int or amount < 1
+                       for subject, amount in topups.items())
+                or sum(topups.values()) != data["budget_microusd"]):
+                raise ValueError("Invalid scoped top-up")
         canonical = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
         return _Approval(
             approval_id=approval_id,
@@ -146,6 +157,7 @@ def _load_approval(path: Path | None) -> _Approval:
             budget_microusd=data["budget_microusd"],
             reserve_per_call_microusd=data["reserve_per_call_microusd"],
             allowed_models=frozenset(models),
+            user_topups_microusd=topups,
         )
     except (OSError, UnicodeError, ValueError, TypeError, OverflowError, RecursionError):
         raise _not_approved() from None
@@ -278,12 +290,17 @@ class AISpendingGovernor:
             raise _unavailable()  # Removing an env path cannot disable cumulative limits.
 
     @staticmethod
-    def _check_policy_limits(policy, totals, ceiling, *, required_calls):
+    def _check_policy_limits(policy, approval, subject, totals, ceiling, *, required_calls):
         if totals["global_accounted_microusd"] > policy.global_budget_microusd - ceiling:
             raise APIError(429, "AI_GLOBAL_BUDGET_EXHAUSTED",
                            "The shared AI testing allowance is used up. Saved work is still available.")
-        if (totals["user_accounted_microusd"] > policy.per_user_budget_microusd - ceiling
-            or totals["user_calls"] + required_calls > policy.per_user_max_calls):
+        topup = None
+        if subject is not None and approval.user_topups_microusd is not None:
+            topup = approval.user_topups_microusd.get(subject, 0)
+        user_budget = policy.per_user_budget_microusd + (topup or 0)
+        if (totals["user_accounted_microusd"] > user_budget - ceiling
+            or totals["user_calls"] + required_calls > policy.per_user_max_calls
+            or (topup is not None and totals["user_approval_accounted_microusd"] > topup - ceiling)):
             raise APIError(429, "AI_USER_BUDGET_EXHAUSTED",
                            "Your AI testing allowance is used up. Saved work is still available.")
 
@@ -392,6 +409,10 @@ class AISpendingGovernor:
         if required_calls > approval.max_calls_per_minute:
             raise APIError(429, "AI_RATE_LIMIT", "The approved AI request rate is reached. Try again later.")
         policy = self._policy()
+        if approval.user_topups_microusd is not None and policy is None:
+            raise _not_approved()
+        user = ai_budget_subject.get()
+        subject = policy.subject(user) if policy is not None and user is not None else None
         if minimum_microusd > approval.budget_microusd:
             raise APIError(429, "AI_USAGE_LIMIT", "The approved AI testing allowance is used up. Saved work is still available.")
         try:
@@ -401,11 +422,10 @@ class AISpendingGovernor:
                 raise _unavailable() from None
             if policy is not None:
                 initial = policy.baseline_exposure_microusd + policy.external_hold_microusd
-                if ai_budget_subject.get() is not None:
-                    policy.subject(ai_budget_subject.get())
-                self._check_policy_limits(policy, {"global_accounted_microusd": initial,
-                    "user_accounted_microusd": 0, "user_calls": 0}, minimum_microusd,
-                    required_calls=required_calls)
+                self._check_policy_limits(policy, approval, subject, {
+                    "global_accounted_microusd": initial, "user_accounted_microusd": 0,
+                    "user_approval_accounted_microusd": 0, "user_calls": 0,
+                }, minimum_microusd, required_calls=required_calls)
             return
         except OSError:
             raise _unavailable() from None
@@ -437,12 +457,11 @@ class AISpendingGovernor:
             if policy is not None:
                 from app.services.ai_budget import ensure_schema, accounting
                 ensure_schema(connection, policy)
-                user = ai_budget_subject.get()
-                subject = policy.subject(user) if user is not None else None
                 totals = accounting(connection, policy, subject, approval.approval_id)
                 # Free preflight requires positive headroom; exact request ceiling
                 # is only known after assembling bounded provider input.
-                self._check_policy_limits(policy, totals, minimum_microusd, required_calls=required_calls)
+                self._check_policy_limits(policy, approval, subject, totals, minimum_microusd,
+                                          required_calls=required_calls)
                 reserved = totals["approval_accounted_microusd"]
             if reserved > approval.budget_microusd - minimum_microusd:
                 raise APIError(429, "AI_USAGE_LIMIT", "The approved AI testing allowance is used up. Saved work is still available.")
@@ -581,6 +600,8 @@ class AISpendingGovernor:
         if self._now() >= approval.expires_at:
             raise _not_approved()
         policy = self._policy()
+        if approval.user_topups_microusd is not None and policy is None:
+            raise _not_approved()
         ceiling = approval.reserve_per_call_microusd
         if policy is not None and _ceiling_microusd is not None:
             if type(_ceiling_microusd) is not int or not 1 <= _ceiling_microusd <= ceiling:
@@ -635,7 +656,7 @@ class AISpendingGovernor:
             if policy is not None:
                 from app.services.ai_budget import accounting
                 totals = accounting(connection, policy, subject, approval.approval_id)
-                self._check_policy_limits(policy, totals, ceiling, required_calls=1)
+                self._check_policy_limits(policy, approval, subject, totals, ceiling, required_calls=1)
                 accounted = totals["approval_accounted_microusd"]
             if calls >= approval.max_calls or accounted > approval.budget_microusd - ceiling:
                 raise APIError(429, "AI_USAGE_LIMIT", "The approved AI testing allowance is used up. Saved work is still available.")

@@ -245,7 +245,7 @@ def accounting(connection, policy, subject=None, approval_id=None):
             or gross != sum(row[5] for row in actual)):
             raise unavailable()
     exposure = policy.baseline_exposure_microusd + policy.external_hold_microusd
-    user_exposure = user_calls = approval_exposure = 0
+    user_exposure = user_calls = approval_exposure = user_approval_exposure = 0
     for rid, aid, operation, model, stamp, ceiling in rows:
         amount = settlements.get(rid, ceiling)
         if type(ceiling) is not int or ceiling < 1 or type(amount) is not int or amount < 0 or amount > MAX_INTEGER:
@@ -260,12 +260,15 @@ def accounting(connection, policy, subject=None, approval_id=None):
         if subject is not None and subjects.get(rid) == subject:
             user_exposure += amount
             user_calls += 1
+            if aid == approval_id:
+                user_approval_exposure += amount
         if aid == approval_id:
             approval_exposure += amount
     return {"global_accounted_microusd": exposure,
             "global_remaining_microusd": max(0, policy.global_budget_microusd - exposure),
             "external_hold_microusd": policy.external_hold_microusd,
             "user_accounted_microusd": user_exposure, "user_calls": user_calls,
+            "user_approval_accounted_microusd": user_approval_exposure,
             "approval_accounted_microusd": approval_exposure}
 
 

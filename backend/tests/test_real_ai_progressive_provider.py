@@ -84,6 +84,30 @@ def test_split_utf8_crlf_frames_reserve_exact_stream_request_and_settle_once(siz
     assert budget.settled[0][0][3]==envelope(raw)['usage']
     assert prefixes[-1]==raw and stream.closed
 
+
+@pytest.mark.parametrize("whole_text_event", [False, True])
+def test_completed_reply_can_arrive_without_provisional_text_with_inert_provider_events(whole_text_event):
+    raw = json.dumps({"answer": "Malmö"}, ensure_ascii=False)
+    response = envelope(raw)
+    response["output"].insert(0, {"type": "reasoning"})
+    rows = [
+        {"type": "response.queued", "sequence_number": 0},
+        {"type": "response.reasoning_summary_text.delta", "sequence_number": 1,
+         "item_id": "reasoning_synthetic", "output_index": 0, "summary_index": 0, "delta": "Inert metadata"},
+    ]
+    if whole_text_event:
+        rows.append({"type": "response.output_text.done", "sequence_number": 2, "item_id": "msg_synthetic",
+                     "output_index": 1, "content_index": 0, "text": raw})
+    rows.append({"type": "response.completed", "sequence_number": 3, "response": response})
+    client, budget, _, seen = adapter(Chunks([sse(rows)]))
+
+    async def suppressed(_):
+        raise AssertionError("A missing provisional reply should stay invisible until the save")
+
+    assert invoke(client, suppressed) == {"answer": "Malmö"}
+    assert len(seen) == len(budget.reserved) == len(budget.settled) == 1
+    assert budget.settled[0][1]["status"] == "completed"
+
 @pytest.mark.parametrize('failure',['eof','sequence','identity','index','after-done','final-mismatch','tool','refusal','unknown','duplicate-json','bad-utf8','oversized'])
 def test_corrupt_or_truncated_stream_never_falls_back_or_returns_a_final_result(failure):
     raw=json.dumps({'answer':'Hello'})

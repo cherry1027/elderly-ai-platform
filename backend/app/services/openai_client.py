@@ -347,9 +347,13 @@ class OpenAIClient:
                         if response.headers.get("content-type", "").split(";", 1)[0].strip() != "text/event-stream":
                             raise invalid_response()
                         previous_sequence, identity, text, text_done = -1, None, "", False
-                        allowed = {"response.created", "response.in_progress", "response.output_item.added",
-                            "response.content_part.added", "response.output_text.delta", "response.output_text.done",
-                            "response.content_part.done", "response.output_item.done", "response.completed"}
+                        allowed = {"response.created", "response.queued", "response.in_progress",
+                            "response.output_item.added", "response.content_part.added", "response.output_text.delta",
+                            "response.output_text.done", "response.content_part.done", "response.output_item.done",
+                            "response.reasoning_text.delta", "response.reasoning_text.done",
+                            "response.reasoning_summary_part.added", "response.reasoning_summary_part.done",
+                            "response.reasoning_summary_text.delta", "response.reasoning_summary_text.done",
+                            "response.completed"}
                         async for event in _response_events(response):
                             kind, sequence = event["type"], event.get("sequence_number")
                             if (kind not in allowed or type(sequence) is not int
@@ -362,8 +366,8 @@ class OpenAIClient:
                                     or type(current[1]) is not int or current[1] < 0 or type(current[2]) is not int or current[2] != 0
                                     or (identity is not None and current != identity) or text_done):
                                     raise invalid_response()
-                                identity = current
                                 if kind == "response.output_text.delta":
+                                    identity = current
                                     delta = event.get("delta")
                                     if not isinstance(delta, str):
                                         raise invalid_response()
@@ -372,15 +376,18 @@ class OpenAIClient:
                                         raise invalid_response()
                                     await on_text(text)
                                 else:
-                                    if event.get("text") != text:
+                                    finished = event.get("text")
+                                    if not isinstance(finished, str) or (identity is not None and finished != text):
                                         raise invalid_response()
+                                    identity, text = current, finished
                                     text_done = True
                             elif kind == "response.completed":
                                 final = event.get("response")
                                 if not isinstance(final, dict):
                                     raise invalid_response()
                                 parsed, final_text, output_index, item_id = _structured_output(final)
-                                if identity is None or identity != (item_id, output_index, 0) or text != final_text:
+                                if (not isinstance(item_id, str) or not 1 <= len(item_id) <= 256
+                                    or (identity is not None and (identity != (item_id, output_index, 0) or text != final_text))):
                                     raise invalid_response()
                                 reported_usage, service_tier = final.get("usage"), final.get("service_tier")
                                 outcome = "completed"

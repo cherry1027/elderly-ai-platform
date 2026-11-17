@@ -419,6 +419,10 @@ def test_generation_provider_timeout_remains_uncertain_after_dispatch(harness):
     ("generation", "AI_PROVIDER_TIMEOUT", "uncertain", "uncertain"),
     ("generation", None, "in_progress", "in_progress"),
     ("conversation", "DRAFT_VERIFICATION_FAILED", "uncertain", "uncertain"),
+    ("transcription", "AI_INVALID_RESPONSE", "uncertain", "failed"),
+    ("conversation", "AI_INVALID_RESPONSE", "uncertain", "failed"),
+    ("conversation", "CONVERSATION_INVALID_RESPONSE", "uncertain", "failed"),
+    ("conversation", "AI_PROVIDER_TIMEOUT", "uncertain", "uncertain"),
 ])
 def test_saved_operation_reconciliation_preserves_audit_and_requires_ownership(
     harness, kind, code, status, expected_status,

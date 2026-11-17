@@ -184,6 +184,35 @@ def test_proven_local_rejection_is_failed_instead_of_uncertain(harness):
     assert gateway.failures==1
 
 
+@pytest.mark.parametrize("code", ["AI_INVALID_RESPONSE", "CONVERSATION_INVALID_RESPONSE"])
+def test_invalid_paid_reply_can_continue_from_the_saved_transcript_without_reusing_the_key(harness, code):
+    app, gateway, provider = harness("sv")
+    successful = provider.respond
+    calls = 0
+
+    async def respond(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            mark_ai_dispatched()
+            raise APIError(503, code, "Reply could not be validated.")
+        return await successful(*args, **kwargs)
+
+    provider.respond = respond
+    key = uuid4()
+    body = {"source_transcript_id": str(TRANSCRIPT), "language": "sv"}
+    route = f"/api/v2/story-sessions/{SESSION}/messages"
+    with TestClient(app) as client:
+        failed = client.post(route, json=body, headers={"Idempotency-Key": str(key)})
+        repeated = client.post(route, json=body, headers={"Idempotency-Key": str(key)})
+        resumed = client.post(route, json=body, headers={"Idempotency-Key": str(uuid4())})
+    assert failed.status_code == 503 and failed.json()["error"]["code"] == code
+    assert gateway.claims[("conversation", key)]["status"] == "failed"
+    assert repeated.status_code == 409 and repeated.json()["error"]["code"] == "AI_OPERATION_FAILED"
+    assert resumed.status_code == 200 and resumed.json()["user_message"]["text"] == gateway.transcript["text"]
+    assert calls == 2 and gateway.failures == 1
+
+
 def test_replayed_valid_shape_cannot_return_another_project(harness):
     app,gateway,provider=harness()
     key=uuid4()

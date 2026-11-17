@@ -43,6 +43,11 @@ router = APIRouter(prefix="/api/v2", tags=["Real AI (explicit opt-in)"], respons
 _LOGGER = logging.getLogger("uvicorn.error")
 _PREVIEW_ORIGIN = "https://memy-visual-redesign-preview.onrender.com"
 _PILOT_ORIGIN = "https://memy-pilot.onrender.com"
+_PRE_SAVE_REJECTIONS = {
+    "transcription": {"AI_INVALID_RESPONSE"},
+    "conversation": {"AI_INVALID_RESPONSE", "CONVERSATION_INVALID_RESPONSE"},
+    "generation": {"DRAFT_VERIFICATION_FAILED"},
+}
 
 
 class WAVResponse(Response):
@@ -165,12 +170,12 @@ async def _execute(request, gateway, *, project_id, session_id, kind, key, finge
                 return result_scope(kind, result, project_id, session_id, claim["operation_id"])
         except BaseException as cause:
             code = cause.code if isinstance(cause, APIError) else "REAL_AI_UNCERTAIN"
-            draft_rejected = (kind == "generation" and not save_started and isinstance(cause, APIError)
-                              and cause.status_code == 422 and code == "DRAFT_VERIFICATION_FAILED")
+            rejected_before_save = not save_started and code in _PRE_SAVE_REJECTIONS.get(kind, ())
             try:
-                # A verifier rejection occurs before any draft write. The paid
-                # calls are accounted for separately by the provider governor.
-                await asyncio.shield(gateway.fail(claim, code, uncertain=trace.dispatched and not draft_rejected))
+                # Model rejection before persistence is a definite save failure.
+                # The governor independently keeps any paid or unresolved usage.
+                uncertain = save_started or (trace.dispatched and not rejected_before_save)
+                await asyncio.shield(gateway.fail(claim, code, uncertain=uncertain))
             except (Exception, asyncio.CancelledError):
                 pass  # Remains non-reclaimable even if recording failure is unavailable.
             if isinstance(cause, asyncio.CancelledError):
@@ -193,10 +198,10 @@ async def operation_result(row, gateway, operation_id=None):
     if operation_id is not None and result["operation_id"] != str(operation_id):
         raise unavailable()
     await gateway.get_project(UUID(result["project_id"]))
-    if (result["kind"] == "generation" and result["status"] == "uncertain"
-        and result["error_code"] == "DRAFT_VERIFICATION_FAILED" and result["result"] is None):
-        # Older releases marked every dispatched error uncertain, even when
-        # the verifier had rejected the draft before the save was attempted.
+    if (result["status"] == "uncertain" and result["result"] is None
+        and result["error_code"] in _PRE_SAVE_REJECTIONS.get(result["kind"], ())):
+        # These codes came from producing a result, before the save RPC. Keep
+        # earlier audit rows as-is while returning their recoverable outcome.
         result["status"] = "failed"
     if result["result"] is not None:
         normalized = await gateway.normalize_result(result["kind"], result["result"])

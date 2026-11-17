@@ -479,6 +479,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     if (!sessionId) { open(); return; }
     void run(async (signal, check) => {
       let completedTyped: RealTurn | null = null, typedFailed = false, failedVoiceId: string | null = null;
+      let recordingRejected = false;
       let completedDraft: RealDraft | undefined;
       if (pending.current) {
         const action = pending.current, expectedTyped = action.inputType === 'typed';
@@ -500,6 +501,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         if (state.status === 'in_progress' || state.status === 'uncertain') { setNotice(t.operationPending); return; }
         typedFailed = expectedTyped && state.status === 'failed';
         if (state.status === 'failed' && action.voiceTranscriptId) failedVoiceId = action.voiceTranscriptId;
+        recordingRejected = state.status === 'failed' && state.kind === 'transcription' && state.error_code === 'AI_INVALID_RESPONSE';
         completedDraft = state.generatedDraft;
         if (expectedTyped && state.status === 'completed') {
           if (!state.typedTurn || !action.textDigest) throw new RealAiError('invalid-response');
@@ -534,7 +536,8 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       // Only a verified failed operation permits another deliberate paid attempt.
       if (failedVoiceId) setSafeReplyId(failedVoiceId);
       setAmbiguousEdit(false); editingDraft.current = null; setEditor(null);
-      setNotice(completedDraft ? t.bookCreated : typedFailed ? t.textNotSent : t.checked);
+      setNotice(completedDraft ? t.bookCreated : typedFailed ? t.textNotSent : failedVoiceId ? t.replyNotReady
+        : recordingRejected ? t.recordingNotTranscribed : t.checked);
     }, undefined, 'checking');
   };
   const discardAudio = () => {
@@ -1152,7 +1155,14 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       </View>)}
     </>;
   }
+  const checkSavedAction = (unresolved || ambiguousEdit) && <ActionButton language={language}
+    label={t.check} onPress={checkSaved} disabled={busy || recording || !sessionId} primary />;
+  const recoverableTranscript = notice === t.replyNotReady && unplacedTranscripts.find(source =>
+    source.transcript_id === safeReplyId && canReply(source));
   const composer = !suspended && tab === 'chat' && <View testID="conversation-composer" style={styles.composer}>
+    {checkSavedAction}
+    {recoverableTranscript && <ActionButton {...actionDefaults} label={t.process}
+      onPress={() => ask(recoverableTranscript)} primary />}
     {liveStartMs !== null && note(t.liveTiming((liveStartMs / 1000).toLocaleString(locale, { maximumFractionDigits: 2 })))}
     {liveStatus && <Text allowFontScaling accessibilityLanguage={locale} accessibilityLiveRegion="polite" style={styles.note}>
       {liveStatus === 'connecting' ? t.liveConnecting : liveStatus === 'listening' ? t.liveListening
@@ -1238,8 +1248,6 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     {checkbox(t.generationConsent, generationConsent, () => setGenerationConsent(!generationConsent), blocked || editor !== null)}
     <ActionButton {...actionDefaults} label={t.generate} onPress={generate} disabled={blocked || usageBlocked || serviceBlocked || editor !== null || !generationConsent || hasOpenQuestions || !capabilities?.writing || !readStates.memories.loaded || !hasConfirmedMemories} primary />
   </>;
-  const checkSavedAction = (unresolved || ambiguousEdit) && <ActionButton language={language}
-    label={t.check} onPress={checkSaved} disabled={busy || recording || !sessionId} primary />;
   return <Screen scrollViewRef={contentScroll} onContentLayout={event => { scrollOffsets.current.body = event.nativeEvent.layout.y; }} working keyboardAware bottomKeyboardAware back={{ language, label: t.back, onPress: () => leave.requestLeave(() => latest.current.onBack()) }}
     bottomControls={composer}><View style={styles.workspace} testID="real-workspace-layout" onLayout={event => { scrollOffsets.current.workspace = event.nativeEvent.layout.y; }}>
     <StoryDisclosure language={language} label={t.moreActions} compact
@@ -1281,7 +1289,8 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
           {unplacedTranscripts.map(source => <View key={source.transcript_id} style={[styles.bubble, styles.userBubble]}>
             <Text allowFontScaling style={styles.speaker}>{t.you}</Text>{note(t.voiceMessage)}
             <Text allowFontScaling selectable accessibilityLanguage={accessibilityLanguages[project.language]} style={styles.body}>{source.text}</Text>
-            {canReply(source) && <ActionButton {...actionDefaults} label={t.process} onPress={() => ask(source)}
+            {canReply(source) && (!recoverableTranscript || source.transcript_id !== recoverableTranscript.transcript_id)
+              && <ActionButton {...actionDefaults} label={t.process} onPress={() => ask(source)}
               disabled={blocked || usageBlocked || serviceBlocked || !capabilities?.conversation} primary />}
           </View>)}
           {outbox && <View testID="pending-typed-message" style={[styles.bubble, styles.userBubble]}>
@@ -1328,7 +1337,6 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
           {(pages[resource] ?? 0) >= 1000 ? note(t.pageLimit) : <ActionButton {...actionDefaults} label={`${t.loadMore}: ${t[resource]}`} onPress={() => loadMore(resource)}
             disabled={blocked || editor !== null || (savedWordsOpen && (readStates.messages.loading || !!readStates.messages.error))} />}
         </View>)}
-      {tab === 'chat' && checkSavedAction}
     </>}
     {busy && tab !== 'chat' && !localRecording && !textSending && !voiceReplySending && <Text allowFontScaling accessibilityLiveRegion="polite" style={styles.note}>{busyLabel}</Text>}
     {notice === t.auth && <AccountAction language={language} quiet label={t.signOut} onPress={() => leave.requestLeave(() => latest.current.onSignOut())} />}

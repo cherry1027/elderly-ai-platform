@@ -418,6 +418,34 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     expect(api.getRealOperation).toHaveBeenCalledWith(expect.anything(), ids.memory);
     expect(api.findRealOperation).not.toHaveBeenCalled(); expect(api.sendRealMessage).toHaveBeenCalledTimes(1);
   });
+  it('shows recovery in the composer and reuses saved words after an invalid reply is confirmed failed', async () => {
+    jest.mocked(api.getRealTranscripts).mockResolvedValueOnce([]).mockResolvedValue([realTranscript()]);
+    jest.mocked(api.sendRealMessage).mockRejectedValueOnce(new api.RealAiError('unavailable', 503, true, 'AI_INVALID_RESPONSE', undefined, ids.memory));
+    jest.mocked(api.getRealOperation).mockResolvedValue({ operation_id: ids.memory, project_id: ids.project, session_id: ids.session,
+      kind: 'conversation', status: 'failed', created_at: project.created_at, updated_at: project.created_at, error_code: 'AI_INVALID_RESPONSE', result: null });
+    await render(<RealStoryWorkspace {...props} />); await ready(); await startVoice(); await press(t.stop);
+    const composer = within(screen.getByTestId('conversation-composer'));
+    expect(composer.getByRole('button', { name: t.check })).toBeEnabled();
+    await press(t.check);
+    expect(composer.queryByRole('button', { name: t.check })).toBeNull();
+    expect(composer.getByRole('button', { name: t.process })).toBeEnabled();
+    expect(screen.getByText(t.replyNotReady)).toBeOnTheScreen();
+    expect(api.sendRealMessage).toHaveBeenCalledTimes(1);
+    await press(t.process);
+    expect(api.sendRealMessage).toHaveBeenCalledTimes(2);
+    expect(api.transcribeRealRecording).toHaveBeenCalledTimes(1);
+  });
+  it('unlocks the retained clip after a transcription result is confirmed failed', async () => {
+    jest.mocked(api.transcribeRealRecording).mockRejectedValueOnce(new api.RealAiError('unavailable', 503, true, 'AI_INVALID_RESPONSE', undefined, ids.memory));
+    jest.mocked(api.getRealOperation).mockResolvedValue({ operation_id: ids.memory, project_id: ids.project, session_id: ids.session,
+      kind: 'transcription', status: 'failed', created_at: project.created_at, updated_at: project.created_at, error_code: 'AI_INVALID_RESPONSE', result: null });
+    await render(<RealStoryWorkspace {...props} />); await ready(); await startVoice(); await press(t.stop); await press(t.check);
+    expect(screen.getByText(t.recordingNotTranscribed)).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: t.stop })).toBeEnabled();
+    expect(api.sendRealMessage).not.toHaveBeenCalled();
+    expect(api.transcribeRealRecording).toHaveBeenCalledTimes(1);
+    expect(recorder.discard).not.toHaveBeenCalled();
+  });
   it('shows a recovered voice reply without automatically opening a separate speech operation', async () => {
     jest.mocked(api.sendRealMessage).mockRejectedValueOnce(new api.RealAiError('network', undefined, true));
     jest.mocked(api.findRealOperation).mockResolvedValue({ operation_id: ids.memory, project_id: ids.project, session_id: ids.session,

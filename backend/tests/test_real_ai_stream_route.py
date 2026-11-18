@@ -148,14 +148,19 @@ def test_voice_route_uses_same_stream_and_source_contract(harness):
 
 
 @pytest.mark.parametrize('language', ['en', 'sv'])
-@pytest.mark.parametrize('speech_outcome', ['ready', 'timeout', 'disabled', 'streamed', 'stream-timeout'])
+@pytest.mark.parametrize('speech_outcome', ['ready', 'timeout', 'disabled', 'streamed', 'stream-timeout', 'live-voice'])
 @pytest.mark.parametrize('preview', [False, True])
 def test_recorded_turn_saves_text_before_single_speech_attempt(harness, language, speech_outcome, preview):
     app, _, provider = harness(language)
     enable(app)
     app.state.settings.real_ai_speech_enabled = speech_outcome != 'disabled'
     app.state.settings.real_ai_swedish_preview_cedar = preview
-    opt_in = speech_outcome in {'streamed', 'stream-timeout'}
+    voice_id = 'voice_minna_test'
+    if speech_outcome == 'live-voice':
+        app.state.settings.real_ai_live_voice_id = voice_id
+    use_live_voice = speech_outcome == 'live-voice' and preview
+    opt_in = speech_outcome in {'streamed', 'stream-timeout', 'live-voice'}
+    streamed_pcm = opt_in and preview and not use_live_voice
     app.state.settings.real_ai_preview_talk_enabled = opt_in
     app.state.real_ai.require_preview_talk = lambda: provider
     provider.text_model = 'gpt-6-luna'
@@ -164,6 +169,8 @@ def test_recorded_turn_saves_text_before_single_speech_attempt(harness, language
             result = await super().complete(claim, payload, provenance)
             if claim['kind'] == 'conversation':
                 result.update(clarifications=[], requires_clarification=False)
+                message = result['message']
+                self.local_rows['real_conversation_messages', UUID(message['id'])] = message
             return result
 
     gateway = VoiceGateway(language)
@@ -179,7 +186,7 @@ def test_recorded_turn_saves_text_before_single_speech_attempt(harness, language
         spoken.append((text, spoken_language, voice))
         assert minna_delivery is preview
         mark_ai_dispatched()
-        assert (on_pcm is not None) == (opt_in and preview)
+        assert (on_pcm is not None) == streamed_pcm
         if on_pcm is not None:
             await on_pcm(data[44:])
         if speech_outcome in {'timeout', 'stream-timeout'}:
@@ -187,6 +194,17 @@ def test_recorded_turn_saves_text_before_single_speech_attempt(harness, language
         return SpeechAudio(data, 'audio/wav', sha256(data).hexdigest(), 0.01, 'fixture', voice)
 
     provider.synthesize = synthesize
+
+    async def synthesize_live(text, spoken_language):
+        assert use_live_voice
+        turn = next(row['result'] for row in gateway.claims.values()
+                    if row['kind'] == 'conversation' and row['status'] == 'completed')
+        assert turn['message']['text'] == text
+        assert ('speech', UUID(turn['message']['id'])) in gateway.claims
+        spoken.append((text, spoken_language, voice_id))
+        return SpeechAudio(data, 'audio/wav', sha256(data).hexdigest(), 0.01, 'gpt-live-1', voice_id)
+
+    app.state.real_ai.live_talk_provider = SimpleNamespace(synthesize=synthesize_live)
     url = f'/api/v2/story-sessions/{SESSION}/messages?autoplay=true'
     if opt_in:
         url += '&talk_preview=true&stream_audio=true'
@@ -197,18 +215,22 @@ def test_recorded_turn_saves_text_before_single_speech_attempt(harness, language
     with TestClient(app) as client:
         response = client.post(url, json=payload, headers=headers)
         replay = client.post(url, json=payload, headers=headers)
+        if use_live_voice:
+            metadata = frames(response)[-1]['metadata']
+            cached = client.get(f"/api/v2/spoken-replies/{metadata['speech_id']}/audio", headers=headers)
+            assert cached.status_code == 200 and cached.content == data
     events = frames(response)
     assert [event['type'] for event in events[:3]] == ['operation', 'saving', 'saved']
-    assert len(events) == (5 if opt_in and preview else 4)
+    assert len(events) == (5 if streamed_pcm else 4)
     saved = events[2]['result']
     assert replay.json() == saved and provider.calls == 1
-    if opt_in and preview:
+    if streamed_pcm:
         assert events[3]['type'] == 'speech-chunk' and events[3]['sequence'] == 0
         assert events[3]['assistant_message_id'] == saved['message']['id']
         assert b64decode(events[3]['pcm']) == data[44:]
     last = events[-1]
-    if speech_outcome in {'ready', 'streamed'}:
-        assert last['type'] == ('speech-complete' if opt_in and preview else 'speech')
+    if speech_outcome in {'ready', 'streamed', 'live-voice'}:
+        assert last['type'] == ('speech-complete' if streamed_pcm else 'speech')
         assert last['metadata']['assistant_message_id'] == saved['message']['id']
         assert last['metadata']['language'] == language
         if last['type'] == 'speech':
@@ -220,7 +242,7 @@ def test_recorded_turn_saves_text_before_single_speech_attempt(harness, language
         assert last['error']['code'] == ('AI_PROVIDER_TIMEOUT' if timed_out else 'LIVE_AI_DISABLED')
         assert last['operation_id'] != events[0]['operation_id']
         assert gateway.failures == timed_out
-    expected_voice = 'cedar' if preview else 'marin'
+    expected_voice = voice_id if use_live_voice else 'cedar' if preview else 'marin'
     assert spoken == ([(saved['message']['text'], language, expected_voice)] if speech_outcome != 'disabled' else [])
     assert [row['status'] for row in gateway.claims.values() if row['kind'] == 'conversation'] == ['completed']
 

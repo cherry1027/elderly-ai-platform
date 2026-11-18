@@ -76,6 +76,20 @@ def complete(governor, rid, **changes):
         status='completed',service_tier='default')
 
 
+def test_saved_reply_uses_the_existing_live_budget_and_one_reservation(budget):
+    _, approval, ledger, _, data, _, write, make = budget
+    instance = make()
+    with user(), instance.workflow():
+        err('AI_SPENDING_NOT_APPROVED', lambda: instance.reserve_live_audio('speech_synthesis', 25))
+        data['allowed_models'].append('gpt-live-1')
+        write(approval, data)
+        reservation = instance.reserve_live_audio('speech_synthesis', 25)
+        instance.settle(reservation, 'speech_synthesis', 'gpt-live-1', {'seconds': 4}, status='completed')
+    with sqlite3.connect(ledger) as db:
+        assert db.execute('SELECT operation, model, ceiling_microusd FROM reservations').fetchall() == [
+            ('speech_synthesis', 'gpt-live-1', live_talk_ceiling_microusd(25))]
+
+
 def test_future_success_settles_without_rewriting_gross_history(budget):
     _, _, ledger, _, _, _, _, make = budget
     instance = make()

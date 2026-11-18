@@ -15,6 +15,7 @@ import pytest
 
 from app.api import real_ai_live
 from app.api.real_ai import speech_cache_id
+from app.core.errors import APIError
 from app.services.ai_budget import live_talk_ceiling_microusd, observed_cost_microusd
 from app.services.live_talk import LIVE_MODEL, LIVE_SECONDS, LiveTalkError, LiveTalkProvider, SpokenTurn
 from app.services.openai_client import mark_ai_dispatched
@@ -72,6 +73,58 @@ class FakeLiveSocket:
                 self.replied = True
         elif event["type"] == "session.close":
             self.events.put_nowait({"type": "session.closed", "usage": {"seconds": 4}, "session": {"id": "test"}})
+
+
+class FakeSavedReadingSocket(FakeLiveSocket):
+    async def send(self, raw):
+        event = json.loads(raw)
+        if event["type"] == "session.instructions.append":
+            self.sent.append(event)
+            self.events.put_nowait({"type": "session.output_audio.delta", "delta": b64encode(self.spoken.pcm).decode()})
+            self.events.put_nowait({"type": "session.output_transcript.delta", "delta": self.spoken.reply,
+                                    "start_ms": 500, "end_ms": 800})
+        elif event["type"] == "session.close":
+            self.sent.append(event)
+            self.events.put_nowait({"type": "session.closed", "reason": "close_requested",
+                                    "usage": {"seconds": 3.4}, "session": {"id": "test"}})
+        else:
+            await super().send(raw)
+
+
+@pytest.mark.parametrize("language,text,transcript,match", [
+    ("en", "What do you remember?", "what do you remember", True),
+    ("sv", "Vad minns du från Vänern?", "Vad minns du från Vänern?", True),
+    ("sv", "Vad minns du från Vänern?", "Vad minns du från Vättern?", False),
+])
+def test_saved_reply_uses_the_live_voice_and_checks_the_entire_utterance(language, text, transcript, match):
+    async def scenario():
+        socket = FakeSavedReadingSocket(SpokenTurn("", transcript, PCM))
+        calls = []
+        governor = SimpleNamespace(
+            reserve_live_audio=lambda op, seconds: calls.append(("reserve", op, seconds)) or "one",
+            settle=lambda *args, **kwargs: calls.append(("settle", args, kwargs)),
+        )
+        provider = LiveTalkProvider(SecretStr("test"), governor, voice_id="voice_minna_test",
+                                    connector=lambda *_args, **_kwargs: socket)
+        if match:
+            audio = await provider.synthesize(text, language)
+            assert audio.voice == "voice_minna_test" and audio.model == LIVE_MODEL
+            with wave.open(BytesIO(audio.data), "rb") as wav:
+                assert wav.readframes(wav.getnframes()) == PCM
+        else:
+            with pytest.raises(APIError) as rejected:
+                await provider.synthesize(text, language)
+            assert rejected.value.code == "AI_SPEECH_INVALID_RESPONSE"
+        start = socket.sent[0]["session"]
+        assert start["audio"]["output"]["voice"] == {"id": "voice_minna_test"} and start["store"] is False
+        assert json.loads(start["input"][0]["content"][0]["text"]) == {"saved_reply": text, "language": language}
+        assert socket.microphone and all(frame == bytes(len(frame)) for frame in socket.microphone)
+        assert sum(item["type"] == "session.instructions.append" for item in socket.sent) == 1
+        assert calls == [("reserve", "speech_synthesis", 25),
+                         ("settle", ("one", "speech_synthesis", LIVE_MODEL, {"seconds": 3.4}),
+                          {"status": "completed" if match else "failed"})]
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("language,prompt_fragment", [

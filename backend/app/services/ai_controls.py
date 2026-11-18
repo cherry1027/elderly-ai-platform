@@ -322,11 +322,15 @@ class AISpendingGovernor:
         return self.reserve("transcription", model, _ceiling_microusd=ceiling)
 
     def reserve_live_talk(self, seconds):
+        with self.workflow():
+            return self.reserve_live_audio("conversation", seconds)
+
+    def reserve_live_audio(self, operation, seconds):
+        """Reserve a bounded Live session inside the caller's workflow lock."""
         if self.budget_policy_path is None:
             raise _not_approved()
         from app.services.ai_budget import live_talk_ceiling_microusd
-        with self.workflow():
-            return self.reserve("conversation", "gpt-live-1", _ceiling_microusd=live_talk_ceiling_microusd(seconds))
+        return self.reserve(operation, "gpt-live-1", _ceiling_microusd=live_talk_ceiling_microusd(seconds))
 
     def check_request_group(self, requests):
         """Check the complete workflow before paying for its first stage.

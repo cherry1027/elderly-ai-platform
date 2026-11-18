@@ -28,6 +28,7 @@ from app.schemas.story_drafts import StoryDraftPatch, StoryEditResponse, StoryGe
 from app.schemas.errors import ErrorResponse
 from app.services.audio_upload import read_recording
 from app.services.auth import AuthenticatedUser
+from app.services.live_talk import LIVE_MODEL
 from app.services.minna_voice import CEDAR_VOICE
 from app.services.real_ai_resources import RealAIGateway, validated, read_together
 from app.services.openai_client import DispatchTrace, ai_dispatch_trace
@@ -579,25 +580,38 @@ async def prepare_speech(request, gateway, message, idempotency_key, *, on_pcm=N
     language = message["language"]
     cedar_voice = uses_cedar(request, language)
     check_operation_policy(request, kind="speech")
+    settings = request.app.state.settings
+    runtime = request.app.state.real_ai
+    preview = is_preview_origin(request)
+    minna_voice_id = settings.real_ai_live_voice_id if preview else None
+    model = LIVE_MODEL if minna_voice_id else settings.real_ai_speech_model
     audio = None
 
     async def produce(provider):
         nonlocal audio
-        options = {"voice": CEDAR_VOICE, "minna_delivery": True} if cedar_voice else {}
-        if on_pcm is not None:
-            options["on_pcm"] = on_pcm
-        audio = await provider.synthesize(message["text"], language, **options)
-        if cedar_voice and audio.voice != CEDAR_VOICE:
+        if minna_voice_id:
+            if runtime.live_talk_provider is None:
+                raise APIError(503, "REAL_AI_NOT_CONFIGURED", "Minna's voice is unavailable.")
+            # The Live transcript has no final marker. Deliver this WAV only
+            # after the complete utterance and session have been verified.
+            audio = await runtime.live_talk_provider.synthesize(message["text"], language)
+        else:
+            options = {"voice": CEDAR_VOICE, "minna_delivery": True} if cedar_voice else {}
+            if on_pcm is not None:
+                options["on_pcm"] = on_pcm
+            audio = await provider.synthesize(message["text"], language, **options)
+        expected_voice = minna_voice_id or (CEDAR_VOICE if cedar_voice else None)
+        if expected_voice and audio.voice != expected_voice:
             raise unavailable()
         return {"assistant_message_id": str(message_id), "media_type": audio.media_type,
             "audio_sha256": audio.sha256, "audio_size": len(audio.data),
-            "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=request.app.state.real_ai.cache.ttl)).isoformat()}
+            "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=runtime.cache.ttl)).isoformat()}
 
     result = await execute(request, gateway, project_id=UUID(message["project_id"]),
         session_id=UUID(message["session_id"]), kind="speech", key=idempotency_key,
         fingerprint=digest({"assistant_id":str(message_id),"text_sha256":hashlib.sha256(message["text"].encode()).hexdigest(),"language":language}),
-        produce=produce, model=request.app.state.settings.real_ai_speech_model, speech_assistant=message)
-    cache = request.app.state.real_ai.cache
+        produce=produce, model=model, speech_assistant=message)
+    cache = runtime.cache
     if result["assistant_message_id"] != str(message_id) or result["language"] != language:
         raise unavailable()
     cache_id = speech_cache_id(UUID(result["speech_id"]), cedar_voice, language)
@@ -606,8 +620,10 @@ async def prepare_speech(request, gateway, message, idempotency_key, *, on_pcm=N
         if len(audio.data) != result["audio_size"]:
             raise unavailable()
         cache.put(gateway.user.id, cache_id, audio.data, result["audio_sha256"], expires_at=expires.timestamp())
-        if cedar_voice:
-            _LOGGER.info("Verified Cedar speech saved (language=%s, preview=%s)", language, is_preview_origin(request))
+        if minna_voice_id:
+            _LOGGER.info("Verified Live Talk voice saved (language=%s)", language)
+        elif cedar_voice:
+            _LOGGER.info("Verified Cedar speech saved (language=%s, preview=%s)", language, preview)
     if expires <= datetime.now(timezone.utc):
         raise APIError(410, "SPEECH_EXPIRED", "Spoken reply expired. Request a new reply explicitly.")
     # Fresh bytes passed the cache write and hash check. Same-key replays

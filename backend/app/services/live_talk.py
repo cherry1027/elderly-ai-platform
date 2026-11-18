@@ -35,6 +35,7 @@ MAX_MIC_FRAME = 8192
 MAX_REPLY_PCM = 20 * PCM_PER_SECOND
 MAX_EVENT_BYTES = 256_000
 END_OF_INPUT_SILENCE = bytes(PCM_PER_SECOND // 10)
+FINAL_INPUT_FRAMES = 5  # Give the last syllable half a second to reach the Live timeline.
 FINISHED_REPLY_TIMEOUT = 7.0
 FINISH_TURN_EVENT = "memy_caller_finished"
 FINISH_REMINDER_EVENT = "memy_caller_finished_reminder"
@@ -307,20 +308,27 @@ class LiveTalkProvider:
         audio = bytearray()
         user, reply = [], []
         heard_user = False
+        submitted = False
         reply_released = False
         finish_event = FINISH_TURN_EVENT
-        submitted_at = last_spoken = stopped = closing = None
+        cue_sent_at = last_spoken = stopped = closing = None
         clock = asyncio.get_running_loop().time
         began = clock()
 
         async def capture():
-            nonlocal submitted_at, heard_user, stopped
+            nonlocal submitted, cue_sent_at, heard_user, stopped
             size = 0
             try:
                 async for pcm in microphone:
                     if pcm is None:
                         if size:
-                            submitted_at = clock()
+                            submitted = True
+                            # Appended instructions can interrupt audio processing.
+                            # Advance the timeline before signaling the model to speak.
+                            for _ in range(FINAL_INPUT_FRAMES):
+                                await _send_audio(socket, END_OF_INPUT_SILENCE)
+                                await asyncio.sleep(len(END_OF_INPUT_SILENCE) / PCM_PER_SECOND)
+                            cue_sent_at = clock()
                             await socket.send(json.dumps({"type": "session.instructions.append",
                                 "event_id": FINISH_TURN_EVENT, "delegation_id": None,
                                 "content": FINISH_TURN_PROMPTS[language]}))
@@ -347,17 +355,17 @@ class LiveTalkProvider:
                 if sender.done() and not sender.cancelled():
                     sender.result()
                 done_speaking = (last_spoken is not None and now - last_spoken >= 1.1
-                                 and (reply or now - submitted_at >= FINISHED_REPLY_TIMEOUT))
-                abandoned = stopped is not None and submitted_at is None
-                no_reply = submitted_at is not None and last_spoken is None and now - submitted_at >= FINISHED_REPLY_TIMEOUT
+                                 and (reply or now - cue_sent_at >= FINISHED_REPLY_TIMEOUT))
+                abandoned = stopped is not None and not submitted
+                no_reply = cue_sent_at is not None and last_spoken is None and now - cue_sent_at >= FINISHED_REPLY_TIMEOUT
                 if closing is None and (done_speaking or abandoned or no_reply or now - began >= LIVE_SECONDS - 9):
                     closing = now
                     sender.cancel()
                     await socket.send(json.dumps({"type": "session.close"}))
                 if closing is not None and now - closing > 4:
                     raise LiveTalkError()
-                if (closing is None and submitted_at is not None and finish_event == FINISH_TURN_EVENT
-                    and last_spoken is None and not reply and now - submitted_at >= FINISH_REMINDER_AFTER):
+                if (closing is None and cue_sent_at is not None and finish_event == FINISH_TURN_EVENT
+                    and last_spoken is None and not reply and now - cue_sent_at >= FINISH_REMINDER_AFTER):
                     # Some Live sessions have already tried to respond during a pause.
                     # A speakable update in the same metered session releases the reply.
                     reply_released = False
@@ -373,7 +381,7 @@ class LiveTalkProvider:
                     _append(user, event, 8_000)
                     heard_user = heard_user or bool(user[-1].strip())
                 elif (kind in {"session.instructions.appended", "session.commentary.appended"}
-                      and submitted_at is not None and closing is None and event.get("client_event_id") == finish_event):
+                      and cue_sent_at is not None and closing is None and event.get("client_event_id") == finish_event):
                     reply_released = True
                 elif kind == "session.output_transcript.delta" and reply_released and heard_user:
                     _append(reply, event, 1_000)
@@ -388,7 +396,7 @@ class LiveTalkProvider:
                         await on_voice(pcm)
                 elif kind == "session.closed":
                     result = (SpokenTurn("".join(user).strip(), "".join(reply).strip(), bytes(audio))
-                              if submitted_at is not None else SpokenTurn("", "", b""))
+                              if submitted else SpokenTurn("", "", b""))
                     return result, _closed_usage(event, session_id)
                 elif kind in {"error", "session.error", "session.delegation.created"}:
                     raise LiveTalkError()

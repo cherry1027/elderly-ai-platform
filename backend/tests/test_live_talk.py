@@ -18,7 +18,8 @@ from app.api.real_ai import speech_cache_id
 from app.core.errors import APIError
 from app.services.ai_budget import live_talk_ceiling_microusd, observed_cost_microusd
 from app.services.live_talk import (
-    FINISH_REMINDER_EVENT, FINISH_TURN_EVENT, LIVE_MODEL, LIVE_SECONDS, LiveTalkError, LiveTalkProvider, SpokenTurn,
+    FINAL_INPUT_FRAMES, FINISH_REMINDER_EVENT, FINISH_TURN_EVENT, LIVE_MODEL, LIVE_SECONDS,
+    LiveTalkError, LiveTalkProvider, SpokenTurn,
 )
 from app.services.openai_client import mark_ai_dispatched
 from tests.test_real_ai_api import SESSION, harness
@@ -258,8 +259,9 @@ def test_live_talk_keeps_the_whole_turn_and_discards_audio_until_done_is_acknowl
         assert turn == SpokenTurn(early.transcript + final.transcript, final.reply, final.pcm)
         assert played == [final.pcm]
         assert socket.microphone[:3] == [PCM, bytes(len(PCM)), second_phrase]
+        assert socket.microphone[3:3 + FINAL_INPUT_FRAMES] == [bytes(4_800)] * FINAL_INPUT_FRAMES
         names = [item['type'] for item in socket.sent]
-        assert names[:4] == ['session.input_audio.append'] * 3 + ['session.instructions.append']
+        assert names[:4 + FINAL_INPUT_FRAMES] == ['session.input_audio.append'] * (3 + FINAL_INPUT_FRAMES) + ['session.instructions.append']
 
     asyncio.run(scenario())
 

@@ -86,17 +86,17 @@ test('real AI local persistence trust boundary and source lifecycle',async t=>{
       assert.equal(first.claimed,true); assert.ok(first.claim_token);
       const retry=await claim(db,'transcription',key);
       assert.equal(retry.claimed,false); assert.equal(retry.status,'in_progress'); assert.equal(retry.claim_token,undefined);
-      await assert.rejects(()=>claim(db,'transcription',key,A,PA,SA,'b'.repeat(64)),errorCode('40001'));
+      await assert.rejects(()=>claim(db,'transcription',key,A,PA,SA,'b'.repeat(64)),errorCode('PT409'));
       const otherSession=randomUUID();
       await db.query("INSERT INTO public.conversation_sessions(id,project_id,language) VALUES($1,$2,'en')",[otherSession,PA]);
-      await assert.rejects(()=>claim(db,'transcription',key,A,PA,otherSession),errorCode('40001'));
+      await assert.rejects(()=>claim(db,'transcription',key,A,PA,otherSession),errorCode('PT409'));
       await assert.rejects(()=>claim(db,'transcription',randomUUID(),A,PB,SB),errorCode('P0002'));
       await assert.rejects(()=>claim(db,'transcription',randomUUID(),A,PA,SB),errorCode('P0002'));
       await assert.rejects(()=>complete(db,{...first,claim_token:randomUUID()},{text:'No'}),errorCode('42501'));
       await fail(db,first);
       const stopped=await claim(db,'transcription',key);
       assert.equal(stopped.status,'uncertain'); assert.equal(stopped.claimed,false); assert.equal(stopped.claim_token,undefined);
-      await assert.rejects(()=>complete(db,first,{text:'No silent repaid retry'}),errorCode('40001'));
+      await assert.rejects(()=>complete(db,first,{text:'No silent repaid retry'}),errorCode('PT409'));
       const knownFailure=await claim(db); await fail(db,knownFailure,false);
       const status=await user(db,A,()=>rpc(db,'get_real_ai_operation',[knownFailure.operation_id],['uuid']));
       assert.equal(status.status,'failed'); assert.equal(status.claim_token,undefined);
@@ -141,20 +141,20 @@ test('real AI local persistence trust boundary and source lifecycle',async t=>{
     await t.test('one transcript digest cannot claim a second paid reply under a different action key',async()=>{
       const digest='d'.repeat(64),key=randomUUID();
       const claimed=await claim(db,'conversation',key,A,PA,SA,digest);
-      await assert.rejects(()=>claim(db,'conversation',randomUUID(),A,PA,SA,digest),errorCode('40001'));
+      await assert.rejects(()=>claim(db,'conversation',randomUUID(),A,PA,SA,digest),errorCode('PT409'));
       const replay=await claim(db,'conversation',key,A,PA,SA,digest);
       assert.equal(replay.claimed,false); assert.equal(replay.claim_token,undefined);
       await fail(db,claimed,true);
-      await assert.rejects(()=>claim(db,'conversation',randomUUID(),A,PA,SA,digest),errorCode('40001'));
+      await assert.rejects(()=>claim(db,'conversation',randomUUID(),A,PA,SA,digest),errorCode('PT409'));
       assert.equal((await claim(db,'conversation',key,A,PA,SA,digest)).status,'uncertain');
       const failedDigest='e'.repeat(64),failed=await claim(db,'conversation',randomUUID(),A,PA,SA,failedDigest);
       await fail(db,failed,false,'AI_APPROVAL_REQUIRED');
       const explicitRetry=await claim(db,'conversation',randomUUID(),A,PA,SA,failedDigest);
       assert.equal(explicitRetry.claimed,true); assert.notEqual(explicitRetry.operation_id,failed.operation_id);
       await assert.rejects(()=>complete(db,failed,{source_transcript_id:tr.transcript_id,
-        assistant_text:'The failed original key cannot be retried.',memories:[]}),errorCode('40001'));
+        assistant_text:'The failed original key cannot be retried.',memories:[]}),errorCode('PT409'));
       await fail(db,explicitRetry,true);
-      await assert.rejects(()=>claim(db,'conversation',randomUUID(),A,PA,SA,failedDigest),errorCode('40001'));
+      await assert.rejects(()=>claim(db,'conversation',randomUUID(),A,PA,SA,failedDigest),errorCode('PT409'));
       // SQL fixtures represent trusted server dispatch-trace decisions. These
       // do not independently prove that the real provider was never called.
       for (const code of ['AI_RATE_LIMIT','AI_INPUT_LIMIT']) {
@@ -183,10 +183,10 @@ test('real AI local persistence trust boundary and source lifecycle',async t=>{
       assert.ok(conversation.memories.every(m=>m.status==='pending'&&m.version===1));
       assert.equal(conversation.requires_clarification,true);
       assert.equal(conversation.clarifications[0].status,'open');
-      await assert.rejects(()=>claim(db,'conversation',randomUUID(),A,PA,SA,conversationDigest),errorCode('40001'));
+      await assert.rejects(()=>claim(db,'conversation',randomUUID(),A,PA,SA,conversationDigest),errorCode('PT409'));
       assert.deepEqual((await claim(db,'conversation',conversationKey,A,PA,SA,conversationDigest)).result,conversation);
       const duplicate=await claim(db,'conversation');
-      await assert.rejects(()=>complete(db,duplicate,{source_transcript_id:tr.transcript_id,assistant_text:'Again',memories:[]}),errorCode('40001'));
+      await assert.rejects(()=>complete(db,duplicate,{source_transcript_id:tr.transcript_id,assistant_text:'Again',memories:[]}),errorCode('PT409'));
       otherConversation=await turn(db,sv,[{fact_type:'location',value:'Stockholm',evidence:'Stockholm'}],B,PB,SB);
       assert.equal(otherConversation.message.language,'sv'); assert.equal(otherConversation.message.session_id,SB);
       for(const table of ['real_transcripts','real_conversation_messages','real_memories','real_memory_clarifications']) {
@@ -204,7 +204,7 @@ test('real AI local persistence trust boundary and source lifecycle',async t=>{
       const confirmed=await review(db,location.id,1);
       assert.equal(confirmed.version,2); assert.equal(confirmed.value,'Malmö');
       assert.deepEqual(await review(db,location.id,1),confirmed);
-      await assert.rejects(()=>review(db,location.id,1,'rejected'),errorCode('40001'));
+      await assert.rejects(()=>review(db,location.id,1,'rejected'),errorCode('PT409'));
       const corrected=await review(db,date.id,1,'confirmed','1976');
       assert.equal(corrected.value,'1975'); assert.equal(corrected.evidence,'1975'); assert.equal(corrected.corrected_value,'1976');
       assert.equal((await db.query('SELECT status FROM public.real_memory_clarifications WHERE fact_id=$1',[date.id])).rows[0].status,'resolved');
@@ -219,7 +219,7 @@ test('real AI local persistence trust boundary and source lifecycle',async t=>{
     await t.test('real drafts use reviewed current source snapshots and can never inherit deterministic mock verification',async()=>{
       const op=await claim(db,'generation',randomUUID(),A,PA,null), c=await context(db);
       const input={content:'I moved to Malmö. The year needs my personal review.',source_memories:c.source_memories,model_review:{unsupported_claims:[],status:'passed',method:'deterministic_mock_v1'}};
-      await assert.rejects(()=>complete(db,op,{...input,source_memories:[]}),errorCode('40001'));
+      await assert.rejects(()=>complete(db,op,{...input,source_memories:[]}),errorCode('PT409'));
       await assert.rejects(()=>complete(db,op,{...input,model_review:null}),errorCode('22023'));
       draft=await complete(db,op,input);
       assert.equal(draft.status,'needs_review'); assert.equal(draft.mode,'real'); assert.equal(draft.revision,1); assert.equal(draft.version,1);
@@ -229,7 +229,7 @@ test('real AI local persistence trust boundary and source lifecycle',async t=>{
       await assert.rejects(()=>db.query("UPDATE public.real_story_drafts SET original_content='Fake' WHERE draft_id=$1",[draft.draft_id]),errorCode('55000'));
       const staleOp=await claim(db,'generation',randomUUID(),A,PA,null);
       await review(db,conversation.memories[0].id,2,'confirmed','Göteborg');
-      await assert.rejects(()=>complete(db,staleOp,input),errorCode('40001'));
+      await assert.rejects(()=>complete(db,staleOp,input),errorCode('PT409'));
       assert.equal((await db.query('SELECT count(*)::integer AS count FROM public.real_story_drafts')).rows[0].count,1);
     });
 
@@ -240,7 +240,7 @@ test('real AI local persistence trust boundary and source lifecycle',async t=>{
       assert.deepEqual(revised.source_memories,draft.source_memories); assert.equal(revised.verification.method,'manual_unverified');
       assert.equal(revised.verification.status,'needs_review'); assert.equal(revised.verification.checked_revision,2);
       assert.deepEqual(await edit(db,draft.draft_id,1,revised.content),revised);
-      await assert.rejects(()=>edit(db,draft.draft_id,1,'Different stale edit'),errorCode('40001'));
+      await assert.rejects(()=>edit(db,draft.draft_id,1,'Different stale edit'),errorCode('PT409'));
       const audit=(await user(db,A,()=>db.query('SELECT revision,previous_content,content FROM public.real_story_edits'))).rows;
       assert.deepEqual(audit,[{revision:2,previous_content:draft.content,content:revised.content}]);
       assert.equal((await user(db,B,()=>db.query('SELECT * FROM public.real_story_edits'))).rows.length,0);
@@ -264,8 +264,8 @@ test('real AI local persistence trust boundary and source lifecycle',async t=>{
       const types=['uuid','integer','text','boolean','boolean','integer','integer','text','text'];
       const record=(values=args,owner=A)=>user(db,owner,()=>rpc(db,'record_real_story_export',values,types));
       await assert.rejects(()=>record(args,B),errorCode('P0002'));
-      await assert.rejects(()=>record([...args.slice(0,1),1,...args.slice(2)]),errorCode('40001'));
-      await assert.rejects(()=>record([...args.slice(0,2),'Stale title',...args.slice(3)]),errorCode('40001'));
+      await assert.rejects(()=>record([...args.slice(0,1),1,...args.slice(2)]),errorCode('PT409'));
+      await assert.rejects(()=>record([...args.slice(0,2),'Stale title',...args.slice(3)]),errorCode('PT409'));
       await assert.rejects(()=>record([...args.slice(0,7),'../../unsafe.pdf',args[8]]),errorCode('22023'));
       const opCount=(await db.query('SELECT count(*)::integer AS count FROM public.real_ai_operations')).rows[0].count;
       const metadata=await record(); assert.equal(metadata.draft_revision,2); assert.equal(metadata.draft_version,1);
@@ -286,10 +286,10 @@ test('real AI local persistence trust boundary and source lifecycle',async t=>{
       const old=conversation.memories[0],next=await turn(db,source,[{fact_type:'location',value:'Uppsala',evidence:'Uppsala',
         conflicts_with_fact_id:old.id,clarification_question:'Which location should be used?'}]);
       const replacement=next.memories[0];
-      await assert.rejects(()=>review(db,replacement.id,1),errorCode('40001'));
+      await assert.rejects(()=>review(db,replacement.id,1),errorCode('PT409'));
       await review(db,old.id,3,'rejected');
       await review(db,replacement.id,1);
-      await assert.rejects(()=>review(db,old.id,4),errorCode('40001'));
+      await assert.rejects(()=>review(db,old.id,4),errorCode('PT409'));
       assert.equal((await context(db)).blocking_clarifications.length,0);
     });
 
@@ -313,8 +313,8 @@ test('real AI local persistence trust boundary and source lifecycle',async t=>{
       assert.ok(after.rejected_details.includes(first));
       const payload = {content:'I lived in Uppsala.',source_memories:before.source_memories,
         context_token:before.context_token,rejected_details:before.rejected_details,model_review:{unsupported_claims:[]}};
-      await assert.rejects(()=>complete(db,operation,payload),errorCode('40001'));
-      await assert.rejects(()=>complete(db,operation,{...payload,context_token:after.context_token}),errorCode('40001'));
+      await assert.rejects(()=>complete(db,operation,payload),errorCode('PT409'));
+      await assert.rejects(()=>complete(db,operation,{...payload,context_token:after.context_token}),errorCode('PT409'));
       assert.equal((await complete(db,operation,{...payload,context_token:after.context_token,
         rejected_details:after.rejected_details})).content,payload.content);
     });
@@ -324,8 +324,8 @@ test('real AI local persistence trust boundary and source lifecycle',async t=>{
       const replayKey=randomUUID(),finished=await claim(db,'transcription',replayKey);
       const finishedResult=await complete(db,finished,{text:'A completed source remains replayable.'});
       await db.query("UPDATE public.conversation_sessions SET status='completed',ended_at=now() WHERE id=$1",[SA]);
-      await assert.rejects(()=>complete(db,late,{text:'After completed session'}),errorCode('40001'));
-      await assert.rejects(()=>claim(db),errorCode('40001'));
+      await assert.rejects(()=>complete(db,late,{text:'After completed session'}),errorCode('PT409'));
+      await assert.rejects(()=>claim(db),errorCode('PT409'));
       const replay=await claim(db,'transcription',replayKey);
       assert.equal(replay.claimed,false); assert.equal(replay.status,'completed'); assert.deepEqual(replay.result,finishedResult);
       await db.query('UPDATE public.books SET is_deleted=true WHERE id=$1',[PA]);

@@ -116,7 +116,7 @@ BEGIN
     BEGIN
       PERFORM public.review_real_memory((fixture->>'memory_id')::uuid,1,'rejected',NULL);
       RAISE EXCEPTION 'Stale review succeeded';
-    EXCEPTION WHEN serialization_failure THEN NULL; END;
+    EXCEPTION WHEN SQLSTATE 'PT409' THEN NULL; END;
     context:=public.get_real_story_context((fixture->>'project_id')::uuid);
     IF context->>'confirmed_count'<>'1' OR jsonb_array_length(context->'blocking_clarifications')<>0 THEN
       RAISE EXCEPTION 'Owned confirmed context is incoherent'; END IF;

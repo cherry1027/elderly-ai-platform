@@ -154,7 +154,7 @@ test('typed originals and existing voice share an owned immutable conversation l
       const turn=await complete(db,first,{input_text:text,assistant_text:'Thank you.',memories:[]});
       assert.deepEqual(await complete(db,first,{input_text:'changed',assistant_text:'changed',memories:[]}),turn);
       assert.deepEqual((await claim(db,{key,hash})).result,turn);
-      await assert.rejects(()=>claim(db,{key,hash:digest('changed')}),errorCode('40001'));
+      await assert.rejects(()=>claim(db,{key,hash:digest('changed')}),errorCode('PT409'));
       await assert.rejects(()=>complete(db,{...first,claim_token:randomUUID()},{input_text:text,assistant_text:'No',memories:[]}),errorCode('42501'));
       const nextKey=randomUUID(),next=await typed(db,text,{key:nextKey,hash:digest({text,language:'en',input_type:'typed',key:nextKey})});
       assert.notEqual(next.op.operation_id,first.operation_id);
@@ -303,7 +303,7 @@ test('typed originals and existing voice share an owned immutable conversation l
       assert.equal(exported.draft_id,draft.draft_id);
 
       await user(db,B,()=>rpc(db,'review_real_memory',[saved.id,1,'rejected',null],['uuid','integer','text','text']));
-      await assert.rejects(()=>save(B,SB,id,words),errorCode('40001'));
+      await assert.rejects(()=>save(B,SB,id,words),errorCode('PT409'));
       await db.query('DELETE FROM public.real_conversation_messages WHERE id=$1',[id]);
       assert.equal((await db.query('SELECT memory_id FROM memy_private.user_selected_story_memories WHERE memory_id=$1',[saved.id])).rows.length,0);
     });

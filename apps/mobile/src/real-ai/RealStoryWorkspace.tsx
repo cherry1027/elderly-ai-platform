@@ -171,6 +171,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const speakCurrent = useRef<(message: RealMessage, automatic?: boolean) => void>(() => {});
   const onSpeak = useCallback((message: RealMessage) => speakCurrent.current(message), []);
   const speech = useRef(new Map<string, SpeechMetadata>()), latest = useRef({ onBack, onSignOut, privacy, onAuthenticationFailure, onStoryDetails });
+  const speechNeedsCheck = useRef(new Set<string>());
   const stopRecordingAction = useRef<(atLimit?: boolean) => void>(() => {});
   const voiceConsent = useRef<string | null>(null), consentIntent = useRef<{ epoch: number; scope: string } | null>(null);
   const voiceContext = useRef({ capabilities, usageBlocked, sessionId });
@@ -255,6 +256,10 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     : error instanceof RealAiError && error.code === 'TEXT_CHAT_NOT_READY' && !error.mayHaveWritten ? t.textNotReady : error instanceof StoryProjectsError
     ? error instanceof RealAiError && error.code === 'AI_USAGE_LIMIT' ? t.usageLimit : error.mayHaveWritten ? t.uncertain : error.kind === 'authentication' ? t.auth
       : error.kind === 'invalid-response' ? t.invalid : t.unavailable : t.audioFailure;
+  function deferSpeechCheck(assistantId: string) {
+    speechNeedsCheck.current.add(assistantId);
+    pending.current = null; setUnresolved(null);
+  }
   async function run(action: (signal: AbortSignal, check: () => void, beginOperation: (next: Pending) => void) => Promise<void>, operation?: Pending, activityLabel: Activity | null = null) {
     if (!mounted.current || !active.current || authenticationBlocked.current || bootstrap.current || locked.current || (operation && pending.current)) return;
     // A late saved snapshot may never overwrite a newer mutation/recovery result.
@@ -279,8 +284,17 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
             ((error.code === 'AI_SPEECH_INVALID_RESPONSE' && error.status === 503) ||
              (error.code === 'AI_SPEECH_TIMEOUT' && error.status === 504))) {
           const assistantId = action.assistantId;
+          speechNeedsCheck.current.delete(assistantId);
           setRenewSpeech(previous => new Set(previous).add(assistantId));
           pending.current = null; setUnresolved(null); setNotice(t.spokenReplyFailed);
+          return;
+        }
+        if (isTalkPreview() && action?.kind === 'speech' && action.assistantId === action.key &&
+            error instanceof RealAiError && error.mayHaveWritten && error.kind !== 'authentication' &&
+            error.recovery !== 'contact-operator' && error.code !== 'LIVE_AI_DISABLED' && !allowanceError(error)) {
+          // The conversation is already saved. Reconcile only this existing
+          // speech key and leave the rest of Talk available.
+          deferSpeechCheck(action.key); setNotice(t.spokenReplyInterrupted);
           return;
         }
         const memoryConflict = error instanceof RealAiError && error.code === 'REAL_AI_CONFLICT' && activityLabel === 'saving';
@@ -417,7 +431,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       // This does not renew any allowance or send a paid request automatically.
       if (caps.enabled) setServiceBlocked(false);
       if (session.current && session.current !== id) {
-        speechBytes.clear(); speech.current.clear(); setOutbox(null); clearLatestReply(); replyLayouts.current.clear();
+        speechBytes.clear(); speech.current.clear(); speechNeedsCheck.current.clear(); setOutbox(null); clearLatestReply(); replyLayouts.current.clear();
         cancelReads(); reads.current = emptyReads(); setReadStates(reads.current); historyCache.current.clear();
         setTranscripts([]); setMessages([]); setMemories([]); setDrafts([]); setHistory(null); setExports(null); setPages(emptyPages()); setSavedWordsOpen(false);
       }
@@ -446,7 +460,8 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     updateRead('history', { loaded: !!cached, loading: false, error: '' });
   }, [draftIdentity]);
   useEffect(() => {
-    const ownedSpeechMetadata = speech.current, ownedHistoryCache = historyCache.current, ownedCorrectionBases = correctionBases.current, ownedReplyLayouts = replyLayouts.current;
+    const ownedSpeechMetadata = speech.current, ownedSpeechChecks = speechNeedsCheck.current;
+    const ownedHistoryCache = historyCache.current, ownedCorrectionBases = correctionBases.current, ownedReplyLayouts = replyLayouts.current;
     mounted.current = true; active.current = AppState.currentState === 'active';
     if (active.current) open();
     const listener = AppState.addEventListener('change', state => {
@@ -458,6 +473,8 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         if (pending.current?.inputType === 'typed' && !pending.current.textDigest) {
           // Hashing had not completed: no typed POST can have been dispatched.
           pending.current = null; setUnresolved(null);
+        } else if (isTalkPreview() && pending.current?.kind === 'speech' && pending.current.assistantId === pending.current.key) {
+          deferSpeechCheck(pending.current.key);
         } else if (pending.current) setUnresolved(pending.current);
       }
     });
@@ -465,7 +482,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
     return () => { mounted.current = false; active.current = false; epoch.current++; controller.current?.abort();
       cleanupAudio(); cancelReads(); bootstrap.current?.abort(); bootstrap.current = null; pending.current = null;
-      currentDraft.current = null; editingDraft.current = null; ownedCorrectionBases.clear(); ownedHistoryCache.clear(); ownedSpeechMetadata.clear(); latestReply.current = null; ownedReplyLayouts.clear(); listener.remove(); };
+      currentDraft.current = null; editingDraft.current = null; ownedCorrectionBases.clear(); ownedHistoryCache.clear(); ownedSpeechMetadata.clear(); ownedSpeechChecks.clear(); latestReply.current = null; ownedReplyLayouts.clear(); listener.remove(); };
     // This component is keyed by verified owner/project/language. Configuration is fixed at entry.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -507,7 +524,12 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         check();
         if (pending.current?.key !== action.key || state.kind !== action.kind) throw new RealAiError('invalid-response');
         if (pending.current) pending.current.operationId = state.operation_id;
-        if (state.status === 'in_progress' || state.status === 'uncertain') { setNotice(t.operationPending); return; }
+        if (state.status === 'in_progress' || state.status === 'uncertain') {
+          if (isTalkPreview() && action.kind === 'speech' && action.assistantId === action.key) {
+            deferSpeechCheck(action.key); setNotice(t.spokenReplyInterrupted);
+          } else setNotice(t.operationPending);
+          return;
+        }
         typedFailed = expectedTyped && state.status === 'failed';
         if (state.status === 'failed' && action.voiceTranscriptId) failedVoiceId = action.voiceTranscriptId;
         recordingRejected = state.status === 'failed' && state.kind === 'transcription' && state.error_code === 'AI_INVALID_RESPONSE';
@@ -640,6 +662,11 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       }
     } catch (error) {
       output?.cancel();
+      if (saved && isTalkPreview() && !signal.aborted && canAutoplay() && error instanceof RealAiError &&
+          error.mayHaveWritten && error.status === undefined && ['invalid-response', 'network', 'timeout'].includes(error.kind)) {
+        // Try playing only the owned cached result if inline delivery stopped.
+        nextSpokenReply.current = saved.message;
+      }
       throw error;
     }
   }
@@ -776,7 +803,8 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       playback.current ??= createRealPlayback();
       playback.current.prepare?.();
     }
-    const renewing = renewSpeech.has(message.id);
+    const checkingSpeech = speechNeedsCheck.current.has(message.id);
+    const renewing = !checkingSpeech && renewSpeech.has(message.id);
     const cached = renewing ? undefined : speech.current.get(message.id);
     void run(async (signal, check, beginOperation) => {
       // Browser prepare already stops previous playback. Avoid an async
@@ -810,6 +838,24 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
             speech.current.delete(message.id); metadata = undefined; expired = true;
           }
         }
+        if (!metadata && checkingSpeech) {
+          let state;
+          try { state = await findRealOperation(current, 'speech', message.id); check(); }
+          catch (error) {
+            check();
+            if (!(error instanceof RealAiError && error.kind === 'not-found' && error.status === 404)) throw error;
+          }
+          if (state?.status === 'completed' && state.result?.assistant_message_id !== message.id) throw new RealAiError('invalid-response');
+          if (state?.status === 'failed' || (state?.status === 'completed' && expired)) {
+            speechNeedsCheck.current.delete(message.id);
+            setRenewSpeech(previous => new Set(previous).add(message.id));
+            setNotice(state.status === 'failed' ? t.spokenReplyFailed : t.voiceExpired);
+            return;
+          }
+          if (state || automatic || expired) { setNotice(t.spokenReplyInterrupted); return; }
+          // An explicit tap may use the same key when no claim exists. It
+          // cannot duplicate an in-flight request that claims that key first.
+        }
         if (!metadata) {
           if (currentSection.current !== 'chat') return;
           if (automatic && expired) {
@@ -840,6 +886,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         check();
         if (!bytes) throw new RealAiError('invalid-response');
         speech.current.set(message.id, metadata);
+        speechNeedsCheck.current.delete(message.id);
         setRenewSpeech(previous => { const next = new Set(previous); next.delete(message.id); return next; });
         if (!fromCache) speechBytes.put(metadata, bytes);
         if (currentSection.current !== 'chat') return;

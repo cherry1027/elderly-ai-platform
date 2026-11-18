@@ -17,6 +17,7 @@ export function createLiveTalk(): LiveTalkDriver | null {
   let processor: ScriptProcessorNode | undefined, mute: GainNode | undefined, socket: WebSocket | undefined;
   let microphoneClosed = false, closed = false, sending = false, heardAt: number | undefined;
   let captureTimer: ReturnType<typeof setTimeout> | undefined;
+  let onInputStopped: (() => void) | undefined;
 
   function releaseMicrophone() {
     if (microphoneClosed) return;
@@ -30,8 +31,12 @@ export function createLiveTalk(): LiveTalkDriver | null {
   }
 
   function stopInput() {
+    if (microphoneClosed) return;
     releaseMicrophone();
-    if (socket?.readyState === WebSocket.OPEN) socket.send('stop');
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send('stop');
+      onInputStopped?.();
+    }
   }
 
   function dispose() {
@@ -102,6 +107,7 @@ export function createLiveTalk(): LiveTalkDriver | null {
                 operation = validateStoryProjectId(item.id); events.onOperation(operation);
               } else if (item.type === 'ready' && operation && !ready && !microphoneClosed) {
                 ready = true; sending = true;
+                onInputStopped = events.onInputStopped;
                 source = capture.createMediaStreamSource(media!);
                 processor = capture.createScriptProcessor(2048, 1, 1);
                 mute = capture.createGain(); mute.gain.value = 0;

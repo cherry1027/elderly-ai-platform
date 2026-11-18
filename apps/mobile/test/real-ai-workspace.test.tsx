@@ -10,6 +10,7 @@ import * as storyApi from '../src/api/story-projects';
 import { createNativeRecorder, createRecordingId } from '../src/audio/native-recorder';
 import { RealStoryWorkspace } from '../src/real-ai/RealStoryWorkspace';
 import { realCopy } from '../src/real-ai/copy';
+import * as liveTalk from '../src/real-ai/live-talk';
 import { RealPlaybackError } from '../src/real-ai/native-playback';
 import { conversationModeCopy, readConversationMode, saveConversationMode } from '../src/real-ai/conversation-mode';
 import { storyContentCopy } from '../src/real-ai/StoryContent';
@@ -132,6 +133,36 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     preview.mockReturnValue(false);
     await render(workspace); await ready();
     expect(screen.queryByRole('button', { name: realCopy[language].liveTry })).toBeNull();
+  });
+
+  it.each(['en', 'sv'] as const)('shows that Minna is thinking after the %s speaker finishes', async language => {
+    const copy = realCopy[language];
+    jest.mocked(api.isTalkPreview).mockReturnValue(true);
+    jest.mocked(storyApi.listStorySessions).mockResolvedValue([{ id: ids.session, project_id: ids.project,
+      language, status: 'active', created_at: project.created_at, updated_at: project.created_at, ended_at: null }]);
+    const result = deferred<Awaited<ReturnType<liveTalk.LiveTalkDriver['run']>>>();
+    let onInputStopped: () => void = () => {};
+    const stopInput = jest.fn(() => onInputStopped());
+    const driver: liveTalk.LiveTalkDriver = {
+      stopInput, dispose: jest.fn(),
+      run: (_scope, _key, events) => {
+        onInputStopped = events.onInputStopped;
+        events.onReady();
+        return result.promise;
+      },
+    };
+    jest.spyOn(liveTalk, 'createLiveTalk').mockReturnValue(driver);
+
+    await render(<RealStoryWorkspace {...props} language={language} project={{ ...project, language }} />); await ready();
+    await press(copy.liveTry);
+    await press(copy.liveStart);
+    expect(screen.getByText(copy.liveListening)).toBeOnTheScreen();
+    await press(copy.liveStop);
+    expect(stopInput).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(copy.thinking)).toBeOnTheScreen();
+    expect(screen.queryByText(copy.replySaving)).toBeNull();
+    await act(async () => result.resolve({ transcript: realTranscript({ language }), turn: null, memoriesChecked: false }));
+    expect(screen.getByText(copy.recordingSavedReplyLater)).toBeOnTheScreen();
   });
 
   it.each(['en', 'sv'] as const)('shows a short AI-off status and accessible Details in %s without enabling AI', async language => {

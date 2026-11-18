@@ -5,7 +5,7 @@ export interface LiveTalkDriver {
   stopInput(): void;
   dispose(): void;
   run(scope: RealScope, key: string, events: {
-    onOperation(id: string): void; onReady(): void; onVoice: LiveChunk; onSaving(): void;
+    onOperation(id: string): void; onReady(): void; onInputStopped(): void; onVoice: LiveChunk; onSaving(): void;
   }): Promise<ReturnType<typeof decodeLiveTalkSaved>>;
 }
 

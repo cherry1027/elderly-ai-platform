@@ -48,6 +48,7 @@ _PRE_SAVE_REJECTIONS = {
     "transcription": {"AI_INVALID_RESPONSE"},
     "conversation": {"AI_INVALID_RESPONSE", "CONVERSATION_INVALID_RESPONSE"},
     "generation": {"DRAFT_VERIFICATION_FAILED"},
+    "speech": {"AI_SPEECH_INVALID_RESPONSE", "AI_SPEECH_TIMEOUT"},
 }
 
 

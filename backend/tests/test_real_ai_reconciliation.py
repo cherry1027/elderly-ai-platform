@@ -421,6 +421,9 @@ def test_generation_provider_timeout_remains_uncertain_after_dispatch(harness):
     ("conversation", "DRAFT_VERIFICATION_FAILED", "uncertain", "uncertain"),
     ("transcription", "AI_INVALID_RESPONSE", "uncertain", "failed"),
     ("conversation", "AI_INVALID_RESPONSE", "uncertain", "failed"),
+    ("speech", "AI_SPEECH_INVALID_RESPONSE", "uncertain", "failed"),
+    ("speech", "AI_SPEECH_TIMEOUT", "uncertain", "failed"),
+    ("speech", "SPEECH_INVALID_RESPONSE", "uncertain", "uncertain"),
     ("conversation", "CONVERSATION_INVALID_RESPONSE", "uncertain", "failed"),
     ("conversation", "AI_PROVIDER_TIMEOUT", "uncertain", "uncertain"),
 ])

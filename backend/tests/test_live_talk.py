@@ -119,7 +119,8 @@ def test_saved_reply_uses_the_live_voice_and_checks_the_entire_utterance(languag
         assert start["audio"]["output"]["voice"] == {"id": "voice_minna_test"} and start["store"] is False
         assert json.loads(start["input"][0]["content"][0]["text"]) == {"saved_reply": text, "language": language}
         assert socket.microphone and all(frame == bytes(len(frame)) for frame in socket.microphone)
-        assert sum(item["type"] == "session.instructions.append" for item in socket.sent) == 1
+        commands = [item["content"] for item in socket.sent if item["type"] == "session.instructions.append"]
+        assert len(commands) == 1 and text in commands[0]
         assert calls == [("reserve", "speech_synthesis", 25),
                          ("settle", ("one", "speech_synthesis", LIVE_MODEL, {"seconds": 3.4}),
                           {"status": "completed" if match else "failed"})]

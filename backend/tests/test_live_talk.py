@@ -17,7 +17,9 @@ from app.api import real_ai_live
 from app.api.real_ai import speech_cache_id
 from app.core.errors import APIError
 from app.services.ai_budget import live_talk_ceiling_microusd, observed_cost_microusd
-from app.services.live_talk import LIVE_MODEL, LIVE_SECONDS, LiveTalkError, LiveTalkProvider, SpokenTurn
+from app.services.live_talk import (
+    FINISH_REMINDER_EVENT, FINISH_TURN_EVENT, LIVE_MODEL, LIVE_SECONDS, LiveTalkError, LiveTalkProvider, SpokenTurn,
+)
 from app.services.openai_client import mark_ai_dispatched
 from tests.test_real_ai_api import SESSION, harness
 from tests.test_real_ai_reconciliation import ReconciliationGateway
@@ -42,6 +44,14 @@ class FakeLiveSocket:
         self.quiet_frames = 0
         self.heard = False
         self.replied = False
+        self.finished = False
+
+    def emit(self, spoken):
+        for kind, text in (("input", spoken.transcript), ("output", spoken.reply)):
+            if text:
+                self.events.put_nowait({"type": f"session.{kind}_transcript.delta", "delta": text,
+                                        "start_ms": 250, "end_ms": 700})
+        self.events.put_nowait({"type": "session.output_audio.delta", "delta": b64encode(spoken.pcm).decode()})
 
     async def __aenter__(self):
         return self
@@ -57,6 +67,11 @@ class FakeLiveSocket:
         self.sent.append(event)
         if event["type"] == "session.start":
             self.events.put_nowait({"type": "session.started", "session": {"id": "test", "model": LIVE_MODEL}})
+        elif event["type"] == "session.instructions.append":
+            assert event["event_id"] == FINISH_TURN_EVENT and not self.finished
+            self.finished = True
+            self.quiet_frames = 0
+            self.events.put_nowait({"type": "session.instructions.appended", "client_event_id": event["event_id"]})
         elif event["type"] == "session.input_audio.append":
             pcm = b64decode(event["audio"], validate=True)
             self.microphone.append(pcm)
@@ -65,11 +80,8 @@ class FakeLiveSocket:
                 self.quiet_frames = 0
             else:
                 self.quiet_frames += 1
-            if self.heard and not self.replied and self.quiet_frames >= self.silence_frames:
-                for kind, text in (("input", self.spoken.transcript), ("output", self.spoken.reply)):
-                    self.events.put_nowait({"type": f"session.{kind}_transcript.delta", "delta": text,
-                                            "start_ms": 250, "end_ms": 700})
-                self.events.put_nowait({"type": "session.output_audio.delta", "delta": b64encode(self.spoken.pcm).decode()})
+            if self.finished and self.heard and not self.replied and self.quiet_frames >= self.silence_frames:
+                self.emit(self.spoken)
                 self.replied = True
         elif event["type"] == "session.close":
             self.events.put_nowait({"type": "session.closed", "usage": {"seconds": 4}, "session": {"id": "test"}})
@@ -150,6 +162,7 @@ def test_live_speech_streams_the_selected_voice_with_the_same_reservation(langua
 
         async def mic():
             yield PCM
+            yield None
 
         async def ready():
             events.append("ready")
@@ -192,37 +205,96 @@ def test_finishing_a_quiet_short_phrase_keeps_the_provider_open_for_an_immediate
             played.append(pcm)
 
         provider = LiveTalkProvider(SecretStr("test"), None)
-        turn, _ = await provider._exchange(socket, "test", microphone(), on_voice)
+        turn, _ = await provider._exchange(socket, "test", microphone(), on_voice, language=language)
         assert turn.transcript == short_phrase and turn.reply == spoken.reply
         assert turn.pcm == b"".join(played) and len(turn.pcm) == len(spoken.pcm)
         assert socket.microphone[0] == quiet_phrase
-        assert 8 <= len(socket.microphone[1:]) <= 12
+        assert len(socket.microphone[1:]) >= 8
         assert all(frame == bytes(4_800) for frame in socket.microphone[1:])
 
     asyncio.run(scenario())
 
 
-def test_live_audio_keeps_flowing_through_a_pause_without_waiting_for_manual_finish():
+def test_live_talk_keeps_the_whole_turn_and_discards_audio_until_done_is_acknowledged():
     async def scenario():
-        socket = FakeLiveSocket(SPOKEN["sv"], silence_frames=2)
-        silence = bytes(len(PCM))
-        original_frames = [PCM, silence, PCM, silence, silence]
-        played = asyncio.Event()
+        early = SpokenTurn("Jag gick", "För tidigt.", b"\x00\x10" * 240)
+        final = SpokenTurn(" hem och hämtade syster.", "Vad hände när ni kom tillbaka?", PCM)
+        listened_during_pause = asyncio.Event()
+        played = []
+
+        class InterruptingSocket(FakeLiveSocket):
+            async def send(self, raw):
+                event = json.loads(raw)
+                if event['type'] == 'session.instructions.append':
+                    # Even audio arriving after the button but before the model
+                    # receives the release cue still belongs to an old reply.
+                    self.emit(SpokenTurn("", "Fortfarande för tidigt.", early.pcm))
+                await super().send(raw)
+
+            async def recv(self):
+                result = await super().recv()
+                if json.loads(result).get('delta') == b64encode(early.pcm).decode():
+                    listened_during_pause.set()
+                return result
+
+        socket = InterruptingSocket(final, silence_frames=1)
+        second_phrase = b"\x00\x04" * 240
 
         async def microphone():
-            for frame in original_frames:
-                yield frame
-                await asyncio.sleep(0)
-            await played.wait()
+            yield PCM
+            yield bytes(len(PCM))
+            socket.emit(early)
+            await listened_during_pause.wait()
+            assert not played and not socket.finished
+            yield second_phrase
+            yield None
 
-        async def on_voice(_pcm):
-            assert not any(event["type"] == "session.close" for event in socket.sent)
-            played.set()
+        async def on_voice(pcm):
+            assert socket.finished
+            played.append(pcm)
 
         provider = LiveTalkProvider(SecretStr("test"), None)
-        turn, _ = await asyncio.wait_for(provider._exchange(socket, "test", microphone(), on_voice), timeout=4)
-        assert turn.reply == SPOKEN["sv"].reply
-        assert socket.microphone == original_frames
+        turn, _ = await asyncio.wait_for(provider._exchange(socket, "test", microphone(), on_voice, language='sv'), timeout=4)
+        assert turn == SpokenTurn(early.transcript + final.transcript, final.reply, final.pcm)
+        assert played == [final.pcm]
+        assert socket.microphone[:3] == [PCM, bytes(len(PCM)), second_phrase]
+        names = [item['type'] for item in socket.sent]
+        assert names[:4] == ['session.input_audio.append'] * 3 + ['session.instructions.append']
+
+    asyncio.run(scenario())
+
+
+def test_a_silent_live_session_can_answer_after_one_reminder_in_the_same_connection(monkeypatch):
+    monkeypatch.setattr('app.services.live_talk.FINISH_REMINDER_AFTER', 0.05)
+
+    class SilentUntilReminder(FakeLiveSocket):
+        async def send(self, raw):
+            event = json.loads(raw)
+            if event['type'] == 'session.instructions.append':
+                self.sent.append(event)
+                self.events.put_nowait({'type': 'session.instructions.appended', 'client_event_id': FINISH_TURN_EVENT})
+            elif event['type'] == 'session.commentary.append':
+                self.sent.append(event)
+                self.finished = True
+                self.events.put_nowait({'type': 'session.commentary.appended', 'client_event_id': FINISH_REMINDER_EVENT})
+            else:
+                await super().send(raw)
+
+    async def scenario():
+        socket = SilentUntilReminder(SPOKEN['en'])
+        played = []
+
+        async def microphone():
+            yield PCM
+            yield None
+
+        async def on_voice(pcm):
+            played.append(pcm)
+
+        provider = LiveTalkProvider(SecretStr('test'), None)
+        result, _ = await provider._exchange(socket, 'test', microphone(), on_voice, language='en')
+        assert result == SPOKEN['en'] and played == [result.pcm]
+        assert [event.get('event_id') for event in socket.sent if event.get('event_id')] == [FINISH_TURN_EVENT, FINISH_REMINDER_EVENT]
 
     asyncio.run(scenario())
 
@@ -235,14 +307,18 @@ def test_empty_stop_or_disconnect_cannot_trigger_a_spoken_reply(explicit_stop):
         async def microphone():
             if explicit_stop:
                 yield None
+            else:
+                yield PCM
+                socket.emit(SPOKEN['en'])  # An unsubmitted turn must leave no saved result.
 
         async def on_voice(_pcm):
             pytest.fail("Live Talk spoke before the user sent audio")
 
         provider = LiveTalkProvider(SecretStr("test"), None)
-        turn, _ = await provider._exchange(socket, "test", microphone(), on_voice)
+        turn, _ = await provider._exchange(socket, "test", microphone(), on_voice, language='en')
         assert not turn.transcript and not turn.reply and not turn.pcm
-        assert not socket.microphone
+        assert socket.microphone == ([] if explicit_stop else [PCM])
+        assert not socket.finished
 
     asyncio.run(scenario())
 
@@ -281,9 +357,9 @@ def mounted_live(harness, monkeypatch, request):
         assert language == gateway.language
         mark_ai_dispatched()
         await ready()
-        async for pcm in microphone:
-            assert pcm == PCM
-            break
+        assert await anext(microphone) == PCM
+        await voice(b'\x00\x10' * 240)  # The relay must suppress premature output too.
+        assert await anext(microphone) is None
         assert not any(row.get("result") for row in gateway.claims.values())
         await voice(PCM)
         audio_delivered.append(True)
@@ -309,6 +385,7 @@ def test_socket_sends_audio_before_saving_the_owned_turn(mounted_live):
         assert ws.receive_json()["type"] == "operation"
         assert ws.receive_json() == {"type": "ready"}
         ws.send_bytes(PCM)
+        ws.send_text('stop')
         assert ws.receive_bytes() == PCM
         assert ws.receive_json() == {"type": "saving"}
         saved = ws.receive_json()
@@ -324,6 +401,27 @@ def test_socket_sends_audio_before_saving_the_owned_turn(mounted_live):
     assert message["provenance"]["model"] == LIVE_MODEL
     assert message["text"] == spoken.reply and message["language"] == language and saved["memories_checked"]
     assert len(gateway.claims) == 3
+
+
+def test_socket_never_saves_a_model_reply_without_done(mounted_live):
+    app, gateway, _ = mounted_live
+    key = uuid4()
+
+    async def premature_reply(_history, microphone, ready, voice, *, language):
+        await ready()
+        assert await anext(microphone) == PCM
+        await voice(PCM)
+        return SPOKEN[language]
+
+    app.state.real_ai.live_talk_provider.talk = premature_reply
+    with TestClient(app) as client, client.websocket_connect(PATH, headers={"Origin": PREVIEW}) as ws:
+        ws.send_json({"token": "test", "key": str(key)})
+        assert ws.receive_json()["type"] == "operation"
+        assert ws.receive_json() == {"type": "ready"}
+        ws.send_bytes(PCM)
+        assert ws.receive_json() == {"type": "error", "code": "LIVE_TALK_NO_SPEECH"}
+    claim = gateway.claims[("transcription", key)]
+    assert claim['status'] == 'failed' and claim['result'] is None and len(gateway.claims) == 1
 
 
 @pytest.mark.parametrize("write_started,expected_status", [(False, "failed"), (True, "uncertain")])
@@ -350,6 +448,7 @@ def test_interrupted_live_turn_publishes_its_persistence_state_before_the_error(
         assert ws.receive_json() == {"type": "ready"}
         ws.send_bytes(PCM)
         if write_started:
+            ws.send_text('stop')
             assert ws.receive_bytes() == PCM
             assert ws.receive_json() == {"type": "saving"}
         assert ws.receive_json() == {"type": "error", "code": "LIVE_TALK_INCOMPLETE"}

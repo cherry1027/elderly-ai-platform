@@ -129,10 +129,11 @@ async def live_talk(socket: WebSocket, session_id: UUID):
         return
 
     connected = True
+    submitted = False
 
     async def send(event):
         nonlocal connected
-        if connected:
+        if connected and (submitted or not isinstance(event, bytes)):
             try:
                 if isinstance(event, bytes):
                     await asyncio.wait_for(socket.send_bytes(event), timeout=1)
@@ -142,13 +143,14 @@ async def live_talk(socket: WebSocket, session_id: UUID):
                 connected = False
 
     async def microphone():
-        nonlocal connected
+        nonlocal connected, submitted
         while connected:
             message = await socket.receive()
             if message["type"] == "websocket.disconnect":
                 connected = False
                 break
             if message.get("text") == "stop":
+                submitted = True
                 yield None  # A deliberate end of input; a disconnect simply ends the iterator.
                 break
             pcm = message.get("bytes")
@@ -187,8 +189,8 @@ async def live_talk(socket: WebSocket, session_id: UUID):
             await send({"type": "operation", "id": claim["operation_id"]})
             spoken = await runtime.live_talk_provider.talk(history, microphone(),
                 lambda: send({"type": "ready"}), send, language=language)
-            if not spoken.transcript:
-                raise LiveTalkError()
+            if not submitted or not spoken.transcript:
+                raise APIError(422, "LIVE_TALK_NO_SPEECH", "Live Talk ended without a finished voice message.")
             await send({"type": "saving"})
             transcript_write_started = True
             transcript = await _complete(gateway, claim, project_id, session_id, {"text": spoken.transcript})

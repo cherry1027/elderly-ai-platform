@@ -366,3 +366,42 @@ test('exact hosted real-AI SQL fixture is rollback-only and emits sanitized scop
     assert.equal((await db.query("SELECT nullif(current_setting('request.jwt.claim.sub',true),'') AS claim")).rows[0].claim,null);
   } finally { await db.close(); }
 });
+
+test('complete recorded passages stay pending, ordered, idempotent and owner-restricted in English and Swedish',async()=>{
+  const db=await setup();
+  try {
+    for (const [owner,project,session,language] of [[A,PA,SA,'en'],[B,PB,SB,'sv']]) {
+      const passages=Array.from({length:9},(_,index)=>language==='en'
+        ? `Recorded passage ${index+1}: I remember the blue bicycle and the plum cake.`
+        : `Inspelat avsnitt ${index+1}: Jag minns den blå cykeln och plommonkakan.`);
+      const original=passages.join(' ');
+      const tr=await transcript(db,original,owner,project,session);
+      const op=await claim(db,'conversation',randomUUID(),owner,project,session);
+      const memories=passages.map(passage=>({fact_type:'event',value:passage,evidence:passage}));
+      const result=await complete(db,op,{source_transcript_id:tr.transcript_id,assistant_text:'A recorded reply.',memories},owner);
+      assert.equal(result.memories.length,9);
+      assert.ok(result.memories.every(memory=>memory.status==='pending' && memory.version===1 && memory.corrected_value===null));
+      assert.deepEqual(result.memories.map(memory=>memory.value),passages);
+      const saved=await user(db,owner,()=>db.query('SELECT value FROM public.real_memories WHERE source_message_id=$1 ORDER BY created_at,id',[tr.transcript_id]));
+      assert.deepEqual(saved.rows.map(row=>row.value),passages);
+      assert.equal((await context(db,owner,project)).confirmed_count,0);
+      const other=owner===A?B:A;
+      assert.equal((await user(db,other,()=>db.query('SELECT id FROM public.real_memories WHERE source_message_id=$1',[tr.transcript_id]))).rows.length,0);
+      const replay=await complete(db,op,{source_transcript_id:tr.transcript_id,assistant_text:'A repeated request.',memories},owner);
+      assert.deepEqual(replay,result);
+      assert.equal((await db.query('SELECT count(*)::integer AS n FROM public.real_memories WHERE source_message_id=$1',[tr.transcript_id])).rows[0].n,9);
+      for (const memory of result.memories) await review(db,memory.id,1,'confirmed',null,owner);
+      const checked=await context(db,owner,project);
+      assert.equal(checked.source_memories.map(memory=>memory.value).join(' '),original);
+      await review(db,result.memories[4].id,2,'rejected',null,owner);
+      assert.ok(!(await context(db,owner,project)).source_memories.some(memory=>memory.memory_id===result.memories[4].id));
+    }
+    const excessive=await transcript(db,'The original recorded detail.');
+    const rejected=await claim(db,'conversation');
+    const memory={fact_type:'event',value:'detail',evidence:'detail'};
+    await assert.rejects(()=>complete(db,rejected,{source_transcript_id:excessive.transcript_id,assistant_text:'Reply',memories:Array(49).fill(memory)}),errorCode('22023'));
+    const typed=await claim(db,'conversation');
+    await assert.rejects(()=>complete(db,typed,{input_text:'The original typed detail.',assistant_text:'Reply',memories:Array(9).fill(memory)}),errorCode('22023'));
+    assert.equal((await db.query('SELECT count(*)::integer AS n FROM public.real_text_inputs WHERE operation_id=$1',[typed.operation_id])).rows[0].n,0);
+  } finally { await db.close(); }
+});

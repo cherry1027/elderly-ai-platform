@@ -21,6 +21,7 @@ from app.services.live_talk import LIVE_MODEL, LIVE_PROMPTS, PCM_RATE, LiveTalkE
 from app.services.openai_client import strict_object
 from app.services.pilot_cohort import require_pilot_member
 from app.services.real_ai_resources import RealAIGateway
+from app.services.recording_memories import recording_memories
 
 router = APIRouter()
 PROVENANCE = {"mode": "real", "provider": "openai", "model": LIVE_MODEL, "version": 1}
@@ -105,6 +106,7 @@ async def _save_spoken(runtime, gateway, project_id, session_id, key, transcript
         except (APIError, TimeoutError, ValueError, TypeError):
             # The verified original and audible reply survive optional extraction failure.
             pass
+        memories = recording_memories(transcript["text"], memories)
         turn = await _complete(gateway, conversation, project_id, session_id,
             {"source_transcript_id": transcript["transcript_id"], "assistant_text": spoken.reply,
              "memories": [asdict(item) for item in memories]})

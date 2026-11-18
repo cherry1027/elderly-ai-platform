@@ -34,6 +34,7 @@ from app.services.real_ai_resources import RealAIGateway, validated, read_togeth
 from app.services.openai_client import DispatchTrace, ai_dispatch_trace
 from app.services.ai_controls import ai_budget_subject
 from app.services.pilot_cohort import require_pilot_member
+from app.services.recording_memories import recording_memories
 from app.services.real_ai_progress import emit_progress, turn_progress
 from app.services.real_ai_streaming import stream_turn_response
 
@@ -315,7 +316,7 @@ async def _send_message(session_id: UUID, payload: RealMessageCreate, request: R
     async def produce(provider):
         reply = await provider.respond(transcript["text"], payload.language, prior, recent_messages=recent)
         return {"source_transcript_id": str(payload.source_transcript_id),
-                "assistant_text": reply.text, "memories": [asdict(f) for f in reply.facts]}
+                "assistant_text": reply.text, "memories": [asdict(f) for f in recording_memories(transcript["text"], reply.facts)]}
 
     result = await execute(request, gateway, project_id=UUID(session["project_id"]), session_id=session_id,
         kind="conversation", key=idempotency_key, fingerprint=digest(payload.model_dump(mode="json")),

@@ -1466,7 +1466,7 @@
             "items": {
               "$ref": "#/components/schemas/RealMemory"
             },
-            "maxItems": 8,
+            "maxItems": 48,
             "title": "Memories",
             "type": "array"
           },

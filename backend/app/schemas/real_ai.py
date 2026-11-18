@@ -10,6 +10,7 @@ from app.schemas.story_projects import StrictRequest, StrictResponse, LanguageCo
 from app.schemas.conversations import MemoryResponse, ClarificationResponse
 from app.schemas.story_drafts import StoryGenerationContext, StorySourceMemory, StoryEditResponse
 from app.schemas.exports import StoryExportMetadata
+from app.services.recording_memories import MAX_RECORDED_MEMORIES
 
 
 def original_text(value):
@@ -124,7 +125,7 @@ class RealMemory(MemoryResponse):
 class RealTurn(StrictResponse):
     user_message: RealMessage
     message: RealMessage
-    memories: list[RealMemory] = Field(max_length=8)
+    memories: list[RealMemory] = Field(max_length=MAX_RECORDED_MEMORIES)
     mode: Literal["real"]
 
     @model_validator(mode="after")
@@ -135,6 +136,7 @@ class RealTurn(StrictResponse):
             or a.sequence != u.sequence + 1 or u.source_transcript_id != a.source_transcript_id
             or u.source_text_input_id != a.source_text_input_id
             or u.id != (u.source_text_input_id or u.source_transcript_id)
+            or (u.source_text_input_id is not None and len(self.memories) > 8)
             or any(m.project_id != u.project_id or m.session_id != u.session_id
                    or m.source_message_id != u.id for m in self.memories)):
             raise ValueError("Incoherent conversation turn")

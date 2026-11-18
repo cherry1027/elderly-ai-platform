@@ -239,6 +239,8 @@ describe('Talk → Memories → My Story product flow — synthetic services onl
     const saved = realMemory({ source_message_id: original.id, status: 'confirmed', uncertain: false, value: excerpt, evidence: excerpt, clarification_question: null });
     jest.mocked(api.getRealMessages).mockResolvedValue([original, reply]);
     jest.mocked(api.saveRealMemoryFromMessage).mockResolvedValueOnce(saved);
+    jest.mocked(api.saveRealMemoryFromMessage).mockResolvedValueOnce({ ...saved, id: ids.key,
+      value: 'Hela texten fortsätter här.', evidence: 'Hela texten fortsätter här.' });
     jest.mocked(api.generateRealDraft).mockResolvedValueOnce(realDraft({ language: 'sv', content: 'Mitt första utkast.' }));
     await render(<RealStoryWorkspace {...props} language="sv" project={{ ...project, language: 'sv' }} />);
     await waitFor(() => expect(screen.getByLabelText(copy.input)).toBeEnabled());
@@ -248,13 +250,17 @@ describe('Talk → Memories → My Story product flow — synthetic services onl
     await press(story.useSavedWords);
     expect(await screen.findByText(excerpt)).toBeOnTheScreen();
     expect(screen.getByText(story.partialWords)).toBeOnTheScreen();
+    expect(screen.getByText('Hela texten fortsätter här.')).toBeOnTheScreen();
     expect(screen.queryByText(original.text)).toBeNull();
     expect(screen.queryByText(reply.text)).toBeNull();
-    await press(story.saveAsMemory);
+    await fireEvent.press(screen.getAllByRole('button', { name: story.saveAsMemory })[0]); await act(async () => {});
     expect(api.saveRealMemoryFromMessage).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: ids.project, sessionId: ids.session, language: 'sv' }), original, excerpt,
     );
     expect(await screen.findByText(story.savedAsMemory)).toBeOnTheScreen();
+    expect(screen.getAllByRole('button', { name: story.saveAsMemory })).toHaveLength(1);
+    await press(story.saveAsMemory);
+    expect(api.saveRealMemoryFromMessage).toHaveBeenLastCalledWith(expect.anything(), original, 'Hela texten fortsätter här.');
     expect(screen.queryByRole('button', { name: story.saveAsMemory })).toBeNull();
     expect(api.generateRealDraft).not.toHaveBeenCalled();
     expect(api.sendRealTextMessage).not.toHaveBeenCalled();
@@ -265,7 +271,7 @@ describe('Talk → Memories → My Story product flow — synthetic services onl
     await press(copy.generate);
     expect(await screen.findByText('Mitt första utkast.')).toBeOnTheScreen();
     expect(api.generateRealDraft).toHaveBeenCalledTimes(1);
-    expect(api.saveRealMemoryFromMessage).toHaveBeenCalledTimes(1);
+    expect(api.saveRealMemoryFromMessage).toHaveBeenCalledTimes(2);
   });
   it('explains a saved-word conflict without claiming the excerpt was confirmed', async () => {
     const story = storyContentCopy.en;

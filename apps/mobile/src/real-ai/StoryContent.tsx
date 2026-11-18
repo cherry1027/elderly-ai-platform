@@ -27,7 +27,7 @@ export const storyContentCopy = {
     savedWordsEmpty: 'There are no saved messages from you in this conversation yet.',
     savedWordsConflict: 'This excerpt may already be saved, edited, or left out. Open Memories to check.',
     saveAsMemory: 'Save as a memory', savedAsMemory: 'Saved as a memory',
-    partialWords: 'This shows up to the first 1,000 characters. Your full message stays saved.',
+    partialWords: 'Your full message is shown below in parts of up to 1,000 characters.',
     backToStory: 'Back to My Story', backToMemories: 'Back to Memories',
     savedWordsNext: 'Go to My Story, confirm you want to use AI, then choose Create My Story.',
     noMemoriesForDraft: 'A draft and PDF need at least one confirmed memory. You can use your saved words or share a new detail.',
@@ -59,7 +59,7 @@ export const storyContentCopy = {
     savedWordsEmpty: 'Det finns ännu inga sparade meddelanden från dig i det här samtalet.',
     savedWordsConflict: 'Utdraget kan redan ha sparats, ändrats eller utelämnats. Titta under Kontrollera och ändra.',
     saveAsMemory: 'Spara som minne', savedAsMemory: 'Sparat som minne',
-    partialWords: 'Här visas upp till de första 1 000 tecknen. Hela meddelandet finns kvar.',
+    partialWords: 'Hela ditt meddelande visas nedan i delar med högst 1 000 tecken.',
     backToStory: 'Tillbaka till Min berättelse', backToMemories: 'Tillbaka till Kontrollera och ändra',
     savedWordsNext: 'Gå till Min berättelse, bekräfta att du vill använda AI och välj Skapa min berättelse.',
     noMemoriesForDraft: 'För att skapa ett utkast och en PDF behövs minst ett bekräftat minne. Använd dina sparade ord eller berätta något nytt.',
@@ -127,10 +127,20 @@ function ReadSection({ language, label, loaded, busy, disabled, onLoad, preview,
   </Disclosure>;
 }
 
-function messageExcerpt(text: string): { excerpt: string; partial: boolean } {
-  const characters = [...text.trim()];
-  return { excerpt: characters.slice(0, MAX_MEMORY_EXCERPT).join('').trimEnd(),
-    partial: characters.length > MAX_MEMORY_EXCERPT };
+function messageExcerpts(text: string): string[] {
+  let characters = [...text.trim()];
+  const passages: string[] = [];
+  while (characters.length) {
+    let end = Math.min(MAX_MEMORY_EXCERPT, characters.length);
+    if (end < characters.length) {
+      const boundary = Math.max(characters.lastIndexOf(' ', end - 1), characters.lastIndexOf('\n', end - 1));
+      if (boundary >= 800) end = boundary;
+    }
+    const passage = characters.slice(0, end).join('').trim();
+    if (passage) passages.push(passage);
+    characters = [...characters.slice(end).join('').trimStart()];
+  }
+  return passages;
 }
 
 export function isSavedMessageMemory(memory: RealMemory, message: RealMessage, excerpt: string): boolean {
@@ -153,14 +163,18 @@ export function SavedWordsContent({ language, storyLanguage, messages, memories,
       <Button language={language} label={copy.shareMemory} onPress={onShareMemory} disabled={blocked} primary />
     </>}
     {originals.map(message => {
-      const { excerpt, partial } = messageExcerpt(message.text);
-      const saved = memories.some(memory => isSavedMessageMemory(memory, message, excerpt));
-      return <View key={message.id} style={styles.source}>
-        <Text accessibilityLanguage={accessibilityLanguages[storyLanguage]} allowFontScaling selectable style={styles.body}>{excerpt}</Text>
-        {partial && <Note language={language}>{copy.partialWords}</Note>}
-        {saved ? <Text accessibilityLiveRegion="polite" accessibilityLanguage={accessibilityLanguages[language]}
-          allowFontScaling style={styles.status}>{copy.savedAsMemory}</Text>
-          : <Button language={language} label={copy.saveAsMemory} onPress={() => onSave(message, excerpt)} disabled={blocked} />}
+      const passages = messageExcerpts(message.text);
+      return <View key={message.id} style={styles.section}>
+        {passages.length > 1 && <Note language={language}>{copy.partialWords}</Note>}
+        {passages.map((excerpt, index) => {
+          const saved = memories.some(memory => isSavedMessageMemory(memory, message, excerpt));
+          return <View key={index} style={styles.source}>
+            <Text accessibilityLanguage={accessibilityLanguages[storyLanguage]} allowFontScaling selectable style={styles.body}>{excerpt}</Text>
+            {saved ? <Text accessibilityLiveRegion="polite" accessibilityLanguage={accessibilityLanguages[language]}
+              allowFontScaling style={styles.status}>{copy.savedAsMemory}</Text>
+              : <Button language={language} label={copy.saveAsMemory} onPress={() => onSave(message, excerpt)} disabled={blocked} />}
+          </View>;
+        })}
       </View>;
     })}
   </View>;

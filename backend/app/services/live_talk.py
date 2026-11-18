@@ -22,7 +22,7 @@ from app.core.errors import APIError
 from app.services.minna_voice import LIVE_FALLBACK_VOICE, LIVE_VOICE_DESCRIPTION
 from app.services.openai_client import mark_ai_dispatched, strict_object
 from app.services.real_ai_provider import (
-    MAX_SPEECH_CHARACTERS, MAX_SPEECH_PCM_BYTES, MAX_SPEECH_SECONDS, SpeechAudio,
+    MAX_SPEECH_CHARACTERS, MAX_SPEECH_PCM_BYTES, MAX_SPEECH_SECONDS, SPEECH_CHUNK_BYTES, SpeechAudio,
     _input_error, _safe_text, _speech_invalid,
 )
 
@@ -39,7 +39,7 @@ FINAL_INPUT_FRAMES = 5  # Give the last syllable half a second to reach the Live
 FINISHED_REPLY_TIMEOUT = 7.0
 FINISH_TURN_EVENT = "memy_caller_finished"
 FINISH_REMINDER_EVENT = "memy_caller_finished_reminder"
-FINISH_REMINDER_AFTER = 3.0
+FINISH_REMINDER_AFTER = 1.8
 _LOGGER = logging.getLogger("uvicorn.error")
 READ_REPLY = (
     "Speak the value of saved_reply aloud now, exactly once, in language. "
@@ -80,8 +80,8 @@ ENGLISH_LIVE_PROMPT = (
 )
 LIVE_PROMPTS = {"en": ENGLISH_LIVE_PROMPT, "sv": SWEDISH_LIVE_PROMPT}
 FINISH_TURN_PROMPTS = {
-    "en": "The recording has ended. The caller has heard no reply yet. Respond aloud now to the full memory, including the last words. Give one brief response and at most one gentle question.",
-    "sv": "Inspelningen är klar. Personen har ännu inte hört något svar. Svara högt nu på hela minnet, även det personen sa sist. Svara kort med högst en varsam fråga.",
+    "en": "Speak now. Give a short, complete reply to the whole memory, including its final words. Ask at most one gentle question. The caller has heard none of your earlier speech.",
+    "sv": "Svara högt nu. Ge ett kort, fullständigt svar på hela minnet, även det som sades sist. Ställ högst en varsam fråga. Personen har inte hört något tidigare svar.",
 }
 
 
@@ -308,28 +308,43 @@ class LiveTalkProvider:
         audio = bytearray()
         user, reply = [], []
         heard_user = False
-        submitted = False
         reply_released = False
         finish_event = FINISH_TURN_EVENT
-        cue_sent_at = last_spoken = stopped = closing = None
+        submitted_at = cue_sent_at = last_spoken = stopped = closing = None
+        reply_words = audio_sent = 0
+        sentence_ended = False
         clock = asyncio.get_running_loop().time
         began = clock()
 
+        async def publish_audio():
+            nonlocal audio_sent
+            if audio_sent == len(audio) or (not audio_sent and reply_words < 3 and not (reply_words >= 2 and sentence_ended)):
+                return
+            if not audio_sent:
+                _LOGGER.info("Live Talk reply started (language=%s, done_to_audio_ms=%d, reminder=%s)",
+                             language, round((clock() - submitted_at) * 1000), finish_event == FINISH_REMINDER_EVENT)
+            # Wait for a few words, then release the held beginning in order.
+            for index in range(audio_sent, len(audio), SPEECH_CHUNK_BYTES):
+                await on_voice(bytes(audio[index:index + SPEECH_CHUNK_BYTES]))
+            audio_sent = len(audio)
+
         async def capture():
-            nonlocal submitted, cue_sent_at, heard_user, stopped
-            size = 0
+            nonlocal submitted_at, cue_sent_at, heard_user, stopped
+            size = quiet_bytes = 0
             try:
                 async for pcm in microphone:
                     if pcm is None:
                         if size:
-                            submitted = True
-                            # Appended instructions can interrupt audio processing.
-                            # Advance the timeline before signaling the model to speak.
-                            for _ in range(FINAL_INPUT_FRAMES):
-                                await _send_audio(socket, END_OF_INPUT_SILENCE)
-                                await asyncio.sleep(len(END_OF_INPUT_SILENCE) / PCM_PER_SECOND)
+                            submitted_at = clock()
+                            # Count quiet audio already sent before Done toward
+                            # the padding that protects the last spoken word.
+                            pad = max(0, FINAL_INPUT_FRAMES * len(END_OF_INPUT_SILENCE) - quiet_bytes)
+                            for index in range(0, pad, len(END_OF_INPUT_SILENCE)):
+                                packet = END_OF_INPUT_SILENCE[:pad - index]
+                                await _send_audio(socket, packet)
+                                await asyncio.sleep(len(packet) / PCM_PER_SECOND)
                             cue_sent_at = clock()
-                            await socket.send(json.dumps({"type": "session.instructions.append",
+                            await socket.send(json.dumps({"type": "session.commentary.append",
                                 "event_id": FINISH_TURN_EVENT, "delegation_id": None,
                                 "content": FINISH_TURN_PROMPTS[language]}))
                             # Input drives the Live timeline, including while Minna is speaking.
@@ -342,7 +357,11 @@ class LiveTalkProvider:
                         or size + len(pcm) > MAX_MIC_SECONDS * PCM_PER_SECOND
                         or size + len(pcm) > (clock() - began + 1.0) * PCM_PER_SECOND):
                         raise LiveTalkError()
-                    heard_user = heard_user or has_voice(pcm, 230)
+                    if has_voice(pcm, 64):
+                        quiet_bytes = 0
+                        heard_user = heard_user or has_voice(pcm, 230)
+                    else:
+                        quiet_bytes += len(pcm)
                     size += len(pcm)
                     await _send_audio(socket, pcm)
             finally:
@@ -354,23 +373,28 @@ class LiveTalkProvider:
                 now = clock()
                 if sender.done() and not sender.cancelled():
                     sender.result()
-                done_speaking = (last_spoken is not None and now - last_spoken >= 1.1
-                                 and (reply or now - cue_sent_at >= FINISHED_REPLY_TIMEOUT))
-                abandoned = stopped is not None and not submitted
-                no_reply = cue_sent_at is not None and last_spoken is None and now - cue_sent_at >= FINISHED_REPLY_TIMEOUT
-                if closing is None and (done_speaking or abandoned or no_reply or now - began >= LIVE_SECONDS - 9):
+                complete_reply = reply_words >= 2 and (sentence_ended or reply_words >= 6)
+                quiet_for = now - last_spoken if last_spoken is not None else math.inf
+                done_speaking = audio_sent and complete_reply and quiet_for >= (1.1 if sentence_ended else 1.7)
+                abandoned = stopped is not None and submitted_at is None
+                incomplete = not audio_sent or (not complete_reply and quiet_for >= 1.7)
+                reply_timeout = cue_sent_at is not None and incomplete and now - cue_sent_at >= FINISHED_REPLY_TIMEOUT
+                if closing is None and (done_speaking or abandoned or reply_timeout or now - began >= LIVE_SECONDS - 9):
                     closing = now
                     sender.cancel()
                     await socket.send(json.dumps({"type": "session.close"}))
                 if closing is not None and now - closing > 4:
                     raise LiveTalkError()
                 if (closing is None and cue_sent_at is not None and finish_event == FINISH_TURN_EVENT
-                    and last_spoken is None and not reply and now - cue_sent_at >= FINISH_REMINDER_AFTER):
-                    # Some Live sessions have already tried to respond during a pause.
-                    # A speakable update in the same metered session releases the reply.
+                    and not audio_sent and quiet_for >= 0.8
+                    and now - cue_sent_at >= (FINISH_REMINDER_AFTER if reply_words < 3 else 3.0)):
+                    # Discard a stalled fragment and cue once more in this session.
+                    audio.clear()
+                    reply.clear()
+                    reply_words, sentence_ended, last_spoken = 0, False, None
                     reply_released = False
                     finish_event = FINISH_REMINDER_EVENT
-                    await socket.send(json.dumps({"type": "session.commentary.append",
+                    await socket.send(json.dumps({"type": "session.instructions.append",
                         "event_id": finish_event, "delegation_id": None, "content": FINISH_TURN_PROMPTS[language]}))
                 try:
                     event = _event(await asyncio.wait_for(socket.recv(), timeout=0.25))
@@ -385,6 +409,10 @@ class LiveTalkProvider:
                     reply_released = True
                 elif kind == "session.output_transcript.delta" and reply_released and heard_user:
                     _append(reply, event, 1_000)
+                    text = "".join(reply).strip()
+                    reply_words = sum(token[0].isalnum() for token in _spoken_tokens(text))
+                    sentence_ended = text.rstrip("\"'’”)]").endswith((".", "?", "!", "…"))
+                    await publish_audio()
                 elif kind == "session.output_audio.delta" and reply_released and heard_user:
                     pcm = b64decode(event["delta"], validate=True)
                     if not pcm or len(pcm) % 2 or len(audio) + len(pcm) > MAX_REPLY_PCM:
@@ -393,10 +421,11 @@ class LiveTalkProvider:
                         last_spoken = clock()
                     if last_spoken is not None:
                         audio.extend(pcm)
-                        await on_voice(pcm)
+                        await publish_audio()
                 elif kind == "session.closed":
-                    result = (SpokenTurn("".join(user).strip(), "".join(reply).strip(), bytes(audio))
-                              if submitted else SpokenTurn("", "", b""))
+                    transcript = "".join(user).strip() if submitted_at is not None else ""
+                    complete = audio_sent and reply_words >= 2 and (sentence_ended or reply_words >= 6)
+                    result = SpokenTurn(transcript, "".join(reply).strip() if complete else "", bytes(audio) if complete else b"")
                     return result, _closed_usage(event, session_id)
                 elif kind in {"error", "session.error", "session.delegation.created"}:
                     raise LiveTalkError()

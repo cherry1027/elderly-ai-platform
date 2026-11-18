@@ -46,6 +46,7 @@ class FakeLiveSocket:
         self.heard = False
         self.replied = False
         self.finished = False
+        self.reply_attempts = 0
 
     def emit(self, spoken):
         for kind, text in (("input", spoken.transcript), ("output", spoken.reply)):
@@ -68,11 +69,13 @@ class FakeLiveSocket:
         self.sent.append(event)
         if event["type"] == "session.start":
             self.events.put_nowait({"type": "session.started", "session": {"id": "test", "model": LIVE_MODEL}})
-        elif event["type"] == "session.instructions.append":
-            assert event["event_id"] == FINISH_TURN_EVENT and not self.finished
+        elif event["type"] in {"session.commentary.append", "session.instructions.append"}:
+            primary = event["type"] == "session.commentary.append"
+            assert event["event_id"] == (FINISH_TURN_EVENT if primary else FINISH_REMINDER_EVENT)
             self.finished = True
+            self.replied = False
             self.quiet_frames = 0
-            self.events.put_nowait({"type": "session.instructions.appended", "client_event_id": event["event_id"]})
+            self.events.put_nowait({"type": event["type"] + "ed", "client_event_id": event["event_id"]})
         elif event["type"] == "session.input_audio.append":
             pcm = b64decode(event["audio"], validate=True)
             self.microphone.append(pcm)
@@ -82,7 +85,8 @@ class FakeLiveSocket:
             else:
                 self.quiet_frames += 1
             if self.finished and self.heard and not self.replied and self.quiet_frames >= self.silence_frames:
-                self.emit(self.spoken)
+                self.emit(replace(self.spoken, transcript='') if self.reply_attempts else self.spoken)
+                self.reply_attempts += 1
                 self.replied = True
         elif event["type"] == "session.close":
             self.events.put_nowait({"type": "session.closed", "usage": {"seconds": 4}, "session": {"id": "test"}})
@@ -226,7 +230,7 @@ def test_live_talk_keeps_the_whole_turn_and_discards_audio_until_done_is_acknowl
         class InterruptingSocket(FakeLiveSocket):
             async def send(self, raw):
                 event = json.loads(raw)
-                if event['type'] == 'session.instructions.append':
+                if event['type'] == 'session.commentary.append':
                     # Even audio arriving after the button but before the model
                     # receives the release cue still belongs to an old reply.
                     self.emit(SpokenTurn("", "Fortfarande för tidigt.", early.pcm))
@@ -261,24 +265,27 @@ def test_live_talk_keeps_the_whole_turn_and_discards_audio_until_done_is_acknowl
         assert socket.microphone[:3] == [PCM, bytes(len(PCM)), second_phrase]
         assert socket.microphone[3:3 + FINAL_INPUT_FRAMES] == [bytes(4_800)] * FINAL_INPUT_FRAMES
         names = [item['type'] for item in socket.sent]
-        assert names[:4 + FINAL_INPUT_FRAMES] == ['session.input_audio.append'] * (3 + FINAL_INPUT_FRAMES) + ['session.instructions.append']
+        assert names[:4 + FINAL_INPUT_FRAMES] == ['session.input_audio.append'] * (3 + FINAL_INPUT_FRAMES) + ['session.commentary.append']
 
     asyncio.run(scenario())
 
 
-def test_a_silent_live_session_can_answer_after_one_reminder_in_the_same_connection(monkeypatch):
+@pytest.mark.parametrize('fragment', ['', 'That'])
+def test_live_session_cues_once_more_if_the_first_reply_is_missing_or_stalled(monkeypatch, fragment):
     monkeypatch.setattr('app.services.live_talk.FINISH_REMINDER_AFTER', 0.05)
 
     class SilentUntilReminder(FakeLiveSocket):
         async def send(self, raw):
             event = json.loads(raw)
-            if event['type'] == 'session.instructions.append':
+            if event['type'] == 'session.commentary.append':
                 self.sent.append(event)
-                self.events.put_nowait({'type': 'session.instructions.appended', 'client_event_id': FINISH_TURN_EVENT})
-            elif event['type'] == 'session.commentary.append':
+                self.events.put_nowait({'type': 'session.commentary.appended', 'client_event_id': FINISH_TURN_EVENT})
+                if fragment:
+                    self.emit(SpokenTurn('', fragment, b'\x00\x20' * 240))
+            elif event['type'] == 'session.instructions.append':
                 self.sent.append(event)
                 self.finished = True
-                self.events.put_nowait({'type': 'session.commentary.appended', 'client_event_id': FINISH_REMINDER_EVENT})
+                self.events.put_nowait({'type': 'session.instructions.appended', 'client_event_id': FINISH_REMINDER_EVENT})
             else:
                 await super().send(raw)
 
@@ -297,6 +304,83 @@ def test_a_silent_live_session_can_answer_after_one_reminder_in_the_same_connect
         result, _ = await provider._exchange(socket, 'test', microphone(), on_voice, language='en')
         assert result == SPOKEN['en'] and played == [result.pcm]
         assert [event.get('event_id') for event in socket.sent if event.get('event_id')] == [FINISH_TURN_EVENT, FINISH_REMINDER_EVENT]
+
+    asyncio.run(scenario())
+
+
+def test_one_word_fragments_never_play_or_replace_the_original_words(monkeypatch):
+    monkeypatch.setattr('app.services.live_talk.FINISHED_REPLY_TIMEOUT', 1.2)
+    monkeypatch.setattr('app.services.live_talk.FINISH_REMINDER_AFTER', 0.05)
+
+    async def scenario():
+        spoken = SpokenTurn(SPOKEN['en'].transcript, 'That', PCM)
+        socket = FakeLiveSocket(spoken)
+
+        async def mic():
+            yield PCM
+            yield None
+
+        async def voice(_pcm):
+            pytest.fail('One-word audio reached the listener')
+
+        result, _ = await LiveTalkProvider(SecretStr('test'), None)._exchange(socket, 'test', mic(), voice, language='en')
+        assert result == SpokenTurn(spoken.transcript, '', b'')
+
+    asyncio.run(scenario())
+
+
+def test_first_audio_is_preserved_when_reply_caption_arrives_in_two_parts():
+    full = SpokenTurn('I fell from my bicycle.', 'That sounds like a sudden fall.', PCM * 2)
+
+    class SplitCaptionSocket(FakeLiveSocket):
+        tail_delivered = False
+
+        def emit(self, spoken):
+            super().emit(SpokenTurn(spoken.transcript, 'That', PCM))
+            super().emit(SpokenTurn('', ' sounds like a sudden fall.', PCM))
+
+        async def recv(self):
+            raw = await super().recv()
+            if json.loads(raw).get('delta') == ' sounds like a sudden fall.':
+                self.tail_delivered = True
+            return raw
+
+    async def scenario():
+        socket = SplitCaptionSocket(full)
+        played = []
+
+        async def mic():
+            yield PCM
+            yield None
+
+        async def voice(pcm):
+            assert socket.tail_delivered
+            played.append(pcm)
+
+        result, _ = await LiveTalkProvider(SecretStr('test'), None)._exchange(socket, 'test', mic(), voice, language='en')
+        assert result == full and b''.join(played) == full.pcm
+
+    asyncio.run(scenario())
+
+
+def test_live_does_not_pad_over_a_pause_already_sent_before_done():
+    async def scenario():
+        socket = FakeLiveSocket(SPOKEN['en'])
+
+        async def mic():
+            yield PCM
+            for _ in range(FINAL_INPUT_FRAMES):
+                yield bytes(4_800)
+                await asyncio.sleep(0.01)
+            yield None
+
+        async def voice(_pcm):
+            pass
+
+        result, _ = await LiveTalkProvider(SecretStr('test'), None)._exchange(socket, 'test', mic(), voice, language='en')
+        assert result == SPOKEN['en']
+        types = [event['type'] for event in socket.sent]
+        assert types.index('session.commentary.append') == FINAL_INPUT_FRAMES + 1
 
     asyncio.run(scenario())
 

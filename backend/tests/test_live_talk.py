@@ -1,5 +1,5 @@
 import asyncio
-from base64 import b64encode
+from base64 import b64decode, b64encode
 from contextlib import nullcontext
 from dataclasses import replace
 import json
@@ -32,10 +32,15 @@ PATH = f"/api/v2/story-sessions/{SESSION}/live-talk?talk_preview=true"
 
 
 class FakeLiveSocket:
-    def __init__(self, spoken):
+    def __init__(self, spoken, silence_frames=0):
         self.spoken = spoken
         self.events = asyncio.Queue()
         self.sent = []
+        self.microphone = []
+        self.silence_frames = silence_frames
+        self.quiet_frames = 0
+        self.heard = False
+        self.replied = False
 
     async def __aenter__(self):
         return self
@@ -52,10 +57,19 @@ class FakeLiveSocket:
         if event["type"] == "session.start":
             self.events.put_nowait({"type": "session.started", "session": {"id": "test", "model": LIVE_MODEL}})
         elif event["type"] == "session.input_audio.append":
-            for kind, text in (("input", self.spoken.transcript), ("output", self.spoken.reply)):
-                self.events.put_nowait({"type": f"session.{kind}_transcript.delta", "delta": text,
-                                        "start_ms": 250, "end_ms": 700})
-            self.events.put_nowait({"type": "session.output_audio.delta", "delta": b64encode(self.spoken.pcm).decode()})
+            pcm = b64decode(event["audio"], validate=True)
+            self.microphone.append(pcm)
+            if any(pcm):
+                self.heard = True
+                self.quiet_frames = 0
+            else:
+                self.quiet_frames += 1
+            if self.heard and not self.replied and self.quiet_frames >= self.silence_frames:
+                for kind, text in (("input", self.spoken.transcript), ("output", self.spoken.reply)):
+                    self.events.put_nowait({"type": f"session.{kind}_transcript.delta", "delta": text,
+                                            "start_ms": 250, "end_ms": 700})
+                self.events.put_nowait({"type": "session.output_audio.delta", "delta": b64encode(self.spoken.pcm).decode()})
+                self.replied = True
         elif event["type"] == "session.close":
             self.events.put_nowait({"type": "session.closed", "usage": {"seconds": 4}, "session": {"id": "test"}})
 
@@ -104,6 +118,78 @@ def test_live_speech_streams_with_cedar_and_settles_the_same_reservation(languag
     asyncio.run(scenario())
     assert observed_cost_microusd("conversation", LIVE_MODEL, {"seconds": 60}, "completed", None) == 62_501
     assert live_talk_ceiling_microusd(80) == 83_336
+
+
+@pytest.mark.parametrize("language,short_phrase", [("sv", "Vid sjön."), ("en", "By the lake.")])
+def test_finishing_a_quiet_short_phrase_keeps_the_provider_open_for_an_immediate_reply(language, short_phrase):
+    async def scenario():
+        spoken = replace(SPOKEN[language], transcript=short_phrase, pcm=voiced_pcm())
+        socket = FakeLiveSocket(spoken, silence_frames=8)
+        quiet_phrase = b"\x50\x00" * 2_400
+        played = []
+
+        async def microphone():
+            yield quiet_phrase
+            yield None
+
+        async def on_voice(pcm):
+            assert not any(event["type"] == "session.close" for event in socket.sent)
+            played.append(pcm)
+
+        provider = LiveTalkProvider(SecretStr("test"), None)
+        turn, _ = await provider._exchange(socket, "test", microphone(), on_voice)
+        assert turn.transcript == short_phrase and turn.reply == spoken.reply
+        assert turn.pcm == b"".join(played) and len(turn.pcm) == len(spoken.pcm)
+        assert socket.microphone[0] == quiet_phrase
+        assert 8 <= len(socket.microphone[1:]) <= 12
+        assert all(frame == bytes(4_800) for frame in socket.microphone[1:])
+
+    asyncio.run(scenario())
+
+
+def test_live_audio_keeps_flowing_through_a_pause_without_waiting_for_manual_finish():
+    async def scenario():
+        socket = FakeLiveSocket(SPOKEN["sv"], silence_frames=2)
+        silence = bytes(len(PCM))
+        original_frames = [PCM, silence, PCM, silence, silence]
+        played = asyncio.Event()
+
+        async def microphone():
+            for frame in original_frames:
+                yield frame
+                await asyncio.sleep(0)
+            await played.wait()
+
+        async def on_voice(_pcm):
+            assert not any(event["type"] == "session.close" for event in socket.sent)
+            played.set()
+
+        provider = LiveTalkProvider(SecretStr("test"), None)
+        turn, _ = await asyncio.wait_for(provider._exchange(socket, "test", microphone(), on_voice), timeout=4)
+        assert turn.reply == SPOKEN["sv"].reply
+        assert socket.microphone == original_frames
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("explicit_stop", [False, True])
+def test_empty_stop_or_disconnect_cannot_trigger_a_spoken_reply(explicit_stop):
+    async def scenario():
+        socket = FakeLiveSocket(SPOKEN["en"])
+
+        async def microphone():
+            if explicit_stop:
+                yield None
+
+        async def on_voice(_pcm):
+            pytest.fail("Live Talk spoke before the user sent audio")
+
+        provider = LiveTalkProvider(SecretStr("test"), None)
+        turn, _ = await provider._exchange(socket, "test", microphone(), on_voice)
+        assert not turn.transcript and not turn.reply and not turn.pcm
+        assert not socket.microphone
+
+    asyncio.run(scenario())
 
 
 @pytest.fixture

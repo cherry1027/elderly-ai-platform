@@ -195,7 +195,7 @@ def test_cedar_selection_matches_the_preview_and_pilot_languages(harness, langua
         response = client.post(f"/api/v2/conversation-messages/{assistant}/speech",
                                json={"language": language}, headers=headers)
     assert response.status_code == 200, response.text
-    assert calls == [(language, expected_voice, enabled and origin == _PREVIEW)]
+    assert calls == [(language, expected_voice, expected_voice == "cedar")]
 
 
 def test_cedar_speech_replays_on_both_sites_and_preserves_older_live_audio(harness):

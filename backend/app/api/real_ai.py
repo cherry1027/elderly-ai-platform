@@ -578,15 +578,12 @@ async def prepare_speech(request, gateway, message, idempotency_key, *, on_pcm=N
     message_id = UUID(message["id"])
     language = message["language"]
     cedar_voice = uses_cedar(request, language)
-    minna_delivery = cedar_voice and is_preview_origin(request)
     check_operation_policy(request, kind="speech")
     audio = None
 
     async def produce(provider):
         nonlocal audio
-        options = {"voice": CEDAR_VOICE} if cedar_voice else {}
-        if minna_delivery:
-            options["minna_delivery"] = True
+        options = {"voice": CEDAR_VOICE, "minna_delivery": True} if cedar_voice else {}
         if on_pcm is not None:
             options["on_pcm"] = on_pcm
         audio = await provider.synthesize(message["text"], language, **options)
@@ -610,7 +607,7 @@ async def prepare_speech(request, gateway, message, idempotency_key, *, on_pcm=N
             raise unavailable()
         cache.put(gateway.user.id, cache_id, audio.data, result["audio_sha256"], expires_at=expires.timestamp())
         if cedar_voice:
-            _LOGGER.info("Verified Cedar speech saved (language=%s, preview=%s)", language, minna_delivery)
+            _LOGGER.info("Verified Cedar speech saved (language=%s, preview=%s)", language, is_preview_origin(request))
     if expires <= datetime.now(timezone.utc):
         raise APIError(410, "SPEECH_EXPIRED", "Spoken reply expired. Request a new reply explicitly.")
     # Fresh bytes passed the cache write and hash check. Same-key replays

@@ -149,8 +149,12 @@ async def live_talk(socket: WebSocket, session_id: UUID):
                 connected = False
                 break
             if message.get("text") == "stop":
+                yield None  # A deliberate end of input; a disconnect simply ends the iterator.
                 break
-            yield message.get("bytes")
+            pcm = message.get("bytes")
+            if pcm is None:
+                raise LiveTalkError()
+            yield pcm
 
     async with state.live_talk_slots:
         await socket.accept()

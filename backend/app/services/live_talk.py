@@ -12,7 +12,7 @@ import certifi
 from websockets.asyncio.client import connect
 
 from app.core.errors import APIError
-from app.services.minna_voice import CEDAR_VOICE, MINNA_DELIVERY
+from app.services.minna_voice import LIVE_FALLBACK_VOICE, LIVE_VOICE_DESCRIPTION
 from app.services.openai_client import mark_ai_dispatched, strict_object
 
 LIVE_MODEL = "gpt-live-1"
@@ -92,16 +92,17 @@ def _append(fragments, event, limit):
 
 
 class LiveTalkProvider:
-    def __init__(self, key, governor, observer=None, *, connector=_NoRedirectConnect):
+    def __init__(self, key, governor, observer=None, *, voice_id=None, connector=_NoRedirectConnect):
         self.key = key
         self.governor = governor
         self.observer = observer
+        self.voice = {"id": voice_id} if voice_id is not None else LIVE_FALLBACK_VOICE
         self.connector = connector
         self.ssl_context = ssl.create_default_context(cafile=certifi.where())
         self.ssl_context.keylog_filename = None
 
     async def talk(self, history, microphone, on_ready, on_voice, *, language):
-        instructions = f"{MINNA_DELIVERY[language]}\n\n{LIVE_PROMPTS[language]}"
+        instructions = f"{LIVE_VOICE_DESCRIPTION}\n\n{LIVE_PROMPTS[language]}"
         reservation = self.governor.reserve_live_talk(LIVE_SECONDS + 5)
         usage = None
         status = "failed"
@@ -116,7 +117,7 @@ class LiveTalkProvider:
                 ) as socket:
                     await socket.send(json.dumps({"type": "session.start", "session": {
                         "model": LIVE_MODEL, "instructions": instructions, "input": history,
-                        "audio": {"format": {"type": "audio/pcm", "rate": PCM_RATE}, "output": {"voice": CEDAR_VOICE}},
+                        "audio": {"format": {"type": "audio/pcm", "rate": PCM_RATE}, "output": {"voice": self.voice}},
                         "delegation": {"type": "client"}, "store": False,
                     }}))
                     started = _event(await socket.recv())
@@ -138,23 +139,13 @@ class LiveTalkProvider:
             self.governor.settle(reservation, "conversation", LIVE_MODEL, usage, status=status)
 
     async def _exchange(self, socket, session_id, microphone: AsyncIterator[bytes | None], on_voice):
-        from app.services.softer_cedar import SofterCedar
-
         audio = bytearray()
-        softer_cedar = SofterCedar()
-        received_audio_bytes = 0
-        pending_audio = False
         user, reply = [], []
         heard_user = False
         finished_input = False
         last_spoken = stopped = closing = None
         clock = asyncio.get_running_loop().time
         began = clock()
-
-        async def emit_speech(pcm, *, final=False):
-            for packet in await softer_cedar.push(pcm, final=final):
-                audio.extend(packet)
-                await on_voice(packet)
 
         async def send_audio(pcm):
             await socket.send(json.dumps({"type": "session.input_audio.append",
@@ -206,10 +197,6 @@ class LiveTalkProvider:
                 try:
                     event = _event(await asyncio.wait_for(socket.recv(), timeout=0.25))
                 except TimeoutError:
-                    if pending_audio:
-                        # Flush the last syllable through a pause without waiting for session close.
-                        await emit_speech(b"", final=True)
-                        pending_audio = False
                     continue
                 kind = event.get("type")
                 if kind == "session.input_transcript.delta":
@@ -219,24 +206,19 @@ class LiveTalkProvider:
                     _append(reply, event, 1_000)
                 elif kind == "session.output_audio.delta" and heard_user:
                     pcm = b64decode(event["delta"], validate=True)
-                    if not pcm or len(pcm) % 2 or received_audio_bytes + len(pcm) > MAX_REPLY_PCM:
+                    if not pcm or len(pcm) % 2 or len(audio) + len(pcm) > MAX_REPLY_PCM:
                         raise LiveTalkError()
                     if has_voice(pcm):
                         last_spoken = clock()
                     if last_spoken is not None:
-                        received_audio_bytes += len(pcm)
-                        await emit_speech(pcm)
-                        pending_audio = True
+                        audio.extend(pcm)
+                        await on_voice(pcm)
                 elif kind == "session.closed":
                     usage = event.get("usage")
                     session = event.get("session")
                     seconds = usage.get("seconds") if isinstance(usage, dict) else None
                     if (not isinstance(session, dict) or session.get("id") != session_id
                         or type(seconds) not in {int, float} or not math.isfinite(seconds) or seconds < 0):
-                        raise LiveTalkError()
-                    if pending_audio:
-                        await emit_speech(b"", final=True)
-                    if len(audio) != received_audio_bytes:
                         raise LiveTalkError()
                     result = SpokenTurn("".join(user).strip(), "".join(reply).strip(), bytes(audio))
                     return result, {"seconds": seconds}

@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     # Limit the lower-latency Talk model and incremental speech to the redesign preview.
     real_ai_preview_talk_enabled: bool = False
     real_ai_live_talk_enabled: bool = False
+    real_ai_live_voice_id: str | None = Field(default=None, pattern=r"^voice_[A-Za-z0-9_-]{1,120}$")
     # A reversible server policy: only explicitly typed conversation may spend.
     # The normal live gate, private approval and cumulative ledger still apply.
     real_ai_text_only: bool = False

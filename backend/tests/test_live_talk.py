@@ -75,10 +75,11 @@ class FakeLiveSocket:
 
 
 @pytest.mark.parametrize("language,prompt_fragment", [
-    ("en", "Speak clearly in English with a light, natural Swedish accent"),
-    ("sv", "Use natural Swedish as spoken in Sweden"),
+    ("en", "Speak natural English"),
+    ("sv", "Svara på naturlig svenska"),
 ])
-def test_live_speech_streams_with_cedar_and_settles_the_same_reservation(language, prompt_fragment):
+@pytest.mark.parametrize("voice_id,selected_voice", [(None, "coral"), ("voice_minna_test", {"id": "voice_minna_test"})])
+def test_live_speech_streams_the_selected_voice_with_the_same_reservation(language, prompt_fragment, voice_id, selected_voice):
     async def scenario():
         spoken = replace(SPOKEN[language], pcm=voiced_pcm())
         socket = FakeLiveSocket(spoken)
@@ -103,16 +104,16 @@ def test_live_speech_streams_with_cedar_and_settles_the_same_reservation(languag
             assert not any(event["type"] == "session.close" for event in socket.sent)
             events.append(pcm)
 
-        provider = LiveTalkProvider(SecretStr("test"), governor, connector=connect)
+        provider = LiveTalkProvider(SecretStr("test"), governor, voice_id=voice_id, connector=connect)
         result = await provider.talk([], mic(), ready, voice, language=language)
         assert result.transcript == spoken.transcript and result.reply == spoken.reply
-        assert result.pcm == b"".join(events[2:-1]) and result.pcm != spoken.pcm
+        assert result.pcm == b"".join(events[2:-1]) == spoken.pcm
         assert len(result.pcm) == len(spoken.pcm)
         assert events[:2] == [("reserved", LIVE_SECONDS + 5), "ready"]
         assert events[-1] == ("settled", ("one", "conversation", LIVE_MODEL, {"seconds": 4}), {"status": "completed"})
         setup = socket.sent[0]["session"]
-        assert setup["model"] == LIVE_MODEL and setup["audio"]["output"]["voice"] == "cedar" and not setup["store"]
-        assert "softly feminine resonance" in setup["instructions"]
+        assert setup["model"] == LIVE_MODEL and setup["audio"]["output"]["voice"] == selected_voice and not setup["store"]
+        assert "clearly feminine voice" in setup["instructions"] and "light, natural Swedish accent" in setup["instructions"]
         assert prompt_fragment in setup["instructions"]
 
     asyncio.run(scenario())

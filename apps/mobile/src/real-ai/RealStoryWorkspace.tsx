@@ -274,6 +274,15 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     try { await action(abort.signal, check, beginOperation); check(); if (startedOperation) { pending.current = null; setUnresolved(null); } }
     catch (error) {
       if (mounted.current && active.current && epoch.current === stamp) {
+        const action = pending.current ?? startedOperation;
+        if (action?.kind === 'speech' && action.assistantId && error instanceof RealAiError &&
+            ((error.code === 'AI_SPEECH_INVALID_RESPONSE' && error.status === 503) ||
+             (error.code === 'AI_SPEECH_TIMEOUT' && error.status === 504))) {
+          const assistantId = action.assistantId;
+          setRenewSpeech(previous => new Set(previous).add(assistantId));
+          pending.current = null; setUnresolved(null); setNotice(t.spokenReplyFailed);
+          return;
+        }
         const memoryConflict = error instanceof RealAiError && error.code === 'REAL_AI_CONFLICT' && activityLabel === 'saving';
         if (memoryConflict && savedWordsOpen) setNotice(storyCopy.savedWordsConflict);
         else setNotice(memoryConflict && currentSection.current === 'memories' ? t.reviewConflict : failureMessage(error));
@@ -479,7 +488,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     if (!sessionId) { open(); return; }
     void run(async (signal, check) => {
       let completedTyped: RealTurn | null = null, typedFailed = false, failedVoiceId: string | null = null;
-      let recordingRejected = false;
+      let recordingRejected = false, speechFailed = false;
       let completedDraft: RealDraft | undefined;
       if (pending.current) {
         const action = pending.current, expectedTyped = action.inputType === 'typed';
@@ -516,8 +525,10 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
           speech.current.set(state.result.assistant_message_id, state.result);
           if (Date.parse(state.result.expires_at) <= Date.now()) setRenewSpeech(previous => new Set(previous).add(state.result!.assistant_message_id));
         }
-        if (state.status === 'failed' && action.kind === 'speech' && action.key === action.assistantId) {
-          setRenewSpeech(previous => new Set(previous).add(action.key));
+        if (state.status === 'failed' && action.kind === 'speech' && action.assistantId) {
+          const assistantId = action.assistantId;
+          speechFailed = true;
+          setRenewSpeech(previous => new Set(previous).add(assistantId));
         }
         if (state.status === 'completed' && audio.current && recorder.current) {
           await recorder.current.discard(audio.current); check(); audio.current = null; setLocalRecording(null);
@@ -537,7 +548,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
       if (failedVoiceId) setSafeReplyId(failedVoiceId);
       setAmbiguousEdit(false); editingDraft.current = null; setEditor(null);
       setNotice(completedDraft ? t.bookCreated : typedFailed ? t.textNotSent : failedVoiceId ? t.replyNotReady
-        : recordingRejected ? t.recordingNotTranscribed : t.checked);
+        : recordingRejected ? t.recordingNotTranscribed : speechFailed ? t.spokenReplyFailed : t.checked);
     }, undefined, 'checking');
   };
   const discardAudio = () => {

@@ -359,6 +359,25 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     expect(api.sendRealMessage).toHaveBeenCalledTimes(1);
     expect(api.createRealSpeech).not.toHaveBeenCalled();
   });
+  it.each([['AI_SPEECH_INVALID_RESPONSE', 503], ['AI_SPEECH_TIMEOUT', 504]] as const)(
+    'keeps Live Talk available after a saved reply’s %s', async (code, status) => {
+      jest.mocked(api.isTalkPreview).mockReturnValue(true);
+      const saved = { user_message: realMessage(), message: realMessage('assistant'), memories: [], mode: 'real' as const };
+      jest.mocked(api.sendRealMessage).mockImplementationOnce(async (_scope, _input, _key, _progress, options) => {
+        options!.onSaved(saved);
+        throw new api.RealAiError(status === 504 ? 'timeout' : 'unavailable', status, true, code, undefined, ids.memory);
+      });
+      await render(<RealStoryWorkspace {...props} />); await ready(); await startVoice(); await press(t.stop);
+      expect(screen.getByText(saved.message.text)).toBeOnTheScreen();
+      expect(screen.getByText(t.spokenReplyFailed)).toBeOnTheScreen();
+      expect(screen.queryByRole('button', { name: t.check })).toBeNull();
+      expect(screen.getByRole('button', { name: t.liveTry })).toBeEnabled();
+      expect(api.createRealSpeech).not.toHaveBeenCalled();
+      jest.mocked(api.createRealSpeech).mockResolvedValueOnce({ ...speechMetadata(), audio: speechWave() });
+      await press(t.renewSpeech);
+      expect(api.createRealSpeech).toHaveBeenCalledTimes(1);
+      expect(api.createRealSpeech).toHaveBeenCalledWith(expect.anything(), ids.assistant, ids.key);
+    });
   it('uses the same speech key after a stream stops before a speech operation can be found', async () => {
     const saved = { user_message: realMessage(), message: realMessage('assistant'), memories: [], mode: 'real' as const };
     jest.mocked(api.sendRealMessage).mockImplementationOnce(async (_scope, _input, _key, _progress, options) => {

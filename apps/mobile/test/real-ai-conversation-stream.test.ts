@@ -130,6 +130,15 @@ it.each(['truncated', 'bad-hash', 'claimed-timeout', 'wrong-claim'] as const)('k
     .rejects.toMatchObject({ mayHaveWritten: true, recovery: 'check-saved', operationId: problem === 'claimed-timeout' ? ids.memory : undefined });
   expect(saved).toHaveBeenCalledWith(voice); expect(speech).not.toHaveBeenCalled(); expect(f.request).toHaveBeenCalledTimes(1);
 });
+it.each([['AI_SPEECH_INVALID_RESPONSE', 503], ['AI_SPEECH_TIMEOUT', 504]] as const)('preserves the verified speech failure code %s', async (code, status) => {
+  const voice = turn(false), saved = jest.fn(), play = jest.fn();
+  const f = fixture(response([operation, { type: 'saving' }, { type: 'saved', result: voice }, {
+    ...errorEvent(code, status, null), type: 'speech-error', operation_id: ids.memory,
+  }]));
+  await expect(sendRealMessage(f.scope, { source_transcript_id: ids.transcript }, ids.key, jest.fn(), { onSaved: saved, onSpeech: play }))
+    .rejects.toMatchObject({ code, status, operationId: ids.memory });
+  expect(saved).toHaveBeenCalledWith(voice); expect(play).not.toHaveBeenCalled(); expect(f.request).toHaveBeenCalledTimes(1);
+});
 it.each([[operation, completed()], [operation, { type: 'saving' }, completed()]].map(events => ({ events })))('allows a verified final without an early preview %#', async ({ events }) => {
   const f = fixture(response(events)); await expect(sendRealTextMessage(f.scope, original, ids.key, jest.fn())).resolves.toEqual(turn());
 });

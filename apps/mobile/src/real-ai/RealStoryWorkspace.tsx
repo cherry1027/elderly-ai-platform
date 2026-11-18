@@ -156,7 +156,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const [voiceStartMs, setVoiceStartMs] = useState<number | null>(null);
   const [liveStartMs, setLiveStartMs] = useState<number | null>(null);
   const [liveConsentOpen, setLiveConsentOpen] = useState(false);
-  const [liveStatus, setLiveStatus] = useState<'connecting' | 'listening' | 'thinking' | 'speaking' | 'saving' | null>(null);
+  const [liveStatus, setLiveStatus] = useState<'connecting' | 'listening' | 'limit' | 'thinking' | 'speaking' | 'saving' | null>(null);
   const liveDriver = useRef<LiveTalkDriver | null>(null);
   const [latestReplyId, setLatestReplyId] = useState<string | null>(null), [replyAnchor, setReplyAnchor] = useState<{ id: string; y: number } | null>(null);
   const latestReply = useRef<string | null>(null), replyLayouts = useRef(new Map<string, number>());
@@ -248,6 +248,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const allowanceError = (error: unknown) => error instanceof RealAiError && ['AI_USAGE_LIMIT', 'AI_GLOBAL_BUDGET_EXHAUSTED', 'AI_USER_BUDGET_EXHAUSTED'].includes(error.code ?? '');
   const failureMessage = (error: unknown) => error instanceof RealAiError && error.kind === 'authentication' ? t.auth
     : error instanceof RealAiError && error.mayHaveWritten ? t.uncertain
+    : error instanceof RealAiError && error.code === 'LIVE_TALK_NO_SPEECH' ? t.liveNoSpeech
     : error instanceof RealAiError && error.code === 'CLARIFICATION_REQUIRED' ? t.answerQuestions
     : error instanceof RealAiError && error.code === 'NO_CONFIRMED_MEMORIES' ? t.confirmFirst
     : allowanceError(error) ? t.usageLimit
@@ -1134,6 +1135,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
         !active.current || !mounted.current || locked.current || pending.current || bootstrap.current ||
         authenticationBlocked.current || currentSection.current !== 'chat') return;
     setLiveConsentOpen(false);
+    stopVoice();
     let driver: LiveTalkDriver | null = null;
     try {
       driver = createLiveTalk();
@@ -1155,15 +1157,16 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
             beginOperation({ key, kind: 'transcription', voice: true, operationId: id });
           },
           onReady() { check(); setLiveStatus('listening'); },
+          onLimitReached() { check(); setLiveStatus('limit'); },
           onInputStopped() { setLiveStatus('thinking'); },
-          onVoice(pcm, heardAt) {
+          onVoice(pcm, submittedAt) {
             check();
             if (!firstVoice) {
               firstVoice = true;
               setLiveStatus('speaking');
               output = playback.current?.openStream?.(playedAt => {
-                if (active.current && mounted.current && !signal.aborted && heardAt !== undefined) {
-                  setLiveStartMs(Math.max(0, Math.round(playedAt - heardAt)));
+                if (active.current && mounted.current && !signal.aborted) {
+                  setLiveStartMs(Math.max(0, Math.round(playedAt - submittedAt)));
                 }
               }, () => {
                 if (active.current && mounted.current) setPlaying(false);
@@ -1225,10 +1228,10 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     {liveStartMs !== null && note(t.liveTiming((liveStartMs / 1000).toLocaleString(locale, { maximumFractionDigits: 2 })))}
     {liveStatus && <Text allowFontScaling accessibilityLanguage={locale} accessibilityLiveRegion="polite" style={styles.note}>
       {liveStatus === 'connecting' ? t.liveConnecting : liveStatus === 'listening' ? t.liveListening
-        : liveStatus === 'thinking' ? t.thinking : liveStatus === 'speaking' ? t.liveSpeaking : t.replySaving}
+        : liveStatus === 'limit' ? t.liveLimit : liveStatus === 'thinking' ? t.thinking : liveStatus === 'speaking' ? t.liveSpeaking : t.replySaving}
     </Text>}
-    {liveAvailable && !recording && !localRecording && (liveStatus === 'listening'
-      ? <ActionButton language={language} label={t.liveStop} onPress={() => liveDriver.current?.stopInput()} />
+    {liveAvailable && !recording && !localRecording && (liveStatus === 'listening' || liveStatus === 'limit'
+      ? <ActionButton language={language} label={t.liveStop} onPress={() => liveDriver.current?.stopInput()} primary />
       : !liveStatus && <ActionButton language={language} label={t.liveTry} onPress={() => setLiveConsentOpen(true)}
         disabled={blocked || !chatReady || usageBlocked || serviceBlocked || !sessionId} />)}
     {isTalkPreview() && voiceStartMs !== null && note(t.voiceTiming((voiceStartMs / 1000).toLocaleString(locale, {

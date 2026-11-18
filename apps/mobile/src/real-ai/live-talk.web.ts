@@ -5,6 +5,7 @@ import { SPEECH_CHUNK_BYTES, SPEECH_SAMPLE_RATE } from './voice-pcm';
 
 const API_ORIGIN = 'https://memy-pilot-api.onrender.com';
 const MAX_CAPTURE_SECONDS = 60;
+const MAX_CAPTURE_BYTES = MAX_CAPTURE_SECONDS * SPEECH_SAMPLE_RATE * 2;
 const MAX_REPLY_BYTES = SPEECH_SAMPLE_RATE * 2 * 20;
 
 export function createLiveTalk(): LiveTalkDriver | null {
@@ -15,7 +16,7 @@ export function createLiveTalk(): LiveTalkDriver | null {
   const resumed = capture.resume(); void resumed.catch(() => {});
   let media: MediaStream | undefined, source: MediaStreamAudioSourceNode | undefined;
   let processor: ScriptProcessorNode | undefined, mute: GainNode | undefined, socket: WebSocket | undefined;
-  let microphoneClosed = false, closed = false, sending = false, heardAt: number | undefined;
+  let microphoneClosed = false, closed = false, sending = false, submittedAt: number | undefined;
   let captureTimer: ReturnType<typeof setTimeout> | undefined;
   let onInputStopped: (() => void) | undefined;
 
@@ -31,12 +32,11 @@ export function createLiveTalk(): LiveTalkDriver | null {
   }
 
   function stopInput() {
-    if (microphoneClosed) return;
+    if (closed || submittedAt !== undefined || !onInputStopped || socket?.readyState !== WebSocket.OPEN) return;
+    submittedAt = performance.now();
     releaseMicrophone();
-    if (socket?.readyState === WebSocket.OPEN) {
-      socket.send('stop');
-      onInputStopped?.();
-    }
+    socket.send('stop');
+    onInputStopped();
   }
 
   function dispose() {
@@ -92,11 +92,12 @@ export function createLiveTalk(): LiveTalkDriver | null {
             try {
               if (event.data instanceof ArrayBuffer) {
                 const packet = new Uint8Array(event.data);
+                if (!ready || !operation || !packet.length || packet.length % 2) throw interrupted();
+                if (submittedAt === undefined) { packet.fill(0); return; }
                 replyBytes += packet.length;
-                if (!ready || !operation || !packet.length || packet.length % 2 || replyBytes > MAX_REPLY_BYTES) throw interrupted();
-                releaseMicrophone();
+                if (replyBytes > MAX_REPLY_BYTES) throw interrupted();
                 for (let offset = 0; offset < packet.length; offset += SPEECH_CHUNK_BYTES) {
-                  events.onVoice(packet.subarray(offset, offset + SPEECH_CHUNK_BYTES), heardAt);
+                  events.onVoice(packet.subarray(offset, offset + SPEECH_CHUNK_BYTES), submittedAt);
                 }
                 packet.fill(0);
                 return;
@@ -111,35 +112,42 @@ export function createLiveTalk(): LiveTalkDriver | null {
                 source = capture.createMediaStreamSource(media!);
                 processor = capture.createScriptProcessor(2048, 1, 1);
                 mute = capture.createGain(); mute.gain.value = 0;
-                let phase = 0, sum = 0, count = 0;
+                let phase = 0, sum = 0, count = 0, sentBytes = 0;
+                const reachLimit = () => {
+                  if (microphoneClosed) return;
+                  releaseMicrophone(); events.onLimitReached();
+                };
                 processor.onaudioprocess = frame => {
                   if (!sending || ws.readyState !== WebSocket.OPEN) return;
                   if (ws.bufferedAmount > 48_000) { fail(interrupted()); return; }
                   const values = frame.inputBuffer.getChannelData(0);
                   const bytes = new ArrayBuffer(Math.ceil(values.length * SPEECH_SAMPLE_RATE / capture.sampleRate + 1) * 2);
                   const pcm = new DataView(bytes);
-                  let size = 0, energy = 0;
+                  let size = 0;
                   for (const value of values) {
-                    sum += value; count++; energy += value * value;
+                    sum += value; count++;
                     phase += SPEECH_SAMPLE_RATE;
                     while (phase >= capture.sampleRate) {
                       pcm.setInt16(size, Math.round(Math.max(-1, Math.min(1, count ? sum / count : value)) * 32767), true);
                       size += 2; phase -= capture.sampleRate; sum = 0; count = 0;
                     }
                   }
-                  if (energy / values.length > 0.0001) heardAt = performance.now();
-                  if (size) ws.send(bytes.slice(0, size));
+                  const sendSize = Math.min(size, MAX_CAPTURE_BYTES - sentBytes);
+                  if (sendSize) ws.send(bytes.slice(0, sendSize));
+                  sentBytes += sendSize;
+                  if (sentBytes === MAX_CAPTURE_BYTES) reachLimit();
                 };
                 source.connect(processor); processor.connect(mute); mute.connect(capture.destination);
-                captureTimer = setTimeout(stopInput, MAX_CAPTURE_SECONDS * 1000);
+                captureTimer = setTimeout(reachLimit, MAX_CAPTURE_SECONDS * 1000);
                 events.onReady();
-              } else if (item.type === 'saving' && ready && operation) {
-                releaseMicrophone(); events.onSaving();
-              } else if (item.type === 'saved' && ready && operation) {
+              } else if (item.type === 'saving' && submittedAt !== undefined && operation) {
+                events.onSaving();
+              } else if (item.type === 'saved' && submittedAt !== undefined && operation) {
                 finish(undefined, decodeLiveTalkSaved(item, scope));
               } else if (item.type === 'error') {
                 const code = typeof item.code === 'string' && /^[A-Z_]{1,64}$/.test(item.code) ? item.code : undefined;
                 if (code === 'INVALID_ACCESS_TOKEN' || code === 'AUTHORIZATION_REQUIRED') throw new RealAiError('authentication', 401);
+                if (code === 'LIVE_TALK_NO_SPEECH') throw new RealAiError('validation', 422, false, code);
                 throw new RealAiError('unavailable', undefined, !!operation, code, undefined, operation);
               } else throw interrupted();
             } catch (error) { fail(error); }

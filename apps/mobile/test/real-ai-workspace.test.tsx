@@ -142,11 +142,13 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
       language, status: 'active', created_at: project.created_at, updated_at: project.created_at, ended_at: null }]);
     const result = deferred<Awaited<ReturnType<liveTalk.LiveTalkDriver['run']>>>();
     let onInputStopped: () => void = () => {};
+    let onLimitReached: () => void = () => {};
     const stopInput = jest.fn(() => onInputStopped());
     const driver: liveTalk.LiveTalkDriver = {
       stopInput, dispose: jest.fn(),
       run: (_scope, _key, events) => {
         onInputStopped = events.onInputStopped;
+        onLimitReached = events.onLimitReached;
         events.onReady();
         return result.promise;
       },
@@ -157,6 +159,10 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     await press(copy.liveTry);
     await press(copy.liveStart);
     expect(screen.getByText(copy.liveListening)).toBeOnTheScreen();
+    await act(async () => onLimitReached());
+    expect(screen.getByText(copy.liveLimit)).toBeOnTheScreen();
+    expect(stopInput).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: copy.liveStop })).toBeEnabled();
     await press(copy.liveStop);
     expect(stopInput).toHaveBeenCalledTimes(1);
     expect(screen.getByText(copy.thinking)).toBeOnTheScreen();

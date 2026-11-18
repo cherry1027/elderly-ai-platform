@@ -1,10 +1,14 @@
 import { Blob as NodeBlob } from 'node:buffer';
+import Constants from 'expo-constants';
 import { saveBrowserRecording, getBrowserRecordingBlob, discardBrowserRecording, clearBrowserRecordings } from '../src/audio/browser-recordings';
 import { createRecordingUpload } from '../src/audio/recording-upload.web';
 import { createNativeRecorder, MAX_RECORDING_MS } from '../src/audio/native-recorder.web';
+import { createLiveTalk } from '../src/real-ai/live-talk.web';
 import { createRealPlayback } from '../src/real-ai/native-playback.web';
 import { createSecureSessionStorage, MOBILE_AUTH_STORAGE_KEY } from '../src/auth/secure-storage.web';
 import { readWebStaging } from '../src/web-staging';
+import { realIds, realProvenance, realScope, realTranscript } from './real-ai-fixtures';
+jest.mock('expo-constants', () => ({ __esModule: true, default: { expoConfig: null } }));
 jest.mock('../src/web-staging', () => ({ readWebStaging: jest.fn(() => ({ webOrigin: 'https://memy-web.example.test', apiOrigin: 'https://memy-api.example.test' })) }));
 type Listener = () => void;
 const documentListeners = new Map<string, Set<Listener>>(), windowListeners = new Map<string, Set<Listener>>();
@@ -166,6 +170,68 @@ it('keeps the completed audio available when the recording reaches its time limi
     expect(recording.durationMs).toBe(MAX_RECORDING_MS);
     await expect(getBrowserRecordingBlob(recording).text()).resolves.toBe('synthetic capture');
   } finally { await recorder.dispose(); }
+});
+it.each([false, true])('streams Live Talk audio only after the user taps Done, with the limit reached set to %s', async atLimit => {
+  jest.useFakeTimers();
+  const apiOrigin = 'https://memy-pilot-api.onrender.com', webOrigin = 'https://memy-visual-redesign-preview.onrender.com';
+  const priorConfig = Constants.expoConfig;
+  Constants.expoConfig = { name: 'Memy test', slug: 'memy-test', extra: { memyStagingApiOrigin: apiOrigin } };
+  jest.mocked(readWebStaging).mockReturnValue({ webOrigin, apiOrigin });
+  Object.defineProperty(windowFake, 'location', { configurable: true, value: { origin: webOrigin } });
+  const node = () => ({ connect: jest.fn(), disconnect: jest.fn() });
+  const processor = { ...node(), onaudioprocess: null };
+  const engine = { resume: jest.fn(async () => {}), close: jest.fn(async () => {}), sampleRate: 24_000, destination: {},
+    createMediaStreamSource: node, createScriptProcessor: () => processor, createGain: () => ({ ...node(), gain: { value: 1 } }) };
+  Object.defineProperty(windowFake, 'AudioContext', { configurable: true, value: class { constructor() { return engine; } } });
+  let socket: TestSocket | undefined;
+  class TestSocket {
+    static OPEN = 1;
+    static CLOSING = 2;
+    readyState = TestSocket.OPEN;
+    send = jest.fn();
+    close = jest.fn();
+    onopen?: () => void;
+    onmessage?: (event: { data: unknown }) => void;
+    constructor() { socket = this; }
+    receive(item: object) { this.onmessage?.({ data: JSON.stringify(item) }); }
+  }
+  const stopsBefore = track.stop.mock.calls.length;
+  install('WebSocket', TestSocket);
+  const driver = createLiveTalk()!;
+  const events = { onOperation: jest.fn(), onReady: jest.fn(), onLimitReached: jest.fn(), onInputStopped: jest.fn(),
+    onVoice: jest.fn(), onSaving: jest.fn() };
+  try {
+    const run = driver.run({ ...realScope(), baseUrl: apiOrigin }, realIds.key, events);
+    const outcome = run.catch(error => error);
+    await jest.advanceTimersByTimeAsync(0);
+    socket!.onopen?.();
+    socket!.receive({ type: 'operation', id: realIds.memory });
+    socket!.receive({ type: 'ready' });
+    socket!.onmessage?.({ data: Uint8Array.of(1, 2).buffer });
+    expect(events.onVoice).not.toHaveBeenCalled();
+    expect(track.stop).toHaveBeenCalledTimes(stopsBefore);
+    if (atLimit) {
+      await jest.advanceTimersByTimeAsync(60_000);
+      expect(events.onLimitReached).toHaveBeenCalledTimes(1);
+      expect(track.stop).toHaveBeenCalledTimes(stopsBefore + 1);
+    }
+    expect(socket!.send).not.toHaveBeenCalledWith('stop');
+    expect(events.onInputStopped).not.toHaveBeenCalled();
+    driver.stopInput(); driver.stopInput();
+    expect(socket!.send.mock.calls.filter(([value]) => value === 'stop')).toHaveLength(1);
+    expect(events.onInputStopped).toHaveBeenCalledTimes(1);
+    socket!.onmessage?.({ data: Uint8Array.of(1, 2).buffer });
+    expect(events.onVoice).toHaveBeenCalledTimes(1);
+    socket!.receive({ type: 'saving' });
+    const transcript = realTranscript({ provenance: { ...realProvenance, model: 'gpt-live-1' } });
+    socket!.receive({ type: 'saved', transcript, turn: null, memories_checked: false });
+    expect(await outcome).toMatchObject({ transcript });
+  } finally {
+    driver.dispose();
+    Constants.expoConfig = priorConfig;
+    Reflect.deleteProperty(windowFake, 'location');
+    Reflect.deleteProperty(windowFake, 'AudioContext');
+  }
 });
 class FakeAudio {
   static instances: FakeAudio[] = [];

@@ -233,6 +233,64 @@ it.each([false, true])('streams Live Talk audio only after the user taps Done, w
     Reflect.deleteProperty(windowFake, 'AudioContext');
   }
 });
+it.each(['before-done', 'after-done', 'provider-error', 'transport-error', 'background'] as const)('handles a Live Talk interruption %s without losing or automatically resending audio', async interruption => {
+  jest.useFakeTimers();
+  const apiOrigin = 'https://memy-pilot-api.onrender.com', webOrigin = 'https://memy-visual-redesign-preview.onrender.com';
+  const priorConfig = Constants.expoConfig;
+  Constants.expoConfig = { name: 'Memy test', slug: 'memy-test', extra: { memyStagingApiOrigin: apiOrigin } };
+  jest.mocked(readWebStaging).mockReturnValue({ webOrigin, apiOrigin });
+  Object.defineProperty(windowFake, 'location', { configurable: true, value: { origin: webOrigin } });
+  const node = () => ({ connect: jest.fn(), disconnect: jest.fn() });
+  const engine = { resume: jest.fn(async () => {}), close: jest.fn(async () => {}), sampleRate: 24_000, destination: {},
+    createMediaStreamSource: node, createScriptProcessor: () => ({ ...node(), onaudioprocess: null }),
+    createGain: () => ({ ...node(), gain: { value: 1 } }) };
+  Object.defineProperty(windowFake, 'AudioContext', { configurable: true, value: class { constructor() { return engine; } } });
+  let socket: TestSocket | undefined;
+  class TestSocket {
+    static OPEN = 1; static CLOSING = 2;
+    readyState = 1;
+    send = jest.fn(); close = jest.fn();
+    onopen?: () => void; onclose?: () => void; onerror?: () => void;
+    onmessage?: (event: { data: unknown }) => void;
+    constructor() { socket = this; }
+    receive(item: object) { this.onmessage?.({ data: JSON.stringify(item) }); }
+  }
+  install('WebSocket', TestSocket);
+  const driver = createLiveTalk()!, controller = new AbortController();
+  const events = { onOperation: jest.fn(), onReady: jest.fn(), onLimitReached: jest.fn(), onInputStopped: jest.fn(),
+    onVoice: jest.fn(), onSaving: jest.fn() };
+  try {
+    const result = driver.run({ ...realScope(), baseUrl: apiOrigin, signal: controller.signal }, realIds.key, events).catch(error => error);
+    await jest.advanceTimersByTimeAsync(0);
+    socket!.onopen?.();
+    socket!.receive({ type: 'operation', id: realIds.memory });
+    socket!.receive({ type: 'ready' });
+    FakeRecorder.instances[0].ondataavailable?.({ data: new Blob(['the captured original words'], { type: 'audio/webm' }) });
+    await jest.advanceTimersByTimeAsync(1500);
+    if (interruption === 'after-done') driver.stopInput();
+    if (interruption === 'background') controller.abort();
+    if (interruption === 'provider-error') socket!.receive({ type: 'error', code: 'LIVE_TALK_INCOMPLETE' });
+    else if (interruption === 'transport-error') socket!.onerror?.();
+    else socket!.onclose?.();
+    expect(await result).toMatchObject({ mayHaveWritten: true });
+    const retained = await driver.takeRecording?.();
+    driver.dispose();
+    if (interruption === 'background') expect(retained).toBeNull();
+    else {
+      expect(retained?.recording.durationMs).toBe(1500);
+      await expect(getBrowserRecordingBlob(retained!.recording).text()).resolves.toBe('the captured original words');
+      await retained!.dispose();
+      expect(() => getBrowserRecordingBlob(retained!.recording)).toThrow();
+    }
+    expect(events.onVoice).not.toHaveBeenCalled();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(socket!.send.mock.calls.filter(([value]) => value === 'stop')).toHaveLength(interruption === 'after-done' ? 1 : 0);
+  } finally {
+    driver.dispose(); Constants.expoConfig = priorConfig;
+    Reflect.deleteProperty(windowFake, 'location'); Reflect.deleteProperty(windowFake, 'AudioContext');
+  }
+});
+
 class FakeAudio {
   static instances: FakeAudio[] = [];
   src = ''; onended: (() => void) | null = null; onerror: (() => void) | null = null;

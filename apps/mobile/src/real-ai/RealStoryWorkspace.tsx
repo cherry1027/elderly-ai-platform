@@ -24,7 +24,7 @@ import { createRealSpeech, downloadRealExport, editRealDraft, exportRealDraft, f
 import type { RealAiConfig } from './config';
 import { realCopy } from './copy';
 import { createRealPlayback, RealPlaybackError, type RealPlayback, type StreamingPlayback } from './native-playback';
-import { createLiveTalk, type LiveTalkDriver } from './live-talk';
+import { createLiveTalk, type LiveTalkDriver, type LiveTalkRecording } from './live-talk';
 import { conversationModeCopy, readConversationMode, saveConversationMode, type ConversationMode } from './conversation-mode';
 import { mediaPrivacy } from './media-privacy';
 import { MemoriesContent, AutobiographyContent, SavedWordsContent, isSavedMessageMemory, storyContentCopy } from './StoryContent';
@@ -158,6 +158,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const [liveConsentOpen, setLiveConsentOpen] = useState(false);
   const [liveStatus, setLiveStatus] = useState<'connecting' | 'listening' | 'limit' | 'thinking' | 'speaking' | 'saving' | null>(null);
   const liveDriver = useRef<LiveTalkDriver | null>(null);
+  const liveRecording = useRef<LiveTalkRecording | null>(null);
   const [latestReplyId, setLatestReplyId] = useState<string | null>(null), [replyAnchor, setReplyAnchor] = useState<{ id: string; y: number } | null>(null);
   const latestReply = useRef<string | null>(null), replyLayouts = useRef(new Map<string, number>());
   const scrollOffsets = useRef({ body: 0, workspace: 0, thread: 0 });
@@ -210,6 +211,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     voiceSentAt.current = null; autoplayStopped.current = true;
     speechBytes.clear();
     liveDriver.current?.dispose(); liveDriver.current = null;
+    if (liveRecording.current) void mediaPrivacy.retire(liveRecording.current); liveRecording.current = null;
     const previous = recorder.current; recorder.current = null; audio.current = null; capturing.current = false;
     if (previous) void mediaPrivacy.retire(previous);
     if (playback.current) void mediaPrivacy.retire(playback.current); playback.current = null;
@@ -248,7 +250,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const allowanceError = (error: unknown) => error instanceof RealAiError && ['AI_USAGE_LIMIT', 'AI_GLOBAL_BUDGET_EXHAUSTED', 'AI_USER_BUDGET_EXHAUSTED'].includes(error.code ?? '');
   const failureMessage = (error: unknown) => error instanceof RealAiError && error.kind === 'authentication' ? t.auth
     : error instanceof RealAiError && error.mayHaveWritten ? t.uncertain
-    : error instanceof RealAiError && error.code === 'LIVE_TALK_NO_SPEECH' ? t.liveNoSpeech
+    : error instanceof RealAiError && ['LIVE_TALK_NO_SPEECH', 'LIVE_TALK_NOT_SUBMITTED'].includes(error.code ?? '') ? t.liveNoSpeech
     : error instanceof RealAiError && error.code === 'CLARIFICATION_REQUIRED' ? t.answerQuestions
     : error instanceof RealAiError && error.code === 'NO_CONFIRMED_MEMORIES' ? t.confirmFirst
     : allowanceError(error) ? t.usageLimit
@@ -553,8 +555,10 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
           speechFailed = true;
           setRenewSpeech(previous => new Set(previous).add(assistantId));
         }
-        if (state.status === 'completed' && audio.current && recorder.current) {
-          await recorder.current.discard(audio.current); check(); audio.current = null; setLocalRecording(null);
+        if (state.status === 'completed' && audio.current) {
+          if (liveRecording.current) { await liveRecording.current.dispose(); liveRecording.current = null; }
+          else await recorder.current?.discard(audio.current);
+          check(); audio.current = null; setLocalRecording(null);
         }
       }
       if (!completedDraft || !reads.current.drafts.loaded) await refresh(signal, check, sessionId);
@@ -575,9 +579,11 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     }, undefined, 'checking');
   };
   const discardAudio = () => {
-    if (!audio.current || !recorder.current || busy || unresolved) return;
+    if (!audio.current || (!recorder.current && !liveRecording.current) || busy || unresolved) return;
     void run(async (_signal, check) => {
-      await recorder.current!.discard(audio.current!); check(); audio.current = null; setLocalRecording(null);
+      if (liveRecording.current) { await liveRecording.current.dispose(); liveRecording.current = null; }
+      else await recorder.current!.discard(audio.current!);
+      check(); audio.current = null; setLocalRecording(null);
     });
   };
   const replyAllowed = () => !!voiceContext.current.capabilities?.conversation && !voiceContext.current.usageBlocked && !serviceBlocked && !mediaPrivacy.isBlocked();
@@ -681,7 +687,11 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     // The immutable transcript is verified. Never upload this clip again, even
     // if deleting its local file fails. The recorder retains cleanup ownership.
     pending.current = null; audio.current = null; setLocalRecording(null); setSafeReplyId(result.transcript_id);
-    try { await recorder.current?.discard(captured); check(); }
+    try {
+      if (liveRecording.current) { await liveRecording.current.dispose(); liveRecording.current = null; }
+      else await recorder.current?.discard(captured);
+      check();
+    }
     catch { check(); cleanupAudio(); setNotice(t.recordingSavedReplyLater); return; }
     if (!replyAllowed()) { setNotice(t.recordingSavedReplyLater); return; }
     await voiceReply(signal, check, result, createRecordingId());
@@ -1145,6 +1155,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     } catch { driver?.dispose(); setNotice(t.audioFailure); return; }
     const currentDriver = driver;
     liveDriver.current = driver;
+    voiceConsent.current = voiceScope();
     rememberMode('voice');
     setVoiceStartMs(null); setLiveStartMs(null); setLiveStatus('connecting'); setPlaying(false);
     const key = createRecordingId();
@@ -1188,6 +1199,19 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
           setSafeReplyId(result.transcript.transcript_id);
           setNotice(t.recordingSavedReplyLater);
         }
+      } catch (error) {
+        if (!signal.aborted && active.current && mounted.current &&
+            !(error instanceof StoryProjectsError && error.kind === 'authentication')) {
+          const retained = await currentDriver.takeRecording?.();
+          if (retained) {
+            if (signal.aborted || !active.current || !mounted.current) await retained.dispose();
+            else {
+              liveRecording.current = retained; audio.current = retained.recording;
+              setLocalRecording(retained.recording); setDuration(retained.recording.durationMs);
+            }
+          }
+        }
+        throw error;
       } finally {
         if (!keptOutput) output?.cancel();
         currentDriver.dispose();
@@ -1247,6 +1271,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     {(textSending || voiceReplySending) && !replyPreview && <Text allowFontScaling accessibilityLiveRegion="polite" style={styles.note}>{t.thinking}</Text>}
     {busy && !liveStatus && !localRecording && !textSending && !voiceReplySending && <Text allowFontScaling accessibilityLiveRegion="polite" style={styles.note}>{busyLabel}</Text>}
     {recording || localRecording ? <>
+      {localRecording && liveRecording.current && note(unresolved ? t.liveRecordingCheck : t.liveRecordingReady)}
       {busy && <Text allowFontScaling accessibilityLanguage={locale} accessibilityLiveRegion="polite" style={styles.note}>{busyLabel}</Text>}
       <VoiceRecordingControls language={language} duration={duration} retained={!recording}
         disabled={busy || !!unresolved} sendDisabled={usageBlocked || serviceBlocked || mediaBlocked || !capabilities?.transcription}

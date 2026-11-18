@@ -1,7 +1,8 @@
 import { normalizeMobileApiBaseUrl, validateStoryProjectId } from '../api/story-projects';
 import { decodeLiveTalkSaved, isTalkPreview, RealAiError } from './api';
-import type { LiveTalkDriver } from './live-talk';
+import type { LiveTalkDriver, LiveTalkRecording } from './live-talk';
 import { SPEECH_CHUNK_BYTES, SPEECH_SAMPLE_RATE } from './voice-pcm';
+import { clearBrowserRecordings, saveBrowserRecording } from '../audio/browser-recordings';
 
 const API_ORIGIN = 'https://memy-pilot-api.onrender.com';
 const MAX_CAPTURE_SECONDS = 60;
@@ -19,15 +20,54 @@ export function createLiveTalk(): LiveTalkDriver | null {
   let microphoneClosed = false, closed = false, sending = false, submittedAt: number | undefined;
   let captureTimer: ReturnType<typeof setTimeout> | undefined;
   let onInputStopped: (() => void) | undefined;
+  let backup: MediaRecorder | undefined, backupStarted = 0, backupDuration = 0;
+  let backupChunks: Blob[] = [], backupSize = 0, keepRecording = false, transferred = false;
+  let backupResult: Promise<LiveTalkRecording | null> | undefined;
+  let finishBackup: ((value: LiveTalkRecording | null) => void) | undefined;
+  let backupTimer: ReturnType<typeof setTimeout> | undefined;
+  const backupOwner = {};
+
+  function startBackup(stream: MediaStream) {
+    if (typeof MediaRecorder !== 'function' || typeof MediaRecorder.isTypeSupported !== 'function') return;
+    const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find(type => MediaRecorder.isTypeSupported(type));
+    if (!mimeType) return;
+    try {
+      backup = new MediaRecorder(stream, { mimeType, audioBitsPerSecond: 64_000 });
+      backupResult = new Promise(resolve => { finishBackup = resolve; });
+      backup.ondataavailable = event => {
+        if (closed || transferred || !event.data.size) return;
+        backupSize += event.data.size;
+        if (backupSize <= 2_000_000) backupChunks.push(event.data);
+      };
+      backup.onerror = () => { clearTimeout(backupTimer); backupChunks = []; finishBackup?.(null); };
+      backup.onstop = () => {
+        clearTimeout(backupTimer);
+        let saved: LiveTalkRecording | null = null;
+        try {
+          if (!closed && backupSize > 0 && backupSize <= 2_000_000) {
+            const recording = saveBrowserRecording(new Blob(backupChunks, { type: mimeType.split(';')[0] }), backupOwner, backupDuration);
+            saved = { recording, async dispose() { clearBrowserRecordings(backupOwner); } };
+          }
+        } catch { /* The live result remains usable if local recovery is unavailable. */ }
+        backupChunks = []; finishBackup?.(saved);
+      };
+      backup.start(250); backupStarted = performance.now();
+    } catch { backupChunks = []; finishBackup?.(null); }
+  }
 
   function releaseMicrophone() {
     if (microphoneClosed) return;
     microphoneClosed = true;
     sending = false;
     clearTimeout(captureTimer);
+    if (backup?.state === 'recording') {
+      backupDuration = Math.max(1, Math.min(60_000, performance.now() - backupStarted));
+      backupTimer = setTimeout(() => { backupChunks = []; finishBackup?.(null); }, 1000);
+      try { backup.stop(); } catch { backupChunks = []; finishBackup?.(null); }
+    }
     if (processor) processor.onaudioprocess = null;
     source?.disconnect(); processor?.disconnect(); mute?.disconnect();
-    media?.getTracks().forEach(track => track.stop());
+    media?.getTracks().forEach(track => { track.onended = null; track.stop(); });
     void capture.close().catch(() => {});
   }
 
@@ -43,11 +83,22 @@ export function createLiveTalk(): LiveTalkDriver | null {
     if (closed) return;
     closed = true;
     releaseMicrophone();
+    clearTimeout(backupTimer);
+    backupChunks = [];
+    if (!transferred) clearBrowserRecordings(backupOwner);
+    finishBackup?.(null);
     if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
   }
 
   return {
     stopInput, dispose,
+    async takeRecording() {
+      if (!keepRecording || closed || transferred) return null;
+      const result = await backupResult ?? null;
+      if (closed) { await result?.dispose(); return null; }
+      transferred = result !== null;
+      return result;
+    },
     async run(scope, key, events) {
       if (normalizeMobileApiBaseUrl(scope.baseUrl) !== API_ORIGIN || !['en', 'sv'].includes(scope.language) || closed) {
         dispose(); throw new RealAiError('configuration');
@@ -80,7 +131,10 @@ export function createLiveTalk(): LiveTalkDriver | null {
             else if (saved) resolve(saved);
             else reject(interrupted());
           }
-          function fail(error: unknown) { finish(error); dispose(); }
+          function fail(error: unknown) {
+            finish(error); releaseMicrophone();
+            if (ws.readyState < WebSocket.CLOSING) ws.close();
+          }
           ws.onopen = () => {
             if (closed || signal?.aborted) { fail(interrupted()); return; }
             ws.send(JSON.stringify({ token, key: validateStoryProjectId(key) }));
@@ -109,6 +163,8 @@ export function createLiveTalk(): LiveTalkDriver | null {
               } else if (item.type === 'ready' && operation && !ready && !microphoneClosed) {
                 ready = true; sending = true;
                 onInputStopped = events.onInputStopped;
+                startBackup(media!);
+                for (const track of media!.getTracks()) track.onended = () => fail(interrupted());
                 source = capture.createMediaStreamSource(media!);
                 processor = capture.createScriptProcessor(2048, 1, 1);
                 mute = capture.createGain(); mute.gain.value = 0;
@@ -148,14 +204,21 @@ export function createLiveTalk(): LiveTalkDriver | null {
                 const code = typeof item.code === 'string' && /^[A-Z_]{1,64}$/.test(item.code) ? item.code : undefined;
                 if (code === 'INVALID_ACCESS_TOKEN' || code === 'AUTHORIZATION_REQUIRED') throw new RealAiError('authentication', 401);
                 if (code === 'LIVE_TALK_NO_SPEECH') throw new RealAiError('validation', 422, false, code);
+                if (code === 'LIVE_TALK_NOT_SUBMITTED') throw new RealAiError('validation', 422, false, code);
                 throw new RealAiError('unavailable', undefined, !!operation, code, undefined, operation);
               } else throw interrupted();
             } catch (error) { fail(error); }
           };
         });
+      } catch (error) {
+        keepRecording = !closed && !signal?.aborted && !!backupResult &&
+          !(error instanceof RealAiError && error.kind === 'authentication');
+        throw error;
       } finally {
         signal?.removeEventListener('abort', abort);
-        dispose();
+        releaseMicrophone();
+        if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
+        if (!keepRecording) dispose();
       }
     },
   };

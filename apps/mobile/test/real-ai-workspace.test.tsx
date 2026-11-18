@@ -171,6 +171,47 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     expect(screen.getByText(copy.recordingSavedReplyLater)).toBeOnTheScreen();
   });
 
+  it.each(['failed', 'completed', 'uncertain'] as const)('reconciles an interrupted Live Talk recording as %s before permitting another upload', async status => {
+    jest.mocked(api.isTalkPreview).mockReturnValue(true);
+    const result = deferred<Awaited<ReturnType<liveTalk.LiveTalkDriver['run']>>>();
+    const retained = { recording: clip, dispose: jest.fn(async () => {}) };
+    const driver: liveTalk.LiveTalkDriver = {
+      stopInput: jest.fn(), dispose: jest.fn(), takeRecording: jest.fn(async () => retained),
+      run: (_scope, _key, events) => {
+        events.onOperation(ids.memory); events.onReady(); return result.promise;
+      },
+    };
+    jest.spyOn(liveTalk, 'createLiveTalk').mockReturnValue(driver);
+    jest.mocked(api.getRealOperation).mockResolvedValue({ operation_id: ids.memory, project_id: ids.project, session_id: ids.session,
+      kind: 'transcription', status, created_at: project.created_at, updated_at: project.created_at,
+      error_code: status === 'failed' ? 'LIVE_TALK_INCOMPLETE' : null, result: null });
+    const view = await render(<RealStoryWorkspace {...props} />); await ready();
+    await press(t.liveTry); await press(t.liveStart);
+    await act(async () => result.reject(new api.RealAiError('network', undefined, true, undefined, undefined, ids.memory)));
+    expect(screen.getByText(t.liveRecordingCheck)).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: t.stop })).toBeDisabled();
+    expect(api.transcribeRealRecording).not.toHaveBeenCalled();
+    await press(t.check);
+    expect(api.getRealOperation).toHaveBeenCalledWith(expect.anything(), ids.memory);
+    expect(api.transcribeRealRecording).not.toHaveBeenCalled();
+    if (status === 'failed') {
+      expect(screen.getByText(t.liveRecordingReady)).toBeOnTheScreen();
+      expect(screen.getByRole('button', { name: t.stop })).toBeEnabled();
+      await press(t.stop);
+      expect(api.transcribeRealRecording).toHaveBeenCalledTimes(1);
+      expect(api.sendRealMessage).toHaveBeenCalledTimes(1);
+      expect(retained.dispose).toHaveBeenCalledTimes(1);
+    } else if (status === 'completed') {
+      expect(screen.queryByText(t.liveRecordingReady)).toBeNull();
+      expect(retained.dispose).toHaveBeenCalledTimes(1);
+    } else {
+      expect(screen.getByRole('button', { name: t.stop })).toBeDisabled();
+      expect(retained.dispose).not.toHaveBeenCalled();
+    }
+    await view.unmount(); await mediaPrivacy.retry();
+    expect(retained.dispose).toHaveBeenCalledTimes(1);
+  });
+
   it.each(['en', 'sv'] as const)('shows a short AI-off status and accessible Details in %s without enabling AI', async language => {
     const copy = realCopy[language];
     jest.mocked(api.getRealCapabilities).mockResolvedValue({ contract: 'real-v2', mode: 'real', enabled: false, transcription: false, conversation: false, writing: false, speech: false, reason: 'LIVE_AI_DISABLED' });

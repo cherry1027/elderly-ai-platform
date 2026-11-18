@@ -15,7 +15,7 @@ export const conversationModeCopy = {
     switchToVoice: 'Byt till att berätta',
     finishAndOpenStory: 'Avsluta och gå till Min berättelse',
     finishWaiting: 'Min berättelse öppnas när det pågående steget är klart.',
-    reviewQuestions: 'Välj Ja, Ändra eller Utelämna under Minnen för att spara ditt svar om en detalj.',
+    reviewQuestions: 'Välj Ja, Ändra eller Utelämna under Kontrollera och ändra för att spara ditt svar om en detalj.',
   },
 } as const;
 

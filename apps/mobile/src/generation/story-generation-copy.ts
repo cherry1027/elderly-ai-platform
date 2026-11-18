@@ -63,7 +63,7 @@ export const storyGenerationCopy = {
     },
   },
   sv: {
-    export: 'Ladda ned min berättelse', edit: 'Redigera min berättelse', history: 'Ändringar i denna generation',
+    export: 'Ladda ned min berättelse', edit: 'Ändra min berättelse', history: 'Ändringar i denna generation',
     continueStory: 'Fortsätt min berättelse', generations: 'Sparade självbiografier', generation: 'Generation', revision: 'Sparad revision',
     preservedGeneration: 'Din tidigare valda generation finns kvar', openPreviousGeneration: 'Öppna mitt tidigare val',
     title: 'Min självbiografi', introduction: 'En lugn plats där du kan läsa dina sparade ord i din egen takt.',

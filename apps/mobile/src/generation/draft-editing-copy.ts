@@ -66,7 +66,7 @@ export const draftEditingCopy = {
     discardHelp: 'Din osparade formulering rensas från skärmen. Om en sparning avbröts kan den redan ha slutförts. Öppna utkastet igen för att kontrollera.',
     stay: 'Fortsätt redigera', discard: 'Lämna utan osparad formulering',
     historyBounded: 'Utvecklingsversionens historikgräns har nåtts. Tidigare revisioner kan finnas men visas inte här. Det här innebär inte att hela historiken visas.',
-    editorTitle: 'Redigera min självbiografi', historyTitle: 'Ändringshistorik', field: 'Din formulering av utkastet',
+    editorTitle: 'Ändra min självbiografi', historyTitle: 'Ändringshistorik', field: 'Din formulering av utkastet',
     generation: 'Självbiografins generation', selectedRevision: 'Hämtad sparad revision',
     historySeparation: 'Det här är textändringar i en självbiografi, inte olika genererade självbiografier. Att läsa historiken återställer eller sparar aldrig text.',
     unsavedStatus: 'Osparade ändringar', savedStatus: 'Sparad formulering', pendingStatus: 'Sparningen behöver kontrolleras',

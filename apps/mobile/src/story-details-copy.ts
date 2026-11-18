@@ -38,7 +38,7 @@ export const storyDetailsCopy = {
   },
   sv: {
     title: 'Din berättelse', editTitle: 'Om berättelsen', edit: 'Ändra namn eller beskrivning',
-    conversation: 'Berätta för Minna', generate: 'Min berättelse', review: 'Minnen',
+    conversation: 'Berätta för Minna', generate: 'Min berättelse', review: 'Kontrollera och ändra',
     introduction: 'Fortsätt med din berättelse',
     shareHelp: 'Berätta för Minna om ditt liv.',
     reviewHelp: 'Granska dina minnen och ursprungliga ord.',

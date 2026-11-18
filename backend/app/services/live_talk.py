@@ -17,6 +17,7 @@ import wave
 
 import certifi
 from websockets.asyncio.client import connect
+from websockets.exceptions import ConnectionClosed
 
 from app.core.errors import APIError
 from app.services.minna_voice import LIVE_FALLBACK_VOICE, LIVE_VOICE_DESCRIPTION
@@ -91,8 +92,9 @@ class _NoRedirectConnect(connect):
 
 
 class LiveTalkError(APIError):
-    def __init__(self):
+    def __init__(self, reason="provider_session_incomplete"):
         super().__init__(503, "LIVE_TALK_INCOMPLETE", "Live Talk could not finish. Check your story before retrying.")
+        self.reason = reason
 
 
 @dataclass(frozen=True)
@@ -190,8 +192,12 @@ class LiveTalkProvider:
             return result
         except APIError:
             raise
+        except ConnectionClosed:
+            raise LiveTalkError("provider_connection_closed") from None
+        except TimeoutError:
+            raise LiveTalkError("provider_timeout") from None
         except Exception:
-            raise LiveTalkError() from None
+            raise LiveTalkError("provider_session_failed") from None
         finally:
             self._settle("conversation", reservation, usage, status)
 

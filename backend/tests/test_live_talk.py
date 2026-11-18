@@ -505,9 +505,10 @@ def test_socket_never_saves_a_model_reply_without_done(mounted_live):
         assert ws.receive_json()["type"] == "operation"
         assert ws.receive_json() == {"type": "ready"}
         ws.send_bytes(PCM)
-        assert ws.receive_json() == {"type": "error", "code": "LIVE_TALK_NO_SPEECH"}
+        assert ws.receive_json() == {"type": "error", "code": "LIVE_TALK_NOT_SUBMITTED"}
     claim = gateway.claims[("transcription", key)]
     assert claim['status'] == 'failed' and claim['result'] is None and len(gateway.claims) == 1
+    assert claim['error_code'] == 'LIVE_TALK_NOT_SUBMITTED'
 
 
 @pytest.mark.parametrize("write_started,expected_status", [(False, "failed"), (True, "uncertain")])
@@ -540,6 +541,52 @@ def test_interrupted_live_turn_publishes_its_persistence_state_before_the_error(
         assert ws.receive_json() == {"type": "error", "code": "LIVE_TALK_INCOMPLETE"}
         assert gateway.claims[("transcription", key)]["status"] == expected_status
         assert len(gateway.claims) == 1
+
+
+def test_no_speech_keeps_its_exact_failure_code_without_saving_an_empty_transcript(mounted_live):
+    app, gateway, _ = mounted_live
+    key = uuid4()
+
+    async def no_speech(_history, microphone, ready, _voice, *, language):
+        await ready()
+        assert await anext(microphone) == PCM
+        assert await anext(microphone) is None
+        return SpokenTurn('', '', b'')
+
+    app.state.real_ai.live_talk_provider.talk = no_speech
+    with TestClient(app) as client, client.websocket_connect(PATH, headers={"Origin": PREVIEW}) as ws:
+        ws.send_json({"token": "test", "key": str(key)})
+        assert ws.receive_json()["type"] == "operation"
+        assert ws.receive_json() == {"type": "ready"}
+        ws.send_bytes(PCM)
+        ws.send_text('stop')
+        assert ws.receive_json() == {"type": "error", "code": "LIVE_TALK_NO_SPEECH"}
+    claim = gateway.claims[("transcription", key)]
+    assert claim['status'] == 'failed' and claim['error_code'] == 'LIVE_TALK_NO_SPEECH'
+    assert claim['result'] is None and len(gateway.claims) == 1
+
+
+def test_provider_failures_log_only_safe_phase_information(mounted_live, caplog):
+    app, gateway, _ = mounted_live
+    key = uuid4()
+
+    async def disconnected(_history, microphone, ready, _voice, *, language):
+        await ready()
+        assert await anext(microphone) == PCM
+        raise LiveTalkError('provider_connection_closed')
+
+    app.state.real_ai.live_talk_provider.talk = disconnected
+    with caplog.at_level('INFO', logger='uvicorn.error'):
+        with TestClient(app) as client, client.websocket_connect(PATH, headers={"Origin": PREVIEW}) as ws:
+            ws.send_json({"token": "test", "key": str(key)})
+            ws.receive_json()
+            ws.receive_json()
+            ws.send_bytes(PCM)
+            assert ws.receive_json() == {"type": "error", "code": "LIVE_TALK_INCOMPLETE"}
+    assert 'reason=provider_connection_closed' in caplog.text
+    assert 'submitted=False' in caplog.text and 'saving=False' in caplog.text
+    assert str(key) not in caplog.text and SPOKEN['sv'].transcript not in caplog.text
+    assert gateway.claims[("transcription", key)]['status'] == 'failed'
 
 
 @pytest.mark.parametrize("origin,path", [

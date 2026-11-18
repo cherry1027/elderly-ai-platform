@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from io import BytesIO
 import json
+import logging
 import re
 from uuid import UUID, uuid5
 import wave
@@ -23,6 +24,7 @@ from app.services.real_ai_resources import RealAIGateway
 
 router = APIRouter()
 PROVENANCE = {"mode": "real", "provider": "openai", "model": LIVE_MODEL, "version": 1}
+_LOGGER = logging.getLogger("uvicorn.error")
 
 
 async def _authorized_hello(socket):
@@ -189,7 +191,9 @@ async def live_talk(socket: WebSocket, session_id: UUID):
             await send({"type": "operation", "id": claim["operation_id"]})
             spoken = await runtime.live_talk_provider.talk(history, microphone(),
                 lambda: send({"type": "ready"}), send, language=language)
-            if not submitted or not spoken.transcript:
+            if not submitted:
+                raise APIError(422, "LIVE_TALK_NOT_SUBMITTED", "The recording ended before Done speaking.")
+            if not spoken.transcript:
                 raise APIError(422, "LIVE_TALK_NO_SPEECH", "Live Talk ended without a finished voice message.")
             await send({"type": "saving"})
             transcript_write_started = True
@@ -202,13 +206,17 @@ async def live_talk(socket: WebSocket, session_id: UUID):
             await send({"type": "saved", "transcript": transcript, "turn": turn, "memories_checked": memory_complete})
         except WebSocketDisconnect:
             connected = False
+            terminal_error = "LIVE_TALK_INTERRUPTED" if submitted else "LIVE_TALK_NOT_SUBMITTED"
         except Exception as error:
             terminal_error = error.code if isinstance(error, APIError) else "LIVE_TALK_INCOMPLETE"
+            _LOGGER.info("Live Talk stopped (code=%s, submitted=%s, saving=%s, connected=%s, reason=%s)",
+                         terminal_error, submitted, transcript_write_started, connected,
+                         error.reason if isinstance(error, LiveTalkError) else type(error).__name__)
         finally:
             if claim and claim["claimed"] and gateway is not None:
                 # The provider can consume budget before any transcript write starts.
                 # Its spending reservation is settled separately by the provider adapter.
-                await _close_claim(gateway, claim, "LIVE_TALK_INCOMPLETE", transcript_write_started)
+                await _close_claim(gateway, claim, terminal_error or "LIVE_TALK_INTERRUPTED", transcript_write_started)
             if subject is not None:
                 ai_budget_subject.reset(subject)
             if identity is not None:

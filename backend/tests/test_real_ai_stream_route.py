@@ -9,8 +9,8 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 from starlette.requests import Request
+from starlette.types import Scope
 
-from app.api.real_ai import get_real_gateway
 from app.core.errors import APIError
 from app.services.real_ai_progress import emit_progress, turn_progress
 from app.services.openai_client import mark_ai_dispatched
@@ -36,6 +36,16 @@ def frames(response):
     assert response.headers['content-type'].startswith('text/event-stream')
     assert response.headers['cache-control']=='no-store'
     return [json.loads(frame.removeprefix('data: ')) for frame in response.text.strip().split('\n\n')]
+
+
+class RecordedTurnGateway(ReconciliationGateway):
+    async def complete(self, claim, payload, provenance):
+        result = await super().complete(claim, payload, provenance)
+        if claim['kind'] == 'conversation':
+            result.update(clarifications=[], requires_clarification=False)
+            message = result['message']
+            self.local_rows['real_conversation_messages', UUID(message['id'])] = message
+        return result
 
 
 def test_preview_precedes_atomic_save_and_final_preserves_original(text_harness):
@@ -164,16 +174,7 @@ def test_recorded_turn_saves_text_before_single_speech_attempt(harness, language
     app.state.settings.real_ai_preview_talk_enabled = opt_in
     app.state.real_ai.require_preview_talk = lambda: provider
     provider.text_model = 'gpt-6-luna'
-    class VoiceGateway(ReconciliationGateway):
-        async def complete(self, claim, payload, provenance):
-            result = await super().complete(claim, payload, provenance)
-            if claim['kind'] == 'conversation':
-                result.update(clarifications=[], requires_clarification=False)
-                message = result['message']
-                self.local_rows['real_conversation_messages', UUID(message['id'])] = message
-            return result
-
-    gateway = VoiceGateway(language)
+    gateway = RecordedTurnGateway(language)
     install_gateway(app, gateway)
     spoken = []
     data = wav_bytes()
@@ -284,6 +285,80 @@ def test_disconnect_after_operation_cancels_waiting_provider_without_another_wri
         await asyncio.wait_for(response({'type':'http','asgi':{'spec_version':spec},'method':'POST'},receive,send_message),1)
         assert cleaned.is_set() and turn_progress.get() is None
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('disconnect_at', ['saving', 'synthesis', 'stalled_synthesis'])
+def test_preview_disconnect_finishes_only_started_speech_within_grace(harness, monkeypatch, disconnect_at):
+    app, _, provider = harness()
+    enable(app)
+    preview_origin = 'https://memy-visual-redesign-preview.onrender.com'
+    voice = 'voice_minna_test'
+    app.state.settings.real_ai_preview_talk_enabled = True
+    app.state.settings.real_ai_swedish_preview_cedar = True
+    app.state.settings.real_ai_live_voice_id = voice
+    app.state.real_ai.require_preview_talk = lambda: provider
+    provider.text_model = 'gpt-6-luna'
+    gateway = RecordedTurnGateway()
+    install_gateway(app, gateway)
+    data = wav_bytes()
+    calls = []
+    if disconnect_at == 'stalled_synthesis':
+        monkeypatch.setattr('app.services.real_ai_streaming.SPEECH_DISCONNECT_GRACE_SECONDS', 0.02)
+
+    async def request_with_disconnect():
+        drop, dropped = asyncio.Event(), asyncio.Event()
+
+        async def synthesize(text, language):
+            calls.append((text, language))
+            mark_ai_dispatched()
+            drop.set()
+            await dropped.wait()
+            await asyncio.sleep(0.04)  # Old behavior canceled this already dispatched synthesis.
+            return SpeechAudio(data, 'audio/wav', sha256(data).hexdigest(), 0.01, 'gpt-live-1', voice)
+
+        app.state.real_ai.live_talk_provider = SimpleNamespace(synthesize=synthesize)
+        route = f'/api/v2/story-sessions/{SESSION}/messages'
+        query = b'autoplay=true&talk_preview=true&stream_audio=true'
+        body = json.dumps({'source_transcript_id': str(TRANSCRIPT), 'language': 'en'}).encode()
+        scope: Scope = {'type': 'http', 'asgi': {'spec_version': '2.4'}, 'http_version': '1.1', 'scheme': 'https',
+            'method': 'POST', 'path': route, 'query_string': query, 'headers': [
+                (b'content-type', b'application/json'), (b'accept', b'text/event-stream'),
+                (b'origin', preview_origin.encode()), (b'idempotency-key', str(uuid4()).encode()),
+            ]}
+        read = False
+
+        async def receive():
+            nonlocal read
+            if not read:
+                read = True
+                return {'type': 'http.request', 'body': body}
+            await drop.wait()
+            dropped.set()
+            return {'type': 'http.disconnect'}
+
+        async def send(message):
+            if disconnect_at == 'saving' and message.get('body', b'').startswith(b'data: {"type":"saved"'):
+                raise OSError('Simulated downstream disconnect before sending the saved frame')
+
+        await asyncio.wait_for(app(scope, receive, send), 2)
+
+    with TestClient(app) as client:
+        client.portal.call(request_with_disconnect)
+        turns = [row for row in gateway.claims.values() if row['kind'] == 'conversation']
+        assert len(turns) == 1 and turns[0]['status'] == 'completed'
+        assistant = turns[0]['result']['message']
+        speech = gateway.claims.get(('speech', UUID(assistant['id'])))
+        if disconnect_at == 'synthesis':
+            assert speech['status'] == 'completed'
+            replay = client.get(f"/api/v2/spoken-replies/{speech['result']['speech_id']}/audio",
+                                headers={'Origin': preview_origin})
+            assert replay.status_code == 200 and replay.content == data
+        elif disconnect_at == 'stalled_synthesis':
+            assert speech['status'] == 'failed' and speech['error_code'] == 'AI_SPEECH_INTERRUPTED'
+            assert speech['result'] is None
+        else:
+            assert speech is None
+    assert calls == ([] if disconnect_at == 'saving' else [(assistant['text'], 'en')])
 
 
 def test_worker_self_cancellation_before_first_event_does_not_hang_request():

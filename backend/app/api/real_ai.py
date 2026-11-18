@@ -48,7 +48,7 @@ _PRE_SAVE_REJECTIONS = {
     "transcription": {"AI_INVALID_RESPONSE"},
     "conversation": {"AI_INVALID_RESPONSE", "CONVERSATION_INVALID_RESPONSE"},
     "generation": {"DRAFT_VERIFICATION_FAILED"},
-    "speech": {"AI_SPEECH_INVALID_RESPONSE", "AI_SPEECH_TIMEOUT"},
+    "speech": {"AI_SPEECH_INVALID_RESPONSE", "AI_SPEECH_TIMEOUT", "AI_SPEECH_INTERRUPTED"},
 }
 
 
@@ -172,6 +172,8 @@ async def _execute(request, gateway, *, project_id, session_id, kind, key, finge
                 return result_scope(kind, result, project_id, session_id, claim["operation_id"])
         except BaseException as cause:
             code = cause.code if isinstance(cause, APIError) else "REAL_AI_UNCERTAIN"
+            if kind == "speech" and not save_started and isinstance(cause, asyncio.CancelledError) and uses_talk_preview(request):
+                code = "AI_SPEECH_INTERRUPTED"
             rejected_before_save = not save_started and code in _PRE_SAVE_REJECTIONS.get(kind, ())
             try:
                 # Model rejection before persistence is a definite save failure.
@@ -276,6 +278,8 @@ async def send_message(session_id: UUID, payload: RealMessageCreate, request: Re
     if (request.headers.get("accept") == "text/event-stream"
         and request.app.state.settings.real_ai_stream_turn_enabled
         and request.app.state.settings.real_ai_combined_turn_enabled):
+        preview = uses_talk_preview(request)
+
         async def prepare_reply(result, on_pcm=None):
             message = result["message"]
             # Stable across reconnects and manual first playback. Never
@@ -285,7 +289,8 @@ async def send_message(session_id: UUID, payload: RealMessageCreate, request: Re
 
         return await stream_turn_response(request,
             lambda: _send_message(session_id, payload, request, gateway, idempotency_key),
-            prepare_reply if autoplay else None, stream_audio=stream_audio and uses_talk_preview(request))
+            prepare_reply if autoplay else None, stream_audio=stream_audio and preview,
+            finish_speech_on_disconnect=autoplay and preview and bool(request.app.state.settings.real_ai_live_voice_id))
     return await _send_message(session_id, payload, request, gateway, idempotency_key)
 
 

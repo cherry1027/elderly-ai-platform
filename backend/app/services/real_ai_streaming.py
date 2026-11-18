@@ -6,6 +6,7 @@ that worker; this module never resubmits, retries, or writes provider data.
 import asyncio
 from base64 import b64encode
 import json
+import logging
 from uuid import UUID
 
 import anyio
@@ -20,6 +21,8 @@ from app.services.real_ai_resources import validated
 MAX_EVENT_BYTES = 1_000_000
 # The verified Realtime WAV is bounded by 45 seconds of 24kHz mono PCM.
 MAX_SPEECH_EVENT_BYTES = 3_000_000
+SPEECH_DISCONNECT_GRACE_SECONDS = 20
+_LOGGER = logging.getLogger("uvicorn.error")
 
 
 def _frame(event, maximum=MAX_EVENT_BYTES):
@@ -29,12 +32,15 @@ def _frame(event, maximum=MAX_EVENT_BYTES):
     return b"data: " + data + b"\n\n"
 
 
-async def stream_turn_response(request, action, prepare_speech=None, *, stream_audio=False):
+async def stream_turn_response(request, action, prepare_speech=None, *, stream_audio=False,
+                               finish_speech_on_disconnect=False):
     queue = asyncio.Queue(maxsize=4)
     operation = None
     reply = None
     saving = False
     closing = False
+    speech_started = False
+    saved_sent = asyncio.Event()
 
     async def progress(event):
         nonlocal operation, reply, saving
@@ -64,6 +70,7 @@ async def stream_turn_response(request, action, prepare_speech=None, *, stream_a
         await queue.put(("event", dict(event)))
 
     async def worker():
+        nonlocal speech_started
         token = turn_progress.set(progress)
         try:
             result = validated(RealTurn, await action())
@@ -73,6 +80,12 @@ async def stream_turn_response(request, action, prepare_speech=None, *, stream_a
                 # The conversation claim and workflow are already complete.
                 # A speech failure must never change the saved turn's status.
                 await queue.put(("event", {"type": "saved", "result": result}))
+                if finish_speech_on_disconnect:
+                    # Start only once the saved text has been sent to the client.
+                    await saved_sent.wait()
+                if closing:
+                    return
+                speech_started = True
                 sequence = streamed_bytes = 0
 
                 async def on_pcm(chunk):
@@ -81,9 +94,10 @@ async def stream_turn_response(request, action, prepare_speech=None, *, stream_a
                         or streamed_bytes + len(chunk) > MAX_SPEECH_PCM_BYTES
                         or streamed_bytes != sequence * SPEECH_CHUNK_BYTES):
                         raise ValueError("Invalid audio frame")
-                    await queue.put(("event", {"type": "speech-chunk",
-                        "assistant_message_id": result["message"]["id"], "sequence": sequence,
-                        "pcm": b64encode(chunk).decode("ascii")}))
+                    if not closing:
+                        await queue.put(("event", {"type": "speech-chunk",
+                            "assistant_message_id": result["message"]["id"], "sequence": sequence,
+                            "pcm": b64encode(chunk).decode("ascii")}))
                     sequence += 1
                     streamed_bytes += len(chunk)
 
@@ -92,6 +106,8 @@ async def stream_turn_response(request, action, prepare_speech=None, *, stream_a
                         metadata, audio = await prepare_speech(result, on_pcm)
                     else:
                         metadata, audio = await prepare_speech(result)
+                    if closing:
+                        return  # The owned replay cache already has the verified WAV.
                     if sequence:
                         if streamed_bytes != len(audio) - 44:
                             raise ValueError("Incomplete streamed audio")
@@ -104,9 +120,11 @@ async def stream_turn_response(request, action, prepare_speech=None, *, stream_a
                         raise
                     await queue.put(("speech-error", APIError(503, "REAL_AI_UNCERTAIN", "Check the saved reply.")))
                 except APIError as error:
-                    await queue.put(("speech-error", error))
+                    if not closing:
+                        await queue.put(("speech-error", error))
                 except Exception:
-                    await queue.put(("speech-error", APIError(503, "REAL_AI_UNCERTAIN", "Check the saved reply.")))
+                    if not closing:
+                        await queue.put(("speech-error", APIError(503, "REAL_AI_UNCERTAIN", "Check the saved reply.")))
                 else:
                     await queue.put(("speech", speech))
             else:
@@ -124,14 +142,18 @@ async def stream_turn_response(request, action, prepare_speech=None, *, stream_a
 
     task = asyncio.create_task(worker())
 
-    async def cleanup():
+    async def cleanup(*, disconnected=False):
         nonlocal closing
         closing = True
-        if not task.done():
-            task.cancel()
-        # Starlette may cancel its response task on disconnect. Join cleanup
-        # even inside that cancellation scope; never leave a paid worker alive.
+        # Join the owned task even inside Starlette's canceled response scope.
+        # A dropped connection may finish only the one preview speech job
+        # already started for a saved reply. The job still uses the same claim.
         with anyio.CancelScope(shield=True):
+            if disconnected and finish_speech_on_disconnect and speech_started and not task.done():
+                _LOGGER.info("Preview speech delivery disconnected; finishing the saved reply for replay")
+                await asyncio.wait({task}, timeout=SPEECH_DISCONNECT_GRACE_SECONDS)
+            if not task.done():
+                task.cancel()
             await asyncio.gather(task, return_exceptions=True)
 
     try:
@@ -169,26 +191,33 @@ async def stream_turn_response(request, action, prepare_speech=None, *, stream_a
                 yield _frame(event)
                 return
             yield _frame(item)
+            if item["type"] == "saved":
+                saved_sent.set()
 
     class OwnedStream(StreamingResponse):
         async def __call__(self, scope, receive, send):
+            disconnected = False
             try:
                 # Always watch receive-side disconnects, including ASGI 2.4+.
                 # Waiting for the next socket write would let a disconnected
                 # client leave an upstream provider request running meanwhile.
                 async with anyio.create_task_group() as group:
                     async def stream_body():
+                        nonlocal disconnected
                         try:
                             await self.stream_response(send)
+                        except OSError:
+                            disconnected = True
                         finally:
                             group.cancel_scope.cancel()
                     group.start_soon(stream_body)
                     await self.listen_for_disconnect(receive)
+                    disconnected = True
                     group.cancel_scope.cancel()
                 if self.background is not None:
                     await self.background()
             finally:
-                await cleanup()
+                await cleanup(disconnected=disconnected)
 
     return OwnedStream(events(), media_type="text/event-stream", headers={
         "Cache-Control": "no-store", "X-Accel-Buffering": "no",

@@ -115,14 +115,6 @@ def create_app(
     application.add_exception_handler(APIError, api_error_handler)
     application.add_exception_handler(RequestValidationError, validation_error_handler)
 
-    @application.middleware("http")
-    async def protect_user_responses(request, call_next):
-        response = await call_next(request)
-        if request.url.path.startswith(("/api/v1/", "/api/v2/")):
-            if response.headers.get("Cache-Control") != "private, no-store":
-                response.headers["Cache-Control"] = "no-store"
-        return response
-
     application.add_middleware(APISafetyMiddleware, max_concurrent_requests=config.api_max_concurrent_requests)
     application.add_middleware(
         CORSMiddleware,

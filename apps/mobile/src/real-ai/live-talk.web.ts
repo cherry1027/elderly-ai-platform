@@ -19,6 +19,7 @@ export function createLiveTalk(): LiveTalkDriver | null {
   let processor: ScriptProcessorNode | undefined, mute: GainNode | undefined, socket: WebSocket | undefined;
   let microphoneClosed = false, closed = false, sending = false, submittedAt: number | undefined;
   let captureTimer: ReturnType<typeof setTimeout> | undefined;
+  let microphoneWatch: ReturnType<typeof setTimeout> | undefined;
   let onInputStopped: (() => void) | undefined;
   let backup: MediaRecorder | undefined, backupStarted = 0, backupDuration = 0;
   let backupChunks: Blob[] = [], backupSize = 0, keepRecording = false, transferred = false;
@@ -60,6 +61,8 @@ export function createLiveTalk(): LiveTalkDriver | null {
     microphoneClosed = true;
     sending = false;
     clearTimeout(captureTimer);
+    clearTimeout(microphoneWatch);
+    capture.onstatechange = null;
     if (backup?.state === 'recording') {
       backupDuration = Math.max(1, Math.min(60_000, performance.now() - backupStarted));
       backupTimer = setTimeout(() => { backupChunks = []; finishBackup?.(null); }, 1000);
@@ -114,6 +117,10 @@ export function createLiveTalk(): LiveTalkDriver | null {
         media = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true }, video: false });
         if (closed || microphoneClosed) { media.getTracks().forEach(track => track.stop()); throw interrupted(); }
         await resumed;
+        // Permission prompts and audio playback can suspend Safari's capture
+        // context after its initial resume has already completed.
+        if (capture.state && capture.state !== 'running') await capture.resume();
+        if (capture.state && capture.state !== 'running') throw new RealAiError('validation', 422, false, 'LIVE_TALK_MICROPHONE_UNAVAILABLE');
         const token = await scope.getAccessToken();
         if (!token) throw new RealAiError('authentication');
         if (closed || signal?.aborted || microphoneClosed) throw interrupted();
@@ -169,12 +176,26 @@ export function createLiveTalk(): LiveTalkDriver | null {
                 processor = capture.createScriptProcessor(2048, 1, 1);
                 mute = capture.createGain(); mute.gain.value = 0;
                 let phase = 0, sum = 0, count = 0, sentBytes = 0;
+                let lastFrameAt = performance.now();
+                const micUnavailable = () => fail(new RealAiError('validation', 422, submittedAt !== undefined,
+                  'LIVE_TALK_MICROPHONE_UNAVAILABLE', undefined, operation));
+                const watchMicrophone = () => {
+                  if (!sending || microphoneClosed || closed) return;
+                  // Silent frames are normal while someone pauses. Only a
+                  // stopped capture graph triggers recovery, never a pause.
+                  if (performance.now() - lastFrameAt > 3000) { micUnavailable(); return; }
+                  microphoneWatch = setTimeout(watchMicrophone, 1500);
+                };
+                capture.onstatechange = () => {
+                  if (sending && !microphoneClosed && capture.state && capture.state !== 'running') micUnavailable();
+                };
                 const reachLimit = () => {
                   if (microphoneClosed) return;
                   releaseMicrophone(); events.onLimitReached();
                 };
                 processor.onaudioprocess = frame => {
                   if (!sending || ws.readyState !== WebSocket.OPEN) return;
+                  lastFrameAt = performance.now();
                   if (ws.bufferedAmount > 48_000) { fail(interrupted()); return; }
                   const values = frame.inputBuffer.getChannelData(0);
                   const bytes = new ArrayBuffer(Math.ceil(values.length * SPEECH_SAMPLE_RATE / capture.sampleRate + 1) * 2);
@@ -195,6 +216,7 @@ export function createLiveTalk(): LiveTalkDriver | null {
                 };
                 source.connect(processor); processor.connect(mute); mute.connect(capture.destination);
                 captureTimer = setTimeout(reachLimit, MAX_CAPTURE_SECONDS * 1000);
+                microphoneWatch = setTimeout(watchMicrophone, 1500);
                 events.onReady();
               } else if (item.type === 'saving' && submittedAt !== undefined && operation) {
                 events.onSaving();

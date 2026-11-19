@@ -188,10 +188,11 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     const view = await render(<RealStoryWorkspace {...props} />); await ready();
     await press(t.liveTry); await press(t.liveStart);
     await act(async () => result.reject(new api.RealAiError('network', undefined, true, undefined, undefined, ids.memory)));
-    expect(screen.getByText(t.liveRecordingCheck)).toBeOnTheScreen();
-    expect(screen.getByRole('button', { name: t.stop })).toBeDisabled();
-    expect(api.transcribeRealRecording).not.toHaveBeenCalled();
-    await press(t.check);
+    if (status !== 'failed') {
+      expect(screen.getByText(t.liveRecordingCheck)).toBeOnTheScreen();
+      expect(screen.getByRole('button', { name: t.stop })).toBeDisabled();
+      await press(t.check);
+    } else expect(screen.queryByRole('button', { name: t.check })).toBeNull();
     expect(api.getRealOperation).toHaveBeenCalledWith(expect.anything(), ids.memory);
     expect(api.transcribeRealRecording).not.toHaveBeenCalled();
     if (status === 'failed') {
@@ -289,7 +290,7 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     await fireEvent.press(screen.getByTestId('story-top-back'));
     expect(screen.getByText(leaveCopy.en.uncertain)).toBeOnTheScreen(); expect(props.onBack).not.toHaveBeenCalled();
     await fireEvent.press(within(nativeNodes('modal')[0]).getByRole('button', { name: leaveCopy.en.check })); await act(async () => {});
-    expect(api.findRealOperation).toHaveBeenCalledTimes(1); expect(api.sendRealMessage).toHaveBeenCalledTimes(1);
+    expect(api.findRealOperation).toHaveBeenCalledTimes(2); expect(api.sendRealMessage).toHaveBeenCalledTimes(1);
     expect(props.onBack).not.toHaveBeenCalled();
   });
   it('reuses the authenticated active session and never creates duplicates merely while loading', async () => {
@@ -558,15 +559,13 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     expect(api.getRealOperation).toHaveBeenCalledWith(expect.anything(), ids.memory);
     expect(api.findRealOperation).not.toHaveBeenCalled(); expect(api.sendRealMessage).toHaveBeenCalledTimes(1);
   });
-  it('shows recovery in the composer and reuses saved words after an invalid reply is confirmed failed', async () => {
+  it('automatically checks a rejected reply and offers saved words without an automatic paid retry', async () => {
     jest.mocked(api.getRealTranscripts).mockResolvedValueOnce([]).mockResolvedValue([realTranscript()]);
     jest.mocked(api.sendRealMessage).mockRejectedValueOnce(new api.RealAiError('unavailable', 503, true, 'AI_INVALID_RESPONSE', undefined, ids.memory));
     jest.mocked(api.getRealOperation).mockResolvedValue({ operation_id: ids.memory, project_id: ids.project, session_id: ids.session,
       kind: 'conversation', status: 'failed', created_at: project.created_at, updated_at: project.created_at, error_code: 'AI_INVALID_RESPONSE', result: null });
     await render(<RealStoryWorkspace {...props} />); await ready(); await startVoice(); await press(t.stop);
     const composer = within(screen.getByTestId('conversation-composer'));
-    expect(composer.getByRole('button', { name: t.check })).toBeEnabled();
-    await press(t.check);
     expect(composer.queryByRole('button', { name: t.check })).toBeNull();
     expect(composer.getByRole('button', { name: t.process })).toBeEnabled();
     expect(screen.getByText(t.replyNotReady)).toBeOnTheScreen();
@@ -579,7 +578,7 @@ describe('real mobile workspace, synthetic controller checks only; physical phon
     jest.mocked(api.transcribeRealRecording).mockRejectedValueOnce(new api.RealAiError('unavailable', 503, true, 'AI_INVALID_RESPONSE', undefined, ids.memory));
     jest.mocked(api.getRealOperation).mockResolvedValue({ operation_id: ids.memory, project_id: ids.project, session_id: ids.session,
       kind: 'transcription', status: 'failed', created_at: project.created_at, updated_at: project.created_at, error_code: 'AI_INVALID_RESPONSE', result: null });
-    await render(<RealStoryWorkspace {...props} />); await ready(); await startVoice(); await press(t.stop); await press(t.check);
+    await render(<RealStoryWorkspace {...props} />); await ready(); await startVoice(); await press(t.stop);
     expect(screen.getByText(t.recordingNotTranscribed)).toBeOnTheScreen();
     expect(screen.getByRole('button', { name: t.stop })).toBeEnabled();
     expect(api.sendRealMessage).not.toHaveBeenCalled();

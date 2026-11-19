@@ -171,7 +171,7 @@ it('keeps the completed audio available when the recording reaches its time limi
     await expect(getBrowserRecordingBlob(recording).text()).resolves.toBe('synthetic capture');
   } finally { await recorder.dispose(); }
 });
-it.each([false, true])('streams Live Talk audio only after the user taps Done, with the limit reached set to %s', async atLimit => {
+it.each(['normal', 'limit', 'quiet-pause', 'stalled', 'safari-resume', 'interrupted', 'no-running'] as const)('keeps Live Talk capture and explicit submission safe through %s', async scenario => {
   jest.useFakeTimers();
   const apiOrigin = 'https://memy-pilot-api.onrender.com', webOrigin = 'https://memy-visual-redesign-preview.onrender.com';
   const priorConfig = Constants.expoConfig;
@@ -179,10 +179,13 @@ it.each([false, true])('streams Live Talk audio only after the user taps Done, w
   jest.mocked(readWebStaging).mockReturnValue({ webOrigin, apiOrigin });
   Object.defineProperty(windowFake, 'location', { configurable: true, value: { origin: webOrigin } });
   const node = () => ({ connect: jest.fn(), disconnect: jest.fn() });
-  const processor = { ...node(), onaudioprocess: null };
-  const engine = { resume: jest.fn(async () => {}), close: jest.fn(async () => {}), sampleRate: 24_000, destination: {},
+  const processor = { ...node(), onaudioprocess: null as null | ((frame: { inputBuffer: { getChannelData(channel: number): Float32Array } }) => void) };
+  const engine = { state: scenario === 'no-running' ? 'interrupted' : 'running', onstatechange: null as null | (() => void),
+    resume: jest.fn(async () => { if (scenario !== 'no-running') engine.state = 'running'; }),
+    close: jest.fn(async () => {}), sampleRate: 24_000, destination: {},
     createMediaStreamSource: node, createScriptProcessor: () => processor, createGain: () => ({ ...node(), gain: { value: 1 } }) };
   Object.defineProperty(windowFake, 'AudioContext', { configurable: true, value: class { constructor() { return engine; } } });
+  if (scenario === 'safari-resume') getUserMedia.mockImplementationOnce(async () => { engine.state = 'suspended'; return stream; });
   let socket: TestSocket | undefined;
   class TestSocket {
     static OPEN = 1;
@@ -200,18 +203,37 @@ it.each([false, true])('streams Live Talk audio only after the user taps Done, w
   const driver = createLiveTalk()!;
   const events = { onOperation: jest.fn(), onReady: jest.fn(), onLimitReached: jest.fn(), onInputStopped: jest.fn(),
     onVoice: jest.fn(), onSaving: jest.fn() };
+  let microphoneFrames: ReturnType<typeof setInterval> | undefined;
   try {
     const run = driver.run({ ...realScope(), baseUrl: apiOrigin }, realIds.key, events);
     const outcome = run.catch(error => error);
     await jest.advanceTimersByTimeAsync(0);
+    if (scenario === 'no-running') {
+      expect(await outcome).toMatchObject({ code: 'LIVE_TALK_MICROPHONE_UNAVAILABLE', mayHaveWritten: false });
+      expect(socket).toBeUndefined(); expect(track.stop).toHaveBeenCalled(); return;
+    }
+    if (scenario === 'safari-resume') expect(engine.resume).toHaveBeenCalledTimes(2);
     socket!.onopen?.();
     socket!.receive({ type: 'operation', id: realIds.memory });
     socket!.receive({ type: 'ready' });
     socket!.onmessage?.({ data: Uint8Array.of(1, 2).buffer });
     expect(events.onVoice).not.toHaveBeenCalled();
     expect(track.stop).toHaveBeenCalledTimes(stopsBefore);
-    if (atLimit) {
-      await jest.advanceTimersByTimeAsync(60_000);
+    if (scenario === 'stalled' || scenario === 'interrupted') {
+      FakeRecorder.instances[0].ondataavailable?.({ data: new Blob(['retained microphone words'], { type: 'audio/webm' }) });
+      if (scenario === 'interrupted') { engine.state = 'interrupted'; engine.onstatechange?.(); }
+      else await jest.advanceTimersByTimeAsync(4500);
+      expect(await outcome).toMatchObject({ code: 'LIVE_TALK_MICROPHONE_UNAVAILABLE', mayHaveWritten: false });
+      expect(socket!.send).not.toHaveBeenCalledWith('stop');
+      const retained = await driver.takeRecording?.();
+      await expect(getBrowserRecordingBlob(retained!.recording).text()).resolves.toBe('retained microphone words');
+      await retained!.dispose(); expect(globalThis.fetch).not.toHaveBeenCalled(); return;
+    }
+    if (scenario === 'limit' || scenario === 'quiet-pause') {
+      microphoneFrames = setInterval(() => processor.onaudioprocess?.({ inputBuffer: { getChannelData: () => new Float32Array(2048) } }), 100);
+      await jest.advanceTimersByTimeAsync(scenario === 'limit' ? 60_000 : 10_000);
+    }
+    if (scenario === 'limit') {
       expect(events.onLimitReached).toHaveBeenCalledTimes(1);
       expect(track.stop).toHaveBeenCalledTimes(stopsBefore + 1);
     }
@@ -227,6 +249,7 @@ it.each([false, true])('streams Live Talk audio only after the user taps Done, w
     socket!.receive({ type: 'saved', transcript, turn: null, memories_checked: false });
     expect(await outcome).toMatchObject({ transcript });
   } finally {
+    clearInterval(microphoneFrames);
     driver.dispose();
     Constants.expoConfig = priorConfig;
     Reflect.deleteProperty(windowFake, 'location');

@@ -26,6 +26,7 @@ jest.mock('../src/api/story-projects', () => ({ ...jest.requireActual('../src/ap
 jest.mock('../src/real-ai/api', () => ({ ...jest.requireActual('../src/real-ai/api'),
   getRealCapabilities: jest.fn(), getRealMessages: jest.fn(), getRealTranscripts: jest.fn(), getRealMemories: jest.fn(), getRealDrafts: jest.fn(),
   getRealDraftHistory: jest.fn(), getRealExports: jest.fn(), hashRealText: jest.fn(), sendRealTextMessage: jest.fn(), sendRealMessage: jest.fn(),
+  findRealOperation: jest.fn(),
   transcribeRealRecording: jest.fn(), generateRealDraft: jest.fn(), editRealDraft: jest.fn(), exportRealDraft: jest.fn(), downloadRealExport: jest.fn(), createRealSpeech: jest.fn() }));
 jest.mock('../src/exports/PdfPrivacy', () => ({ usePdfPrivacy: jest.fn() }));
 jest.mock('../src/audio/native-recorder', () => ({ ...jest.requireActual('../src/audio/native-recorder'), createRecordingId: jest.fn() }));
@@ -75,6 +76,9 @@ beforeEach(() => {
   jest.mocked(projects.listStorySessions).mockReset().mockImplementation(async () => { reads.push('sessions'); return [session]; });
   jest.mocked(projects.continueStoryProject).mockReset().mockResolvedValue({ project_id: ids.project, language: 'en', session, session_created: true, latest_draft: null, generation_triggered: false });
   jest.mocked(api.getRealCapabilities).mockReset().mockImplementation(async () => { reads.push('capabilities'); return caps; });
+  jest.mocked(api.findRealOperation).mockReset().mockResolvedValue({ operation_id: ids.memory,
+    project_id: ids.project, session_id: ids.session, kind: 'conversation', status: 'uncertain',
+    created_at: project.created_at, updated_at: project.updated_at, error_code: null, result: null });
   jest.mocked(api.getRealMessages).mockReset().mockImplementation(async () => { reads.push('messages'); return []; });
   jest.mocked(api.getRealTranscripts).mockReset().mockImplementation(async () => { reads.push('transcripts'); return []; });
   jest.mocked(api.getRealMemories).mockReset().mockImplementation(async () => { reads.push('memories'); return []; });

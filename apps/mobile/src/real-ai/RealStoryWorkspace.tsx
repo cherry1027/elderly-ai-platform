@@ -251,6 +251,7 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
   const failureMessage = (error: unknown) => error instanceof RealAiError && error.kind === 'authentication' ? t.auth
     : error instanceof RealAiError && error.mayHaveWritten ? t.uncertain
     : error instanceof RealAiError && ['LIVE_TALK_NO_SPEECH', 'LIVE_TALK_NOT_SUBMITTED'].includes(error.code ?? '') ? t.liveNoSpeech
+    : error instanceof RealAiError && error.code === 'LIVE_TALK_MICROPHONE_UNAVAILABLE' ? t.liveMicUnavailable
     : error instanceof RealAiError && error.code === 'CLARIFICATION_REQUIRED' ? t.answerQuestions
     : error instanceof RealAiError && error.code === 'NO_CONFIRMED_MEMORIES' ? t.confirmFirst
     : allowanceError(error) ? t.usageLimit
@@ -283,6 +284,35 @@ function Workspace({ language, user, project, config, getAccessToken, onBack, on
     catch (error) {
       if (mounted.current && active.current && epoch.current === stamp) {
         const action = pending.current ?? startedOperation;
+        if (action && error instanceof RealAiError && error.mayHaveWritten &&
+            (action.kind === 'conversation' || action.kind === 'transcription') &&
+            !abort.signal.aborted && !['authentication', 'cancelled'].includes(error.kind) &&
+            (!action.operationId || !error.operationId || action.operationId === error.operationId) &&
+            error.recovery !== 'contact-operator' && !allowanceError(error)) {
+          // Reconcile once using a free owned read. A definite failed save
+          // must not leave the composer locked. Never repeat a paid action.
+          const existing = { ...action, operationId: error.operationId ?? action.operationId };
+          try {
+            const saved = await readSavedOperation({ ...scope(abort.signal), timeoutMs: 5000 }, existing);
+            check();
+            if (saved.kind === existing.kind && saved.status === 'failed' &&
+                pending.current?.key === existing.key) {
+              pending.current = null; setUnresolved(null);
+              if (existing.voiceTranscriptId) {
+                setSafeReplyId(existing.voiceTranscriptId); setNotice(t.replyNotReady);
+              } else if (existing.inputType === 'typed') setNotice(t.textNotSent);
+              else setNotice(saved.error_code === 'AI_INVALID_RESPONSE' ? t.recordingNotTranscribed : t.liveNoSpeech);
+              return;
+            }
+          } catch (readError) {
+            // A missing/unavailable check proves nothing. Keep the original
+            // uncertainty and its explicit recovery control below.
+            if (!mounted.current || !active.current || epoch.current !== stamp || abort.signal.aborted) return;
+            if (readError instanceof StoryProjectsError && readError.kind === 'authentication') {
+              readFailure(readError); return;
+            }
+          }
+        }
         if (action?.kind === 'speech' && action.assistantId && error instanceof RealAiError &&
             ((error.code === 'AI_SPEECH_INVALID_RESPONSE' && error.status === 503) ||
              (error.code === 'AI_SPEECH_TIMEOUT' && error.status === 504))) {

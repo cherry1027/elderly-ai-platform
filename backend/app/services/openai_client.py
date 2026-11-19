@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from hashlib import sha256
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -25,6 +26,8 @@ from pydantic import SecretStr
 
 from app.core.errors import APIError
 from app.services.audio_upload import Recording
+
+_LOGGER = logging.getLogger("uvicorn.error")
 
 MAX_JSON_BYTES = 128_000
 MAX_RESPONSE_BYTES = 512_000
@@ -131,27 +134,33 @@ MAX_STREAM_EVENTS = 8_192
 
 def _structured_output(response):
     """Keep the existing strict final envelope validation for both transports."""
+    stage = "status"
     try:
         if response["status"] != "completed" or response.get("error") is not None:
             raise ValueError
         messages = []
+        stage = "output-items"
         for index, item in enumerate(response["output"]):
             if item.get("type") == "reasoning":
                 continue
             if item.get("type") != "message" or item.get("role") != "assistant" or item.get("status") != "completed":
                 raise ValueError
             messages.append((index, item))
+        stage = "message-count"
         if len(messages) != 1 or len(messages[0][1]["content"]) != 1:
             raise ValueError
         index, message = messages[0]
         part = message["content"][0]
+        stage = "content-type"
         if part.get("type") != "output_text" or not isinstance(part.get("text"), str):
             raise ValueError
+        stage = "structured-json"
         result = json.loads(part["text"], object_pairs_hook=strict_object)
         if not isinstance(result, dict):
             raise ValueError
         return result, part["text"], index, message.get("id")
     except (ValueError, TypeError, KeyError, AttributeError, RecursionError):
+        _LOGGER.info("AI structured output rejected (stage=%s)", stage)
         raise invalid_response() from None
 
 
@@ -336,6 +345,7 @@ class OpenAIClient:
             input_bytes=len(encoded), max_output_tokens=max_output_tokens)
             if hasattr(self.governor, "reserve_request") else self.governor.reserve(operation, self.text_model))
         reported_usage, service_tier, outcome = None, None, "failed"
+        last_event = "before-stream"
         mark_ai_dispatched()
         try:
             async with asyncio.timeout(self.timeout_seconds):
@@ -356,6 +366,8 @@ class OpenAIClient:
                             "response.completed"}
                         async for event in _response_events(response):
                             kind, sequence = event["type"], event.get("sequence_number")
+                            diagnostics = allowed | {"response.refusal.delta", "response.refusal.done", "response.incomplete", "response.failed", "error"}
+                            last_event = kind if isinstance(kind, str) and kind in diagnostics else "unsupported-event"
                             if (kind not in allowed or type(sequence) is not int
                                 or sequence <= previous_sequence):
                                 raise invalid_response()
@@ -404,7 +416,9 @@ class OpenAIClient:
             raise APIError(503, "AI_PROVIDER_UNAVAILABLE", "The AI provider is temporarily unavailable.") from None
         except (ValueError, UnicodeError, RecursionError):
             raise invalid_response() from None
-        except APIError:
+        except APIError as error:
+            if error.code == "AI_INVALID_RESPONSE":
+                _LOGGER.info("AI response stream rejected (event=%s)", last_event)
             raise
         except Exception:
             raise APIError(503, "AI_PROVIDER_UNAVAILABLE", "The AI provider is temporarily unavailable.") from None

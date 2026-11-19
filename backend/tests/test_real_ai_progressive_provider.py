@@ -290,11 +290,11 @@ def test_denied_request_group_has_no_known_preview_or_provider_attempt():
     assert emitted == script.stream_calls == script.calls == []
 
 
-def test_final_extraction_rejection_never_turns_preview_into_a_verified_result():
+def test_rejected_optional_extraction_preserves_a_valid_reply_without_any_unsupported_memory():
     body=combined();body['extraction']=extracted('en',evidence='Not in source')
     script=ProgressiveScript(body);run,emitted=progressive(script)
-    with pytest.raises(APIError) as error:asyncio.run(run())
-    assert error.value.code=='CONVERSATION_INVALID_RESPONSE'
+    result=asyncio.run(run())
+    assert result.text==body['reply']['text'] and result.facts==[]
     assert emitted==[{'type':'reply','text':body['reply']['text']}] and len(script.stream_calls)==1
 
 

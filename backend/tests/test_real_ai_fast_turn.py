@@ -54,17 +54,12 @@ def test_one_bounded_request_preserves_exact_sources_owned_conflicts_and_context
 @pytest.mark.parametrize("change", [
     lambda body: {**body, "extra": True},
     lambda body: {"reply": body["reply"]},
-    lambda body: {**body, "extraction": {"language": "sv", "facts": []}},
     lambda body: {**body, "reply": {"language": "sv", "text": "Vad minns du?"}},
     lambda body: {**body, "reply": {"language": "en", "text": ""}},
     lambda body: {**body, "reply": {"language": "en", "text": "x" * 1001}},
     lambda body: {**body, "reply": {"language": "en", "text": "Who? Where?"}},
-    lambda body: {**body, "extraction": extracted("en", evidence="Invented place")},
-    lambda body: {**body, "extraction": extracted("en", year=1974)},
-    lambda body: {**body, "extraction": extracted("en", status="confirmed")},
-    lambda body: {**body, "extraction": extracted("en", uncertain=True, clarification_question=None)},
 ])
-def test_invalid_either_half_rejects_whole_turn_without_second_paid_request(change):
+def test_invalid_reply_or_envelope_rejects_the_turn_without_second_paid_request(change):
     client = ScriptedClient([change(combined())])
     with pytest.raises(APIError) as rejected:
         asyncio.run(fast(client).respond("Lund", "en", []))
@@ -73,8 +68,22 @@ def test_invalid_either_half_rejects_whole_turn_without_second_paid_request(chan
 
 def test_history_never_supplies_extraction_evidence():
     client = ScriptedClient([combined()])
-    with pytest.raises(APIError):
-        asyncio.run(fast(client).respond("I do not remember.", "en", [], [{"role": "user", "text": "Lund"}]))
+    result=asyncio.run(fast(client).respond("I do not remember.", "en", [], [{"role": "user", "text": "Lund"}]))
+    assert result.facts == [] and len(client.calls) == 1
+
+
+@pytest.mark.parametrize("extraction", [
+    {"language": "sv", "facts": []},
+    extracted("en", evidence="Invented place"),
+    extracted("en", year=1974),
+    extracted("en", status="confirmed"),
+    extracted("en", uncertain=True, clarification_question=None),
+])
+def test_invalid_optional_memories_are_not_saved_and_do_not_discard_a_valid_reply(extraction):
+    body={**combined(),"extraction":extraction}
+    client=ScriptedClient([body])
+    result=asyncio.run(fast(client).respond("Lund", "en", []))
+    assert result.text == body['reply']['text'] and result.facts == []
     assert len(client.calls) == 1
 
 

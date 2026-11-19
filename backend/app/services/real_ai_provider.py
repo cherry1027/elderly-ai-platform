@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 import io
 import json
+import logging
 import re
 from pathlib import Path
 import ssl
@@ -160,6 +161,7 @@ _STREAMED_INSTRUCTIONS = (
 )
 _REPLY_PREFIX = re.compile(r'^\s*\{\s*"reply"\s*:\s*')
 _EXTRACTION_PREFIX = re.compile(r'^\s*,\s*"extraction"\s*:')
+_LOGGER = logging.getLogger("uvicorn.error")
 
 
 def _interviewer_reply(raw, language):
@@ -466,10 +468,17 @@ class RealAIProvider:
                 )
             if not isinstance(raw, dict) or set(raw) != {"extraction", "reply"}:
                 raise ValueError
-            candidates = _turn_memories(raw["extraction"], text, language, known, turn)
             reply = _interviewer_reply(raw["reply"], language)
             if streamed_model_reply is not None and streamed_model_reply != reply:
                 raise ValueError
+            try:
+                candidates = _turn_memories(raw["extraction"], text, language, known, turn)
+            except (ValueError, TypeError, UnicodeError, RecursionError):
+                # Never retain unsupported facts. A valid complete reply can
+                # survive optional extraction failure; recorded originals are
+                # independently preserved as pending passages by the API.
+                _LOGGER.info("Optional conversation memories rejected (language=%s)", language)
+                candidates = []
             return ProviderResult(text=turn.render_reply(_without_fragment_question(reply, language), MAX_SPEECH_CHARACTERS),
                                   facts=candidates)
         except APIError:
